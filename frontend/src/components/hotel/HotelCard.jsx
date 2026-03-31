@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { MapPin, Star } from 'lucide-react'
+import { MapPin, Star, User } from 'lucide-react'
 import StarRating from '@/components/common/StarRating'
 import { formatCurrency } from '@/utils/formatters'
 
@@ -53,6 +53,13 @@ export default function HotelCard({ hotel }) {
             <MapPin className="w-3.5 h-3.5" />
             <span>{hotel.city}, {hotel.country}</span>
           </div>
+
+          {hotel.owner_name && (
+            <div className="flex items-center gap-1 mt-1 text-gray-500 text-sm">
+              <User className="w-3.5 h-3.5" />
+              <span>by <span className="font-medium text-gray-700">{hotel.owner_name}</span></span>
+            </div>
+          )}
 
           {hotel.amenities?.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">

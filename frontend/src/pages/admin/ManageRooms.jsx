@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { roomsApi } from '@/api/roomsApi'
 import { hotelsApi } from '@/api/hotelsApi'
+import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency } from '@/utils/formatters'
@@ -14,14 +15,16 @@ import {
 
 export default function ManageRooms() {
   const qc = useQueryClient()
+  const { user } = useAuth()
   const [selectedHotel, setSelectedHotel] = useState('')
   const [page, setPage] = useState(1)
   const [modal, setModal] = useState(null)
 
   const { data: hotelsData } = useQuery({
-    queryKey: ['all-hotels-list'],
-    queryFn: () => hotelsApi.list({ per_page: 100 }),
+    queryKey: ['all-hotels-list', user?.id],
+    queryFn: () => hotelsApi.list({ per_page: 100, owner_id: user?.id }),
     select: (res) => res.data?.items || [],
+    enabled: !!user?.id,
   })
 
   const { data, isLoading } = useQuery({

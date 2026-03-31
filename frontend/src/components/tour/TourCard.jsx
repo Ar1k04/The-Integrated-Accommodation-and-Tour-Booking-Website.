@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Clock, MapPin, Star, Users } from 'lucide-react'
+import { Clock, MapPin, Star, User, Users } from 'lucide-react'
 import { formatCurrency } from '@/utils/formatters'
 
 export default function TourCard({ tour }) {
@@ -36,6 +36,13 @@ export default function TourCard({ tour }) {
             <Users className="w-3.5 h-3.5" />Max {tour.max_participants}
           </span>
         </div>
+
+        {tour.owner_name && (
+          <div className="flex items-center gap-1 mt-2 text-sm text-gray-500">
+            <User className="w-3.5 h-3.5" />
+            <span>by <span className="font-medium text-gray-700">{tour.owner_name}</span></span>
+          </div>
+        )}
 
         {tour.avg_rating > 0 && (
           <div className="flex items-center gap-1.5 mt-2">

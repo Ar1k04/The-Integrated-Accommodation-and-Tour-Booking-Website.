@@ -1,6 +1,8 @@
 import { createBrowserRouter } from 'react-router-dom'
 import AppLayout from '@/components/common/AppLayout'
+import AdminLayout from '@/components/common/AdminLayout'
 import ProtectedRoute from '@/components/common/ProtectedRoute'
+import RedirectIfAdmin from '@/components/common/RedirectIfAdmin'
 import HomePage from '@/pages/HomePage'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
@@ -23,52 +25,57 @@ export const router = createBrowserRouter([
   {
     element: <AppLayout />,
     children: [
-      { path: '/', element: <HomePage /> },
+      { path: '/', element: <RedirectIfAdmin><HomePage /></RedirectIfAdmin> },
       { path: '/login', element: <LoginPage /> },
-      { path: '/register', element: <RegisterPage /> },
-      { path: '/hotels/search', element: <SearchResultsPage /> },
-      { path: '/hotels/:id', element: <HotelDetailPage /> },
+      { path: '/register', element: <RedirectIfAdmin><RegisterPage /></RedirectIfAdmin> },
+      { path: '/hotels/search', element: <RedirectIfAdmin><SearchResultsPage /></RedirectIfAdmin> },
+      { path: '/hotels/:id', element: <RedirectIfAdmin><HotelDetailPage /></RedirectIfAdmin> },
       {
         path: '/bookings/new',
-        element: <ProtectedRoute><BookingPage /></ProtectedRoute>,
+        element: <ProtectedRoute userOnly><BookingPage /></ProtectedRoute>,
       },
       {
         path: '/bookings/:id/confirmation',
-        element: <ProtectedRoute><BookingConfirmationPage /></ProtectedRoute>,
+        element: <ProtectedRoute userOnly><BookingConfirmationPage /></ProtectedRoute>,
       },
-      { path: '/tours', element: <ToursPage /> },
-      { path: '/tours/:id', element: <TourDetailPage /> },
+      { path: '/tours', element: <RedirectIfAdmin><ToursPage /></RedirectIfAdmin> },
+      { path: '/tours/:id', element: <RedirectIfAdmin><TourDetailPage /></RedirectIfAdmin> },
       {
         path: '/profile',
-        element: <ProtectedRoute><ProfilePage /></ProtectedRoute>,
+        element: <ProtectedRoute userOnly><ProfilePage /></ProtectedRoute>,
       },
       {
         path: '/my-bookings',
-        element: <ProtectedRoute><MyBookingsPage /></ProtectedRoute>,
+        element: <ProtectedRoute userOnly><MyBookingsPage /></ProtectedRoute>,
       },
+    ],
+  },
+  {
+    element: <AdminLayout />,
+    children: [
       {
         path: '/admin',
-        element: <ProtectedRoute><AdminDashboard /></ProtectedRoute>,
+        element: <ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>,
       },
       {
         path: '/admin/hotels',
-        element: <ProtectedRoute><ManageHotels /></ProtectedRoute>,
+        element: <ProtectedRoute requireAdmin><ManageHotels /></ProtectedRoute>,
       },
       {
         path: '/admin/rooms',
-        element: <ProtectedRoute><ManageRooms /></ProtectedRoute>,
+        element: <ProtectedRoute requireAdmin><ManageRooms /></ProtectedRoute>,
       },
       {
         path: '/admin/tours',
-        element: <ProtectedRoute><ManageTours /></ProtectedRoute>,
+        element: <ProtectedRoute requireAdmin><ManageTours /></ProtectedRoute>,
       },
       {
         path: '/admin/bookings',
-        element: <ProtectedRoute><ManageBookings /></ProtectedRoute>,
+        element: <ProtectedRoute requireAdmin><ManageBookings /></ProtectedRoute>,
       },
       {
         path: '/admin/users',
-        element: <ProtectedRoute><ManageUsers /></ProtectedRoute>,
+        element: <ProtectedRoute requireSuperAdmin><ManageUsers /></ProtectedRoute>,
       },
     ],
   },

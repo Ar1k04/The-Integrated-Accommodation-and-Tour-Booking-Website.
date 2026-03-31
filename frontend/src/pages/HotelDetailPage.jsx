@@ -102,6 +102,9 @@ export default function HotelDetailPage() {
               <div className="flex items-center gap-1.5 mt-3 text-gray-500 text-sm">
                 <MapPin className="w-4 h-4" />{hotel.address || `${hotel.city}, ${hotel.country}`}
               </div>
+              {hotel.owner_name && (
+                <p className="mt-1 text-sm text-gray-500">Managed by <span className="font-medium text-gray-700">{hotel.owner_name}</span></p>
+              )}
             </div>
 
             {/* Amenities */}

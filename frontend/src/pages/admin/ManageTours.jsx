@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toursApi } from '@/api/toursApi'
+import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency } from '@/utils/formatters'
@@ -13,14 +14,16 @@ import {
 
 export default function ManageTours() {
   const qc = useQueryClient()
+  const { user } = useAuth()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-tours', page, search],
-    queryFn: () => toursApi.list({ page, per_page: 10, q: search || undefined }),
+    queryKey: ['admin-tours', page, search, user?.id],
+    queryFn: () => toursApi.list({ page, per_page: 10, q: search || undefined, owner_id: user?.id }),
     select: (res) => res.data,
+    enabled: !!user?.id,
   })
 
   const deleteMut = useMutation({

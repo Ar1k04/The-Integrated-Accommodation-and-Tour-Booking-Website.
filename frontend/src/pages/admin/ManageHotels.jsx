@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { hotelsApi } from '@/api/hotelsApi'
+import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency, formatDate } from '@/utils/formatters'
@@ -13,14 +14,16 @@ import {
 
 export default function ManageHotels() {
   const qc = useQueryClient()
+  const { user } = useAuth()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-hotels', page, search],
-    queryFn: () => hotelsApi.list({ page, per_page: 10, q: search || undefined }),
+    queryKey: ['admin-hotels', page, search, user?.id],
+    queryFn: () => hotelsApi.list({ page, per_page: 10, search: search || undefined, owner_id: user?.id }),
     select: (res) => res.data,
+    enabled: !!user?.id,
   })
 
   const deleteMut = useMutation({

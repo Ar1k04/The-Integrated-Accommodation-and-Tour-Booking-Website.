@@ -10,13 +10,15 @@ export function useAuth() {
   const refreshToken = useAuthStore((s) => s.refreshToken)
   const updateProfile = useAuthStore((s) => s.updateProfile)
 
-  const isAdmin = user?.role === 'admin'
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
+  const isSuperAdmin = user?.role === 'superadmin'
 
   return {
     user,
     isAuthenticated,
     isLoading,
     isAdmin,
+    isSuperAdmin,
     login,
     logout,
     register,

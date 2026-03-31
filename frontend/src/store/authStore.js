@@ -14,7 +14,7 @@ export const useAuthStore = create((set, get) => ({
     const { access_token } = res.data
     set({ accessToken: access_token, isAuthenticated: true })
     const me = await authApi.getMe(access_token)
-    set({ user: me.data })
+    set({ user: me.data, isLoading: false })
     return me.data
   },
 
@@ -23,7 +23,7 @@ export const useAuthStore = create((set, get) => ({
     const { access_token } = res.data
     set({ accessToken: access_token, isAuthenticated: true })
     const me = await authApi.getMe(access_token)
-    set({ user: me.data })
+    set({ user: me.data, isLoading: false })
     return me.data
   },
 

@@ -1,8 +1,13 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 
-export default function ProtectedRoute({ children, requireAdmin = false }) {
-  const { isAuthenticated, isLoading, isAdmin } = useAuth()
+export default function ProtectedRoute({
+  children,
+  requireAdmin = false,
+  requireSuperAdmin = false,
+  userOnly = false,
+}) {
+  const { isAuthenticated, isLoading, isAdmin, isSuperAdmin } = useAuth()
   const location = useLocation()
 
   if (isLoading) {
@@ -17,8 +22,16 @@ export default function ProtectedRoute({ children, requireAdmin = false }) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
+  if (requireSuperAdmin && !isSuperAdmin) {
+    return <Navigate to="/admin" replace />
+  }
+
   if (requireAdmin && !isAdmin) {
     return <Navigate to="/" replace />
+  }
+
+  if (userOnly && isAdmin) {
+    return <Navigate to="/admin" replace />
   }
 
   return children

@@ -107,6 +107,9 @@ export default function TourDetailPage() {
                     {tour.category && (
                       <span className="bg-primary/10 text-primary text-xs font-semibold px-3 py-0.5 rounded-full capitalize">{tour.category}</span>
                     )}
+                    {tour.owner_name && (
+                      <span className="text-gray-500">by <span className="font-medium text-gray-700">{tour.owner_name}</span></span>
+                    )}
                   </div>
                 </div>
                 {tour.avg_rating > 0 && (

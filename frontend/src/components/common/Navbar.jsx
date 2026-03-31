@@ -3,11 +3,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { CURRENCIES } from '@/utils/constants'
 import {
-  Menu, X, User, LogOut, Heart, ChevronDown, Globe, LayoutDashboard, Briefcase,
+  Menu, X, User, LogOut, Heart, ChevronDown, Globe, Briefcase,
 } from 'lucide-react'
 
 export default function Navbar() {
-  const { user, isAuthenticated, isAdmin, logout } = useAuth()
+  const { user, isAuthenticated, logout } = useAuth()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -86,10 +86,6 @@ export default function Navbar() {
                     className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-gray-100">
                     <Heart className="w-4 h-4" /> Wishlist
                   </Link>
-                  <Link to="/admin" onClick={() => setUserMenuOpen(false)}
-                    className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-gray-100 text-primary font-medium">
-                    <LayoutDashboard className="w-4 h-4" /> Dashboard
-                  </Link>
                   <hr className="my-1" />
                   <button onClick={handleLogout}
                     className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-gray-100 w-full text-left text-error">
@@ -123,10 +119,7 @@ export default function Navbar() {
           {isAuthenticated ? (
             <>
               <Link to="/profile" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Profile</Link>
-              <Link to="/admin" onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-2 py-2 text-sm font-medium text-accent-light">
-                <LayoutDashboard className="w-4 h-4" /> Dashboard
-              </Link>
+              <Link to="/my-bookings" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">My Bookings</Link>
               <button onClick={handleLogout} className="block py-2 text-sm text-error">Sign Out</button>
             </>
           ) : (

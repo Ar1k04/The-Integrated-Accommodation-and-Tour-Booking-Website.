@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react'
 
 export default function LoginPage() {
-  const { login, isAuthenticated } = useAuth()
+  const { login, isAuthenticated, isAdmin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from = location.state?.from?.pathname || '/'
@@ -17,6 +17,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
 
   if (isAuthenticated) {
+    if (isAdmin) return <Navigate to="/admin" replace />
     return <Navigate to={from} replace />
   }
 
@@ -25,9 +26,13 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login(form.email, form.password)
+      const user = await login(form.email, form.password)
       toast.success('Welcome back!')
-      navigate(from, { replace: true })
+      if (user.role === 'admin') {
+        navigate('/admin', { replace: true })
+      } else {
+        navigate(from, { replace: true })
+      }
     } catch (err) {
       setError(err.response?.data?.detail || 'Invalid email or password')
     } finally {
