@@ -24,6 +24,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Instruction docs (internal only)
+Instruction/
+.agents/
+skills-lock.json
+
 # OS / IDE
 .DS_Store
 .idea/
