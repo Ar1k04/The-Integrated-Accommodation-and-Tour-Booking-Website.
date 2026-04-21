@@ -12,6 +12,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.models.loyalty_tier import LoyaltyTier
 from app.models.user import User
 from app.schemas.user import UserCreate
 
@@ -21,11 +22,19 @@ async def register_user(db: AsyncSession, data: UserCreate) -> User:
     if result.scalar_one_or_none():
         raise ValueError("Email already registered")
 
+    # Lowest-threshold tier (typically Bronze, min_points=0); None if tiers unseeded.
+    bronze = (
+        await db.execute(
+            select(LoyaltyTier).order_by(LoyaltyTier.min_points.asc()).limit(1)
+        )
+    ).scalar_one_or_none()
+
     user = User(
         email=data.email,
         hashed_password=hash_password(data.password),
         full_name=data.full_name,
         phone=data.phone,
+        loyalty_tier_id=bronze.id if bronze else None,
     )
     db.add(user)
     await db.flush()

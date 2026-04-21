@@ -1,22 +1,33 @@
+"""Legacy tour booking endpoints.
+
+@deprecated — Sprint 2 removes this surface once the frontend migrates to the
+unified /bookings endpoint. Until then: POST writes BOTH a legacy tour_bookings
+row (for GET/PATCH/DELETE compatibility) and the new polymorphic booking +
+booking_item (for forward data integrity via booking_service).
+"""
 import math
 import uuid
 from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.models.tour import Tour
 from app.models.tour_booking import TourBooking
+from app.schemas.booking import BookingCreate
+from app.schemas.booking_item import TourItemCreate
 from app.schemas.tour_booking import (
     TourBookingCreate,
     TourBookingListResponse,
     TourBookingResponse,
     TourBookingUpdate,
 )
+from app.services import booking_service
+from app.services.booking_service import BookingServiceError
 
 router = APIRouter(prefix="/tour-bookings", tags=["Tour Bookings"])
 
@@ -27,37 +38,34 @@ async def create_tour_booking(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
-    tour = (
-        await db.execute(select(Tour).where(Tour.id == data.tour_id).with_for_update())
-    ).scalar_one_or_none()
-    if not tour:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+    """Wraps a single-item tour cart. Creates both the new polymorphic booking
+    and a legacy tour_bookings row for backward compatibility."""
 
-    existing_participants = (
-        await db.execute(
-            select(func.coalesce(func.sum(TourBooking.participants_count), 0))
-            .where(
-                and_(
-                    TourBooking.tour_id == data.tour_id,
-                    TourBooking.tour_date == data.tour_date,
-                    TourBooking.status.in_(["pending", "confirmed"]),
-                )
+    cart = BookingCreate(
+        items=[
+            TourItemCreate(
+                item_type="tour",
+                tour_id=data.tour_id,
+                tour_date=data.tour_date,
+                quantity=data.participants_count,
             )
-        )
-    ).scalar() or 0
+        ],
+        special_requests=data.special_requests,
+    )
 
-    if existing_participants + data.participants_count > tour.max_participants:
+    try:
+        await booking_service.create_booking(
+            db=db, user_id=current_user.id, data=cart
+        )
+    except BookingServiceError as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "TOUR_FULL",
-                "message": f"Only {tour.max_participants - existing_participants} spots left for this date.",
-            },
-        )
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
+    tour = (await db.execute(select(Tour).where(Tour.id == data.tour_id))).scalar_one()
     total_price = Decimal(str(tour.price_per_person)) * data.participants_count
 
-    booking = TourBooking(
+    legacy = TourBooking(
         user_id=current_user.id,
         tour_id=data.tour_id,
         tour_date=data.tour_date,
@@ -65,10 +73,10 @@ async def create_tour_booking(
         total_price=total_price,
         special_requests=data.special_requests,
     )
-    db.add(booking)
+    db.add(legacy)
     await db.flush()
-    await db.refresh(booking)
-    return booking
+    await db.refresh(legacy)
+    return legacy
 
 
 @router.get("", response_model=TourBookingListResponse)

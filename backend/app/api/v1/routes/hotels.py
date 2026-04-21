@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser
+from app.core.dependencies import AdminUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.hotel import Hotel
@@ -108,17 +108,42 @@ async def get_hotel(hotel_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get
     return hotel
 
 
+def _assert_owner_or_superadmin(hotel: Hotel, user) -> None:
+    if user.role == "superadmin":
+        return
+    if hotel.owner_id and hotel.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this hotel",
+        )
+
+
+def _slugify(text: str) -> str:
+    import re
+    slug = re.sub(r"[^\w\s-]", "", text.lower())
+    return re.sub(r"[\s_-]+", "-", slug).strip("-")
+
+
 @router.post("", response_model=HotelResponse, status_code=status.HTTP_201_CREATED)
 async def create_hotel(
     data: HotelCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
-    existing = await db.execute(select(Hotel).where(Hotel.slug == data.slug))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already exists")
+    slug = data.slug or _slugify(data.name)
+    # Ensure slug uniqueness by appending a short suffix when needed.
+    base_slug = slug
+    suffix = 1
+    while True:
+        existing = await db.execute(select(Hotel).where(Hotel.slug == slug))
+        if not existing.scalar_one_or_none():
+            break
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
 
-    hotel = Hotel(**data.model_dump())
+    hotel_data = data.model_dump()
+    hotel_data["slug"] = slug
+    hotel = Hotel(**hotel_data, owner_id=current_user.id)
     db.add(hotel)
     await db.flush()
     await db.refresh(hotel)
@@ -130,12 +155,13 @@ async def replace_hotel(
     hotel_id: uuid.UUID,
     data: HotelCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(Hotel).where(Hotel.id == hotel_id))
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
+    _assert_owner_or_superadmin(hotel, current_user)
 
     for field, value in data.model_dump().items():
         setattr(hotel, field, value)
@@ -149,12 +175,13 @@ async def update_hotel(
     hotel_id: uuid.UUID,
     data: HotelUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(Hotel).where(Hotel.id == hotel_id))
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
+    _assert_owner_or_superadmin(hotel, current_user)
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(hotel, field, value)
@@ -167,12 +194,13 @@ async def update_hotel(
 async def delete_hotel(
     hotel_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(Hotel).where(Hotel.id == hotel_id))
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
+    _assert_owner_or_superadmin(hotel, current_user)
     await db.delete(hotel)
     await db.flush()
 
@@ -181,7 +209,7 @@ async def delete_hotel(
 async def upload_hotel_images(
     hotel_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     files: list[UploadFile] = File(...),
 ):
     from app.services.cloudinary_service import upload_images
@@ -190,6 +218,7 @@ async def upload_hotel_images(
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
+    _assert_owner_or_superadmin(hotel, current_user)
 
     urls = await upload_images(files, folder="hotels")
     existing = hotel.images or []

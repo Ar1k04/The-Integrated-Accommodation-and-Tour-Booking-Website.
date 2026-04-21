@@ -12,6 +12,10 @@ from app.db.base import Base
 from app.models import (  # noqa: F401
     User, Hotel, Room, Booking, Tour, TourBooking,
     Review, Payment, Wishlist, PromoCode,
+    LoyaltyTier, LoyaltyTransaction,
+    Voucher, VoucherUsage,
+    RoomAvailability, TourSchedule,
+    FlightBooking, BookingItem,
 )
 
 config = context.config

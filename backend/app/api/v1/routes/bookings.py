@@ -1,8 +1,8 @@
 import math
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -10,38 +10,69 @@ from sqlalchemy.orm import selectinload
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
-from app.models.room import Room
 from app.schemas.booking import (
     BookingCreate,
     BookingDetailResponse,
     BookingListResponse,
     BookingResponse,
     BookingUpdate,
+    LegacyBookingCreate,
 )
-from app.services.availability_service import check_and_reserve
+from app.schemas.booking_item import RoomItemCreate
+from app.services import booking_service
+from app.services.booking_service import BookingServiceError
+from app.services.loyalty_service import LoyaltyError
+from app.services.voucher_service import VoucherError
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
 
+def _adapt_legacy(payload: dict) -> BookingCreate:
+    """Convert a legacy single-room booking payload into the new items[] shape."""
+
+    legacy = LegacyBookingCreate.model_validate(payload)
+    return BookingCreate(
+        items=[
+            RoomItemCreate(
+                item_type="room",
+                room_id=legacy.room_id,
+                check_in=legacy.check_in,
+                check_out=legacy.check_out,
+                quantity=1,
+                guests_count=legacy.guests_count or 1,
+            )
+        ],
+        voucher_code=legacy.promo_code,
+        special_requests=legacy.special_requests,
+    )
+
+
 @router.post("", response_model=BookingResponse, status_code=status.HTTP_201_CREATED)
 async def create_booking(
-    data: BookingCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    payload: Annotated[dict[str, Any], Body(...)],
 ):
-    try:
-        booking = await check_and_reserve(
-            db=db,
-            room_id=data.room_id,
-            check_in=data.check_in,
-            check_out=data.check_out,
-            user_id=current_user.id,
-            guests_count=data.guests_count,
-            special_requests=data.special_requests,
-            promo_code=data.promo_code,
+    """Accepts either the new items[] cart or the legacy single-room payload."""
+
+    if "items" in payload:
+        data = BookingCreate.model_validate(payload)
+    elif "room_id" in payload:
+        data = _adapt_legacy(payload)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Expected either `items` (cart) or `room_id` (legacy) in payload",
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
+        booking = await booking_service.create_booking(
+            db=db, user_id=current_user.id, data=data
+        )
+    except (BookingServiceError, VoucherError, LoyaltyError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     return booking
 
@@ -87,7 +118,7 @@ async def get_booking(
 ):
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.room))
+        .options(selectinload(Booking.room), selectinload(Booking.items))
         .where(Booking.id == booking_id, Booking.user_id == current_user.id)
     )
     booking = result.scalar_one_or_none()
@@ -130,7 +161,9 @@ async def cancel_booking(
     current_user: CurrentUser,
 ):
     result = await db.execute(
-        select(Booking).where(Booking.id == booking_id, Booking.user_id == current_user.id)
+        select(Booking)
+        .options(selectinload(Booking.items))
+        .where(Booking.id == booking_id, Booking.user_id == current_user.id)
     )
     booking = result.scalar_one_or_none()
     if not booking:
@@ -139,5 +172,4 @@ async def cancel_booking(
     if booking.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already cancelled")
 
-    booking.status = "cancelled"
-    await db.flush()
+    await booking_service.cancel_booking(db, booking)

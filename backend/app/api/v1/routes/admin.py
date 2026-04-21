@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser
+from app.core.dependencies import AdminUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.payment import Payment
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 @router.get("/stats")
 async def dashboard_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     period: str = Query("month", pattern="^(week|month|year)$"),
 ):
     now = datetime.now(timezone.utc)
@@ -121,7 +121,7 @@ async def dashboard_stats(
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     q: str | None = None,
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
@@ -155,7 +155,7 @@ async def list_users(
 async def get_user(
     user_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -169,7 +169,7 @@ async def update_user(
     user_id: uuid.UUID,
     data: UserUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -187,7 +187,7 @@ async def update_user(
 async def delete_user(
     user_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -200,7 +200,7 @@ async def delete_user(
 @router.get("/bookings")
 async def list_all_bookings(
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     booking_status: str | None = Query(None, alias="status"),
     q: str | None = None,
     page: int = Query(1, ge=1),
@@ -247,7 +247,7 @@ async def list_all_bookings(
 async def admin_update_booking(
     booking_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     new_status: str = Query(..., alias="status"),
 ):
     result = await db.execute(select(Booking).where(Booking.id == booking_id))

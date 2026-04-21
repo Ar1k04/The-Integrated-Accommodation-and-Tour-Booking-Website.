@@ -25,9 +25,13 @@ class Review(Base):
     tour_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tours.id", ondelete="CASCADE")
     )
+    booking_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("booking_item.id", ondelete="SET NULL"), index=True
+    )
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text)
 
     user = relationship("User", back_populates="reviews")
     hotel = relationship("Hotel", back_populates="reviews")
     tour = relationship("Tour", back_populates="reviews")
+    booking_item = relationship("BookingItem", back_populates="review")

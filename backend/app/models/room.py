@@ -21,6 +21,11 @@ class Room(Base):
     max_guests: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     amenities: Mapped[dict | None] = mapped_column(JSONB, default=list)
     images: Mapped[dict | None] = mapped_column(JSONB, default=list)
+    liteapi_room_id: Mapped[str | None] = mapped_column(String(100), index=True)
 
     hotel = relationship("Hotel", back_populates="rooms")
     bookings = relationship("Booking", back_populates="room", lazy="selectin")
+    booking_items = relationship("BookingItem", back_populates="room", lazy="selectin")
+    availability = relationship(
+        "RoomAvailability", back_populates="room", cascade="all, delete-orphan", lazy="selectin"
+    )

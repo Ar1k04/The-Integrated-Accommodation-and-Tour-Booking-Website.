@@ -1,9 +1,12 @@
 """
 Pytest fixtures for async testing with SQLAlchemy + httpx.
 
-Uses an in-memory SQLite DB (via aiosqlite) so tests run without Postgres/Redis.
+Uses a dedicated PostgreSQL test database (travel_test_db) so JSONB and other
+Postgres-specific types work correctly. The full schema is created before each
+test and dropped after, giving full isolation without requiring a separate schema.
 """
 import asyncio
+import os
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import date, timedelta
@@ -19,7 +22,10 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 
-TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+TEST_DB_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://travel_user:travel_password@postgres:5432/travel_test_db",
+)
 
 engine = create_async_engine(TEST_DB_URL, echo=False)
 TestSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

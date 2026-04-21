@@ -3,11 +3,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { CURRENCIES } from '@/utils/constants'
 import {
-  Menu, X, User, LogOut, Heart, ChevronDown, Globe, Briefcase,
+  Menu, X, User, LogOut, Heart, ChevronDown, Globe, Briefcase, LayoutDashboard,
 } from 'lucide-react'
 
 export default function Navbar() {
-  const { user, isAuthenticated, logout } = useAuth()
+  const { user, isAuthenticated, isAdmin, logout } = useAuth()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -74,6 +74,12 @@ export default function Navbar() {
               </button>
               {userMenuOpen && (
                 <div className="absolute right-0 mt-2 w-52 bg-white text-gray-800 rounded-lg shadow-xl py-1 z-50">
+                  {isAdmin && (
+                    <Link to="/admin" onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-gray-100">
+                      <LayoutDashboard className="w-4 h-4" /> Dashboard
+                    </Link>
+                  )}
                   <Link to="/profile" onClick={() => setUserMenuOpen(false)}
                     className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-gray-100">
                     <User className="w-4 h-4" /> My Profile
@@ -118,6 +124,9 @@ export default function Navbar() {
           <Link to="/tours" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Tours</Link>
           {isAuthenticated ? (
             <>
+              {isAdmin && (
+                <Link to="/admin" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Dashboard</Link>
+              )}
               <Link to="/profile" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Profile</Link>
               <Link to="/my-bookings" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">My Bookings</Link>
               <button onClick={handleLogout} className="block py-2 text-sm text-error">Sign Out</button>

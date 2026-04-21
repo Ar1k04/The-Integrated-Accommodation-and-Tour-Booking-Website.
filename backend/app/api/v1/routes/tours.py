@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser
+from app.core.dependencies import AdminUser, CurrentUser
 from app.db.session import get_db
 from app.models.tour import Tour
 from app.schemas.tour import TourCreate, TourListResponse, TourResponse, TourUpdate
@@ -77,17 +77,27 @@ async def get_tour(tour_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
     return tour
 
 
+def _assert_tour_owner_or_superadmin(tour: Tour, user) -> None:
+    if user.role == "superadmin":
+        return
+    if tour.owner_id and tour.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this tour",
+        )
+
+
 @router.post("", response_model=TourResponse, status_code=status.HTTP_201_CREATED)
 async def create_tour(
     data: TourCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     existing = await db.execute(select(Tour).where(Tour.slug == data.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already exists")
 
-    tour = Tour(**data.model_dump())
+    tour = Tour(**data.model_dump(), owner_id=current_user.id)
     db.add(tour)
     await db.flush()
     await db.refresh(tour)
@@ -99,12 +109,13 @@ async def replace_tour(
     tour_id: uuid.UUID,
     data: TourCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(Tour).where(Tour.id == tour_id))
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+    _assert_tour_owner_or_superadmin(tour, current_user)
 
     for field, value in data.model_dump().items():
         setattr(tour, field, value)
@@ -118,12 +129,13 @@ async def update_tour(
     tour_id: uuid.UUID,
     data: TourUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(Tour).where(Tour.id == tour_id))
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+    _assert_tour_owner_or_superadmin(tour, current_user)
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(tour, field, value)
@@ -136,12 +148,13 @@ async def update_tour(
 async def delete_tour(
     tour_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(Tour).where(Tour.id == tour_id))
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+    _assert_tour_owner_or_superadmin(tour, current_user)
     await db.delete(tour)
     await db.flush()
 
@@ -150,7 +163,7 @@ async def delete_tour(
 async def upload_tour_images(
     tour_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     files: list[UploadFile] = File(...),
 ):
     from app.services.cloudinary_service import upload_images
@@ -159,6 +172,7 @@ async def upload_tour_images(
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+    _assert_tour_owner_or_superadmin(tour, current_user)
 
     urls = await upload_images(files, folder="tours")
     existing = tour.images or []

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class HotelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    slug: str = Field(min_length=1, max_length=255)
+    slug: str | None = Field(None, max_length=255)
     description: str | None = None
     address: str | None = None
     city: str = Field(min_length=1, max_length=100)

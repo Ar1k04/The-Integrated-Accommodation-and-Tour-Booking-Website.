@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser
+from app.core.dependencies import AdminUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.hotel import Hotel
@@ -65,16 +65,36 @@ async def list_hotel_rooms(
     )
 
 
+def _assert_hotel_owner_or_superadmin(hotel: Hotel, user) -> None:
+    if user.role == "superadmin":
+        return
+    if hotel.owner_id and hotel.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not own this hotel",
+        )
+
+
+async def _load_room_and_check(db: AsyncSession, room_id: uuid.UUID, user) -> Room:
+    room = (await db.execute(select(Room).where(Room.id == room_id))).scalar_one_or_none()
+    if not room:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
+    hotel = (await db.execute(select(Hotel).where(Hotel.id == room.hotel_id))).scalar_one()
+    _assert_hotel_owner_or_superadmin(hotel, user)
+    return room
+
+
 @router.post("/hotels/{hotel_id}/rooms", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 async def create_room(
     hotel_id: uuid.UUID,
     data: RoomCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
     hotel = (await db.execute(select(Hotel).where(Hotel.id == hotel_id))).scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
+    _assert_hotel_owner_or_superadmin(hotel, current_user)
 
     room = Room(hotel_id=hotel_id, **data.model_dump())
     db.add(room)
@@ -99,13 +119,9 @@ async def replace_room(
     room_id: uuid.UUID,
     data: RoomCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
-    result = await db.execute(select(Room).where(Room.id == room_id))
-    room = result.scalar_one_or_none()
-    if not room:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
-
+    room = await _load_room_and_check(db, room_id, current_user)
     for field, value in data.model_dump().items():
         setattr(room, field, value)
     await db.flush()
@@ -118,13 +134,9 @@ async def update_room(
     room_id: uuid.UUID,
     data: RoomUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
-    result = await db.execute(select(Room).where(Room.id == room_id))
-    room = result.scalar_one_or_none()
-    if not room:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
-
+    room = await _load_room_and_check(db, room_id, current_user)
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(room, field, value)
     await db.flush()
@@ -136,12 +148,9 @@ async def update_room(
 async def delete_room(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ):
-    result = await db.execute(select(Room).where(Room.id == room_id))
-    room = result.scalar_one_or_none()
-    if not room:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
+    room = await _load_room_and_check(db, room_id, current_user)
     await db.delete(room)
     await db.flush()
 
@@ -181,16 +190,12 @@ async def check_room_availability(
 async def upload_room_images(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: AdminUser,
     files: list[UploadFile] = File(...),
 ):
     from app.services.cloudinary_service import upload_images
 
-    result = await db.execute(select(Room).where(Room.id == room_id))
-    room = result.scalar_one_or_none()
-    if not room:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
-
+    room = await _load_room_and_check(db, room_id, current_user)
     urls = await upload_images(files, folder="rooms")
     existing = room.images or []
     room.images = existing + urls

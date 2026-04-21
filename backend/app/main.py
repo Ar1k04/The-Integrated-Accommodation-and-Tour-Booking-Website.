@@ -49,6 +49,8 @@ from app.api.v1.routes.reviews import router as reviews_router  # noqa: E402
 from app.api.v1.routes.payments import router as payments_router  # noqa: E402
 from app.api.v1.routes.wishlists import router as wishlists_router  # noqa: E402
 from app.api.v1.routes.promo_codes import router as promo_codes_router  # noqa: E402
+from app.api.v1.routes.vouchers import router as vouchers_router  # noqa: E402
+from app.api.v1.routes.loyalty import router as loyalty_router  # noqa: E402
 from app.api.v1.routes.admin import router as admin_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/v1")
@@ -61,6 +63,8 @@ app.include_router(reviews_router, prefix="/api/v1")
 app.include_router(payments_router, prefix="/api/v1")
 app.include_router(wishlists_router, prefix="/api/v1")
 app.include_router(promo_codes_router, prefix="/api/v1")
+app.include_router(vouchers_router, prefix="/api/v1")
+app.include_router(loyalty_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 
 
