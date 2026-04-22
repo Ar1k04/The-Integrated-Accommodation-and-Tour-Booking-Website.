@@ -17,6 +17,12 @@ from app.schemas.room import RoomAvailabilityResponse, RoomCreate, RoomListRespo
 router = APIRouter(tags=["Rooms"])
 
 
+async def _get_hotel_for_room(db: AsyncSession, room: Room) -> Hotel:
+    """Load the hotel that owns this room (for ownership checks)."""
+    result = await db.execute(select(Hotel).where(Hotel.id == room.hotel_id))
+    return result.scalar_one_or_none()
+
+
 # --- nested under hotels ---
 
 @router.get("/hotels/{hotel_id}/rooms", response_model=RoomListResponse)

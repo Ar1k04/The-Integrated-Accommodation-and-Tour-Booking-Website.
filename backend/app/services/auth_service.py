@@ -34,6 +34,7 @@ async def register_user(db: AsyncSession, data: UserCreate) -> User:
         hashed_password=hash_password(data.password),
         full_name=data.full_name,
         phone=data.phone,
+        role=data.role,
         loyalty_tier_id=bronze.id if bronze else None,
     )
     db.add(user)

@@ -75,7 +75,9 @@ export default function HotelCard({ hotel }) {
 
         <div className="flex items-end justify-between mt-4 pt-3 border-t border-gray-100">
           <div>
-            <p className="text-2xl font-bold text-gray-900">{formatCurrency(hotel.base_price, hotel.currency)}</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {hotel.min_room_price != null ? formatCurrency(hotel.min_room_price, hotel.currency) : '—'}
+            </p>
             <p className="text-xs text-gray-500">per night</p>
           </div>
           <Link

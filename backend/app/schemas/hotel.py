@@ -17,7 +17,10 @@ class HotelCreate(BaseModel):
     property_type: str | None = None
     amenities: list | None = None
     images: list | None = None
-    base_price: float = Field(gt=0)
+    # Hotel price is derived from the hotel's rooms (min room price),
+    # but the DB model still has `base_price` as a required field.
+    # So we make it optional in the API and default it server-side on create.
+    base_price: float | None = Field(default=None, gt=0)
     currency: str = Field(default="USD", max_length=10)
 
 
@@ -37,6 +40,13 @@ class HotelUpdate(BaseModel):
     currency: str | None = Field(None, max_length=10)
 
 
+class OwnerInfo(BaseModel):
+    id: uuid.UUID
+    full_name: str
+
+    model_config = {"from_attributes": True}
+
+
 class HotelResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -52,9 +62,13 @@ class HotelResponse(BaseModel):
     amenities: list | None = None
     images: list | None = None
     base_price: float
+    # Minimum room price for this hotel (optionally date-filtered by list queries).
+    min_room_price: float | None = None
     currency: str = "USD"
     avg_rating: float
     total_reviews: int
+    owner_id: uuid.UUID | None = None
+    owner_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

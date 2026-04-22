@@ -18,10 +18,15 @@ export default function ManageHotels() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
+  const ownerId = user?.role === 'superadmin' ? undefined : user?.id
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-hotels', page, search, user?.id],
-    queryFn: () => hotelsApi.list({ page, per_page: 10, search: search || undefined, owner_id: user?.id }),
+    queryKey: ['admin-hotels', page, search, user?.role, user?.id],
+    queryFn: () => {
+      const params = { page, per_page: 10, search: search || undefined }
+      if (ownerId) params.owner_id = ownerId
+      return hotelsApi.list(params)
+    },
     select: (res) => res.data,
     enabled: !!user?.id,
   })
@@ -75,7 +80,7 @@ export default function ManageHotels() {
               <Link to="/admin" className="text-sm text-primary hover:underline">&larr; Dashboard</Link>
               <h1 className="font-heading text-2xl font-bold text-gray-900">Manage Hotels</h1>
             </div>
-            <button onClick={() => setModal({ name: '', city: '', country: '', star_rating: 3, base_price: 0, description: '' })}
+            <button onClick={() => setModal({ name: '', city: '', country: '', star_rating: 3, description: '' })}
               className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2">
               <Plus className="w-4 h-4" /> Add Hotel
             </button>
@@ -98,7 +103,7 @@ export default function ManageHotels() {
                       <th className="pb-3 font-medium">Hotel</th>
                       <th className="pb-3 font-medium">Location</th>
                       <th className="pb-3 font-medium">Stars</th>
-                      <th className="pb-3 font-medium">Price</th>
+                      <th className="pb-3 font-medium">From</th>
                       <th className="pb-3 font-medium">Rating</th>
                       <th className="pb-3 font-medium text-right">Actions</th>
                     </tr>
@@ -113,7 +118,9 @@ export default function ManageHotels() {
                             <Star className="w-3.5 h-3.5 fill-warning text-warning" />{h.star_rating}
                           </div>
                         </td>
-                        <td className="py-3">{formatCurrency(h.base_price, h.currency)}</td>
+                        <td className="py-3">
+                          {h.min_room_price != null ? formatCurrency(h.min_room_price, h.currency) : '—'}
+                        </td>
                         <td className="py-3">{h.avg_rating?.toFixed(1) || '—'}</td>
                         <td className="py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -170,7 +177,6 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
     city: hotel.city || '',
     country: hotel.country || '',
     star_rating: hotel.star_rating || 3,
-    base_price: hotel.base_price || '',
     currency: hotel.currency || DEFAULT_CURRENCY,
     description: hotel.description || '',
     address: hotel.address || '',
@@ -207,7 +213,7 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    const payload = { ...form, base_price: Number(form.base_price) }
+    const payload = { ...form }
     if (!hotel.id) payload.slug = slugify(form.name)
     payload.images = images.filter((img) => img.type === 'existing').map((img) => img.url)
     const newFiles = images.filter((img) => img.type === 'new').map((img) => img.file)
@@ -264,11 +270,6 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Base Price</label>
-              <input type="number" min="1" value={form.base_price} onChange={(e) => setForm({ ...form, base_price: e.target.value })}
-                required className="w-full border rounded-lg px-4 py-2.5 text-sm" />
-            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
               <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}

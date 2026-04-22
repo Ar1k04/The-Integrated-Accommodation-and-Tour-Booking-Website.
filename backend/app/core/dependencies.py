@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.db.session import get_db
 
+ADMIN_ROLES = {"admin", "superadmin"}
+
 
 async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -48,12 +50,14 @@ async def get_current_user(
 
 
 async def require_admin(current_user=Depends(get_current_user)):
-    if current_user.role not in ("admin", "superadmin"):
+    """Allow both admin and superadmin roles."""
+    if current_user.role not in ADMIN_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
 
 async def require_superadmin(current_user=Depends(get_current_user)):
+    """Allow only superadmin role."""
     if current_user.role != "superadmin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access required")
     return current_user

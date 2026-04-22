@@ -48,3 +48,5 @@ class User(Base):
     voucher_usages = relationship(
         "VoucherUsage", back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
+    hotels = relationship("Hotel", back_populates="owner", lazy="noload")
+    tours = relationship("Tour", back_populates="owner", lazy="noload")

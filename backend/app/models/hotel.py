@@ -31,5 +31,6 @@ class Hotel(Base):
     total_reviews: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     liteapi_hotel_id: Mapped[str | None] = mapped_column(String(100), index=True)
 
+    owner = relationship("User", back_populates="hotels", lazy="selectin")
     rooms = relationship("Room", back_populates="hotel", lazy="selectin", cascade="all, delete-orphan")
     reviews = relationship("Review", back_populates="hotel", lazy="selectin")

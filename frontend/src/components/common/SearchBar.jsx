@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSearchStore } from '@/store/searchStore'
 import { useDebounce } from '@/hooks/useDebounce'
@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { hotelsApi } from '@/api/hotelsApi'
 import { Search, MapPin, Calendar, Users } from 'lucide-react'
 import { format } from 'date-fns'
+import DateRangeCalendar from '@/components/common/DateRangeCalendar'
 
 export default function SearchBar({ variant = 'hero' }) {
   const navigate = useNavigate()
@@ -14,6 +15,8 @@ export default function SearchBar({ variant = 'hero' }) {
   const [localDest, setLocalDest] = useState(destination)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [showGuests, setShowGuests] = useState(false)
+  const [showCalendar, setShowCalendar] = useState(false)
+  const calendarWrapRef = useRef(null)
   const debouncedDest = useDebounce(localDest, 300)
 
   const { data: suggestions } = useQuery({
@@ -40,6 +43,18 @@ export default function SearchBar({ variant = 'hero' }) {
       navigate(`/tours?${params.toString()}`)
     }
   }
+
+  useEffect(() => {
+    if (!showCalendar) return
+    const handleDocMouseDown = (e) => {
+      const el = calendarWrapRef.current
+      if (!el) return
+      if (el.contains(e.target)) return
+      setShowCalendar(false)
+    }
+    document.addEventListener('mousedown', handleDocMouseDown)
+    return () => document.removeEventListener('mousedown', handleDocMouseDown)
+  }, [showCalendar])
 
   const isHero = variant === 'hero'
 
@@ -91,25 +106,44 @@ export default function SearchBar({ variant = 'hero' }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 min-w-[200px]">
+        <div className="relative flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 min-w-[200px]">
           <Calendar className="w-5 h-5 text-gray-400 shrink-0" />
-          <input
-            type="date"
-            value={checkIn ? format(checkIn, 'yyyy-MM-dd') : ''}
-            onChange={(e) => setDates(e.target.value ? new Date(e.target.value) : null, checkOut)}
-            min={format(new Date(), 'yyyy-MM-dd')}
-            className="text-sm flex-1 min-w-0 focus:outline-none"
-            placeholder="Check-in"
-          />
+
+          <button
+            type="button"
+            onClick={() => setShowCalendar((s) => !s)}
+            className="flex-1 text-left min-w-0 focus:outline-none"
+          >
+            <div className="text-sm">
+              <span className={checkIn ? 'text-primary font-bold' : 'text-gray-400'}>{checkIn ? format(checkIn, 'MMM dd') : 'Check-in'}</span>
+              {checkIn && <span className="text-gray-300"> </span>}
+            </div>
+          </button>
+
           <span className="text-gray-300">—</span>
-          <input
-            type="date"
-            value={checkOut ? format(checkOut, 'yyyy-MM-dd') : ''}
-            onChange={(e) => setDates(checkIn, e.target.value ? new Date(e.target.value) : null)}
-            min={checkIn ? format(new Date(checkIn.getTime() + 86400000), 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd')}
-            className="text-sm flex-1 min-w-0 focus:outline-none"
-            placeholder="Check-out"
-          />
+
+          <button
+            type="button"
+            onClick={() => setShowCalendar((s) => !s)}
+            className="flex-1 text-left min-w-0 focus:outline-none"
+          >
+            <div className="text-sm">
+              <span className={checkOut ? 'text-primary font-bold' : 'text-gray-400'}>{checkOut ? format(checkOut, 'MMM dd') : 'Check-out'}</span>
+            </div>
+          </button>
+
+          {showCalendar && (
+            <div ref={calendarWrapRef} className="absolute left-0 top-full z-50 mt-2">
+              <DateRangeCalendar
+                checkIn={checkIn}
+                checkOut={checkOut}
+                minDate={new Date()}
+                onChange={(from, to) => {
+                  setDates(from, to)
+                }}
+              />
+            </div>
+          )}
         </div>
 
         <div className="relative">

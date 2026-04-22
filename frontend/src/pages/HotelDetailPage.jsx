@@ -61,12 +61,16 @@ export default function HotelDetailPage() {
   if (!hotel) return <div className="text-center py-20 text-gray-400">Hotel not found</div>
 
   const reviews = reviewsData?.items || []
+  const cheapestRoom = rooms?.length
+    ? rooms.reduce((min, r) => (min === null || r.price_per_night < min.price_per_night ? r : min), null)
+    : null
+  const startingPrice = cheapestRoom?.price_per_night
 
   return (
     <>
       <Helmet>
         <title>{hotel.name} — TravelBooking</title>
-        <meta name="description" content={`${hotel.name} — ${hotel.star_rating}-star hotel in ${hotel.city}, ${hotel.country}. From $${hotel.base_price}/night.`} />
+        <meta name="description" content={`${hotel.name} — ${hotel.star_rating}-star hotel in ${hotel.city}, ${hotel.country}. Browse available rooms and reserve your stay.`} />
         <meta property="og:title" content={`${hotel.name} — TravelBooking`} />
       </Helmet>
       <div className="max-w-7xl mx-auto px-4 py-4">
@@ -162,13 +166,14 @@ export default function HotelDetailPage() {
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-900">
-                  {formatCurrency(rooms?.[0]?.price_per_night || hotel.base_price, hotel.currency)}
+                  {startingPrice ? formatCurrency(startingPrice, hotel.currency) : '—'}
                 </p>
                 <p className="text-sm text-gray-500">starting per night</p>
               </div>
               <button
-                onClick={() => rooms?.[0] && handleReserve(rooms[0])}
-                className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-3 rounded-lg transition-colors"
+                onClick={() => cheapestRoom && handleReserve(cheapestRoom)}
+                disabled={!cheapestRoom}
+                className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Reserve Now
               </button>

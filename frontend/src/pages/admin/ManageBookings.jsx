@@ -15,15 +15,24 @@ export default function ManageBookings() {
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
+  const [bookingType, setBookingType] = useState('hotel') // 'hotel' | 'tour'
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-bookings', page, statusFilter, search],
-    queryFn: () => adminApi.listBookings({ page, per_page: 10, status: statusFilter || undefined, q: search || undefined }),
+    queryKey: ['admin-bookings', bookingType, page, statusFilter, search],
+    queryFn: () => (
+      bookingType === 'hotel'
+        ? adminApi.listBookings({ page, per_page: 10, status: statusFilter || undefined, q: search || undefined })
+        : adminApi.listTourBookings({ page, per_page: 10, status: statusFilter || undefined, q: search || undefined })
+    ),
     select: (res) => res.data,
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ id, status }) => adminApi.updateBooking(id, status),
+    mutationFn: ({ id, status }) => (
+      bookingType === 'hotel'
+        ? adminApi.updateBooking(id, status)
+        : adminApi.updateTourBooking(id, status)
+    ),
     onSuccess: () => { toast.success('Status updated'); qc.invalidateQueries({ queryKey: ['admin-bookings'] }) },
     onError: () => toast.error('Failed to update'),
   })
@@ -49,6 +58,18 @@ export default function ManageBookings() {
                   placeholder="Search by ID..." className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm" />
               </div>
               <div className="flex gap-2">
+                <button
+                  onClick={() => { setBookingType('hotel'); setStatusFilter(''); setPage(1) }}
+                  className={`px-3 py-2 rounded-lg text-xs font-medium border ${bookingType === 'hotel' ? 'bg-primary text-white border-primary' : ''}`}
+                >
+                  Hotel
+                </button>
+                <button
+                  onClick={() => { setBookingType('tour'); setStatusFilter(''); setPage(1) }}
+                  className={`px-3 py-2 rounded-lg text-xs font-medium border ${bookingType === 'tour' ? 'bg-primary text-white border-primary' : ''}`}
+                >
+                  Tour
+                </button>
                 <button onClick={() => { setStatusFilter(''); setPage(1) }}
                   className={`px-3 py-2 rounded-lg text-xs font-medium border ${!statusFilter ? 'bg-primary text-white border-primary' : ''}`}>
                   All
@@ -71,7 +92,8 @@ export default function ManageBookings() {
                     <tr className="text-left text-gray-500 border-b">
                       <th className="pb-3 font-medium">ID</th>
                       <th className="pb-3 font-medium">User</th>
-                      <th className="pb-3 font-medium">Dates</th>
+                      <th className="pb-3 font-medium">{bookingType === 'hotel' ? 'Hotel / Room' : 'Tour'}</th>
+                      <th className="pb-3 font-medium">{bookingType === 'hotel' ? 'Dates' : 'Date'}</th>
                       <th className="pb-3 font-medium">Status</th>
                       <th className="pb-3 font-medium">Amount</th>
                       <th className="pb-3 font-medium text-right">Actions</th>
@@ -81,8 +103,38 @@ export default function ManageBookings() {
                     {bookings.map((b) => (
                       <tr key={b.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 font-mono text-xs">{b.id?.slice(0, 8)}</td>
-                        <td className="py-3">{b.user?.full_name || b.user_id?.slice(0, 8)}</td>
-                        <td className="py-3">{formatDate(b.check_in)} — {formatDate(b.check_out)}</td>
+                        <td className="py-3">
+                          <div className="font-medium">{b.user?.full_name || b.user_id?.slice(0, 8)}</div>
+                          {b.user?.email && <div className="text-xs text-gray-500">{b.user.email}</div>}
+                          {b.user?.phone && <div className="text-xs text-gray-500">{b.user.phone}</div>}
+                          {typeof b.user?.loyalty_points === 'number' && (
+                            <div className="text-xs text-gray-400">Loyalty: {b.user.loyalty_points}</div>
+                          )}
+                        </td>
+                        <td className="py-3">
+                          {bookingType === 'hotel' ? (
+                            <>
+                              <div className="font-medium">{b.room?.hotel?.name || '—'}</div>
+                              <div className="text-xs text-gray-500">{b.room?.name || '—'}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="font-medium">{b.tour?.name || '—'}</div>
+                              <div className="text-xs text-gray-500">{b.tour?.city ? `${b.tour.city}, ${b.tour.country}` : '—'}</div>
+                            </>
+                          )}
+                        </td>
+                        <td className="py-3">
+                          {bookingType === 'hotel' ? (
+                            <>
+                              {formatDate(b.check_in)} — {formatDate(b.check_out)}
+                            </>
+                          ) : (
+                            <>
+                              {formatDate(b.tour_date)} · {b.participants_count} pax
+                            </>
+                          )}
+                        </td>
                         <td className="py-3"><BookingStatusBadge status={b.status} /></td>
                         <td className="py-3 font-semibold">{formatCurrency(b.total_price)}</td>
                         <td className="py-3 text-right">
@@ -97,7 +149,7 @@ export default function ManageBookings() {
                       </tr>
                     ))}
                     {bookings.length === 0 && (
-                      <tr><td colSpan={6} className="py-12 text-center text-gray-400">No bookings found</td></tr>
+                      <tr><td colSpan={7} className="py-12 text-center text-gray-400">No bookings found</td></tr>
                     )}
                   </tbody>
                 </table>

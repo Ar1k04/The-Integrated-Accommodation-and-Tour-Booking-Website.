@@ -4,10 +4,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import Date, String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.core.dependencies import AdminUser
+from app.core.dependencies import AdminUser, SuperAdminUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.payment import Payment
@@ -121,7 +122,7 @@ async def dashboard_stats(
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: SuperAdminUser,
     q: str | None = None,
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
@@ -155,7 +156,7 @@ async def list_users(
 async def get_user(
     user_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: SuperAdminUser,
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -169,7 +170,7 @@ async def update_user(
     user_id: uuid.UUID,
     data: UserUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: SuperAdminUser,
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -187,7 +188,7 @@ async def update_user(
 async def delete_user(
     user_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: SuperAdminUser,
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -206,9 +207,18 @@ async def list_all_bookings(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
 ):
-    query = select(Booking)
+    query = (
+        select(Booking)
+        .options(
+            selectinload(Booking.user),
+            selectinload(Booking.room).selectinload(Room.hotel),
+            selectinload(Booking.payment),
+        )
+    )
     if booking_status:
         query = query.where(Booking.status == booking_status)
+    if q:
+        query = query.where(cast(Booking.id, String).ilike(f"%{q}%"))
 
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
@@ -220,15 +230,44 @@ async def list_all_bookings(
 
     items = []
     for b in bookings:
+        room = b.room
+        hotel = room.hotel if room else None
+        user = b.user
+        payment = b.payment
+
         items.append({
             "id": str(b.id),
             "user_id": str(b.user_id),
+            "user": {
+                "id": str(user.id),
+                "full_name": user.full_name,
+                "phone": user.phone,
+                "email": user.email,
+                "loyalty_points": user.loyalty_points,
+            } if user else None,
             "room_id": str(b.room_id),
+            "room": {
+                "id": str(room.id),
+                "name": room.name,
+                "room_type": room.room_type,
+                "price_per_night": float(room.price_per_night),
+                "hotel": {
+                    "id": str(hotel.id),
+                    "name": hotel.name,
+                    "city": hotel.city,
+                    "country": hotel.country,
+                    "slug": hotel.slug,
+                } if hotel else None,
+            } if room else None,
             "check_in": str(b.check_in),
             "check_out": str(b.check_out),
             "guests_count": b.guests_count,
             "total_price": float(b.total_price),
             "status": b.status,
+            "payment": {
+                "status": payment.status,
+                "stripe_payment_intent_id": payment.stripe_payment_intent_id,
+            } if payment else None,
             "created_at": b.created_at.isoformat(),
         })
 
@@ -254,6 +293,103 @@ async def admin_update_booking(
     booking = result.scalar_one_or_none()
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    booking.status = new_status
+    await db.flush()
+    await db.refresh(booking)
+
+    return {
+        "success": True,
+        "data": {
+            "id": str(booking.id),
+            "status": booking.status,
+        },
+    }
+
+
+@router.get("/tour-bookings")
+async def list_all_tour_bookings(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+    booking_status: str | None = Query(None, alias="status"),
+    q: str | None = None,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+):
+    query = (
+        select(TourBooking)
+        .options(
+            selectinload(TourBooking.user),
+            selectinload(TourBooking.tour),
+        )
+    )
+    if booking_status:
+        query = query.where(TourBooking.status == booking_status)
+    if q:
+        query = query.where(cast(TourBooking.id, String).ilike(f"%{q}%"))
+
+    count_q = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    query = query.order_by(TourBooking.created_at.desc())
+    query = query.offset((page - 1) * per_page).limit(per_page)
+    result = await db.execute(query)
+    bookings = result.scalars().all()
+
+    items = []
+    for b in bookings:
+        tour = b.tour
+        user = b.user
+
+        items.append({
+            "id": str(b.id),
+            "user_id": str(b.user_id),
+            "user": {
+                "id": str(user.id),
+                "full_name": user.full_name,
+                "phone": user.phone,
+                "email": user.email,
+                "loyalty_points": user.loyalty_points,
+            } if user else None,
+            "tour_id": str(b.tour_id),
+            "tour": {
+                "id": str(tour.id) if tour else str(b.tour_id),
+                "name": tour.name if tour else None,
+                "city": tour.city if tour else None,
+                "country": tour.country if tour else None,
+                "category": tour.category if tour else None,
+                "slug": tour.slug if tour else None,
+            } if tour else None,
+            "tour_date": str(b.tour_date),
+            "participants_count": b.participants_count,
+            "total_price": float(b.total_price),
+            "status": b.status,
+            "special_requests": b.special_requests,
+            "created_at": b.created_at.isoformat(),
+        })
+
+    return {
+        "items": items,
+        "meta": {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": math.ceil(total / per_page) if total else 0,
+        },
+    }
+
+
+@router.patch("/tour-bookings/{booking_id}")
+async def admin_update_tour_booking(
+    booking_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+    new_status: str = Query(..., alias="status"),
+):
+    result = await db.execute(select(TourBooking).where(TourBooking.id == booking_id))
+    booking = result.scalar_one_or_none()
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour booking not found")
 
     booking.status = new_status
     await db.flush()

@@ -14,6 +14,13 @@ from app.schemas.tour import TourCreate, TourListResponse, TourResponse, TourUpd
 router = APIRouter(prefix="/tours", tags=["Tours"])
 
 
+def _tour_response(tour: Tour) -> TourResponse:
+    data = TourResponse.model_validate(tour)
+    if tour.owner:
+        data.owner_name = tour.owner.full_name
+    return data
+
+
 @router.get("", response_model=TourListResponse)
 async def list_tours(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -24,6 +31,7 @@ async def list_tours(
     min_price: float | None = None,
     max_price: float | None = None,
     duration: int | None = None,
+    owner_id: uuid.UUID | None = Query(None, description="Filter by owner admin"),
     sort_by: str = Query("created_at", pattern="^(created_at|price_per_person|avg_rating|duration_days|name)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -31,6 +39,8 @@ async def list_tours(
 ):
     query = select(Tour)
 
+    if owner_id:
+        query = query.where(Tour.owner_id == owner_id)
     if city:
         query = query.where(Tour.city.ilike(f"%{city}%"))
     if country:
@@ -58,7 +68,7 @@ async def list_tours(
     tours = result.scalars().all()
 
     return TourListResponse(
-        items=[TourResponse.model_validate(t) for t in tours],
+        items=[_tour_response(t) for t in tours],
         meta={
             "total": total,
             "page": page,
@@ -74,7 +84,7 @@ async def get_tour(tour_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
-    return tour
+    return _tour_response(tour)
 
 
 def _assert_tour_owner_or_superadmin(tour: Tour, user) -> None:
@@ -101,7 +111,7 @@ async def create_tour(
     db.add(tour)
     await db.flush()
     await db.refresh(tour)
-    return tour
+    return _tour_response(tour)
 
 
 @router.put("/{tour_id}", response_model=TourResponse)
@@ -121,7 +131,7 @@ async def replace_tour(
         setattr(tour, field, value)
     await db.flush()
     await db.refresh(tour)
-    return tour
+    return _tour_response(tour)
 
 
 @router.patch("/{tour_id}", response_model=TourResponse)
@@ -141,7 +151,7 @@ async def update_tour(
         setattr(tour, field, value)
     await db.flush()
     await db.refresh(tour)
-    return tour
+    return _tour_response(tour)
 
 
 @router.delete("/{tour_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -179,4 +189,4 @@ async def upload_tour_images(
     tour.images = existing + urls
     await db.flush()
     await db.refresh(tour)
-    return tour
+    return _tour_response(tour)

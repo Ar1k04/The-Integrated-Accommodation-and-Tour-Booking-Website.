@@ -55,6 +55,8 @@ class TourResponse(BaseModel):
     images: list | None = None
     avg_rating: float
     total_reviews: int
+    owner_id: uuid.UUID | None = None
+    owner_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

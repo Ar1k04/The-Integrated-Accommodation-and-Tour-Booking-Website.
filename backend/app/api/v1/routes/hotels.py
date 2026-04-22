@@ -17,6 +17,14 @@ from app.schemas.hotel import HotelCreate, HotelListResponse, HotelResponse, Hot
 router = APIRouter(prefix="/hotels", tags=["Hotels"])
 
 
+def _hotel_response(hotel: Hotel, min_room_price: float | None = None) -> HotelResponse:
+    data = HotelResponse.model_validate(hotel)
+    data.min_room_price = min_room_price
+    if hotel.owner:
+        data.owner_name = hotel.owner.full_name
+    return data
+
+
 @router.get("", response_model=HotelListResponse)
 async def list_hotels(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -31,13 +39,45 @@ async def list_hotels(
     amenities: str | None = Query(None, description="Comma-separated amenity list"),
     property_type: str | None = None,
     search: str | None = Query(None, description="Text search on name/description"),
+    owner_id: uuid.UUID | None = Query(None, description="Filter by owner admin"),
     sort_by: str = Query("created_at", regex="^(created_at|base_price|avg_rating|star_rating|name)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
 ):
-    query = select(Hotel)
+    # Treat "hotel price" as the minimum price among its rooms.
+    # If check-in/out is provided, only consider rooms available for that date range.
+    room_price_q = (
+        select(
+            Room.hotel_id.label("hotel_id"),
+            func.min(Room.price_per_night).label("min_room_price"),
+        )
+        .group_by(Room.hotel_id)
+    )
+    if check_in and check_out:
+        overlap_rooms_q = (
+            select(Booking.room_id)
+            .where(
+                and_(
+                    Booking.status.in_(["pending", "confirmed"]),
+                    Booking.check_in < check_out,
+                    Booking.check_out > check_in,
+                )
+            )
+        )
+        room_price_q = room_price_q.where(Room.id.notin_(overlap_rooms_q))
 
+    if guests:
+        room_price_q = room_price_q.where(Room.max_guests >= guests)
+
+    room_price_subq = room_price_q.subquery()
+
+    query = select(Hotel, room_price_subq.c.min_room_price).outerjoin(
+        room_price_subq, Hotel.id == room_price_subq.c.hotel_id
+    )
+
+    if owner_id:
+        query = query.where(Hotel.owner_id == owner_id)
     if city:
         query = query.where(Hotel.city.ilike(f"%{city}%"))
     if country:
@@ -45,9 +85,9 @@ async def list_hotels(
     if star_rating:
         query = query.where(Hotel.star_rating == star_rating)
     if min_price is not None:
-        query = query.where(Hotel.base_price >= min_price)
+        query = query.where(room_price_subq.c.min_room_price >= min_price)
     if max_price is not None:
-        query = query.where(Hotel.base_price <= max_price)
+        query = query.where(room_price_subq.c.min_room_price <= max_price)
     if property_type:
         query = query.where(Hotel.property_type == property_type)
     if search:
@@ -58,38 +98,28 @@ async def list_hotels(
             query = query.where(Hotel.amenities.contains([amenity.strip()]))
 
     if check_in and check_out:
-        available_hotel_ids = (
-            select(Room.hotel_id)
-            .where(
-                Room.id.notin_(
-                    select(Booking.room_id)
-                    .where(
-                        and_(
-                            Booking.status.in_(["pending", "confirmed"]),
-                            Booking.check_in < check_out,
-                            Booking.check_out > check_in,
-                        )
-                    )
-                    .correlate(Room)
-                )
-            )
-        )
-        if guests:
-            available_hotel_ids = available_hotel_ids.where(Room.max_guests >= guests)
-        query = query.where(Hotel.id.in_(available_hotel_ids))
+        # Only include hotels that have at least one available room.
+        query = query.where(room_price_subq.c.min_room_price.isnot(None))
 
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
-    sort_col = getattr(Hotel, sort_by)
-    query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
+    if sort_by == "base_price":
+        sort_col = room_price_subq.c.min_room_price
+    else:
+        sort_col = getattr(Hotel, sort_by)
+
+    if sort_order == "desc":
+        query = query.order_by(sort_col.desc().nulls_last() if sort_by == "base_price" else sort_col.desc())
+    else:
+        query = query.order_by(sort_col.asc().nulls_last() if sort_by == "base_price" else sort_col.asc())
     query = query.offset((page - 1) * per_page).limit(per_page)
 
     result = await db.execute(query)
-    hotels = result.scalars().all()
+    rows = result.all()
 
     return HotelListResponse(
-        items=[HotelResponse.model_validate(h) for h in hotels],
+        items=[_hotel_response(row[0], row[1]) for row in rows],
         meta={
             "total": total,
             "page": page,
@@ -105,7 +135,11 @@ async def get_hotel(hotel_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
-    return hotel
+    min_price_result = await db.execute(
+        select(func.min(Room.price_per_night)).where(Room.hotel_id == hotel_id)
+    )
+    min_room_price = min_price_result.scalar_one_or_none()
+    return _hotel_response(hotel, min_room_price)
 
 
 def _assert_owner_or_superadmin(hotel: Hotel, user) -> None:
@@ -143,11 +177,13 @@ async def create_hotel(
 
     hotel_data = data.model_dump()
     hotel_data["slug"] = slug
+    if hotel_data.get("base_price") is None:
+        hotel_data["base_price"] = 1
     hotel = Hotel(**hotel_data, owner_id=current_user.id)
     db.add(hotel)
     await db.flush()
     await db.refresh(hotel)
-    return hotel
+    return _hotel_response(hotel, None)
 
 
 @router.put("/{hotel_id}", response_model=HotelResponse)
@@ -164,10 +200,13 @@ async def replace_hotel(
     _assert_owner_or_superadmin(hotel, current_user)
 
     for field, value in data.model_dump().items():
+        # Allow omitting base_price from the API; keep existing value in that case.
+        if field == "base_price" and value is None:
+            continue
         setattr(hotel, field, value)
     await db.flush()
     await db.refresh(hotel)
-    return hotel
+    return _hotel_response(hotel, None)
 
 
 @router.patch("/{hotel_id}", response_model=HotelResponse)
@@ -187,7 +226,7 @@ async def update_hotel(
         setattr(hotel, field, value)
     await db.flush()
     await db.refresh(hotel)
-    return hotel
+    return _hotel_response(hotel, None)
 
 
 @router.delete("/{hotel_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -225,4 +264,4 @@ async def upload_hotel_images(
     hotel.images = existing + urls
     await db.flush()
     await db.refresh(hotel)
-    return hotel
+    return _hotel_response(hotel, None)

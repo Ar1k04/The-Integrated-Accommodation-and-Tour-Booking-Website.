@@ -25,10 +25,10 @@ __pycache__/
 .ruff_cache/
 
 # Instruction docs (internal only)
-Instruction/
+docs/
 .agents/
 skills-lock.json
-
+Claude.md
 # OS / IDE
 .DS_Store
 .idea/

@@ -16,13 +16,18 @@ import {
 export default function ManageRooms() {
   const qc = useQueryClient()
   const { user } = useAuth()
+  const ownerId = user?.role === 'superadmin' ? undefined : user?.id
   const [selectedHotel, setSelectedHotel] = useState('')
   const [page, setPage] = useState(1)
   const [modal, setModal] = useState(null)
 
   const { data: hotelsData } = useQuery({
-    queryKey: ['all-hotels-list', user?.id],
-    queryFn: () => hotelsApi.list({ per_page: 100, owner_id: user?.id }),
+    queryKey: ['all-hotels-list', user?.role, user?.id],
+    queryFn: () => {
+      const params = { per_page: 100 }
+      if (ownerId) params.owner_id = ownerId
+      return hotelsApi.list(params)
+    },
     select: (res) => res.data?.items || [],
     enabled: !!user?.id,
   })
@@ -45,7 +50,19 @@ export default function ManageRooms() {
   const saveMut = useMutation({
     mutationFn: ({ id, data }) => id ? roomsApi.update(id, data) : roomsApi.create(selectedHotel, data),
     onSuccess: () => { toast.success('Saved'); setModal(null); qc.invalidateQueries({ queryKey: ['admin-rooms'] }) },
-    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to save'),
+    onError: (err) => {
+      const detail = err.response?.data?.detail
+      if (Array.isArray(detail)) {
+        toast.error(detail.map((e) => e.msg).join(', '))
+        return
+      }
+      if (typeof detail === 'string') {
+        toast.error(detail)
+        return
+      }
+      // Fallback for unexpected error shapes (FastAPI often returns an array/object)
+      toast.error('Failed to save')
+    },
   })
 
   const rooms = data?.items || []
@@ -61,7 +78,7 @@ export default function ManageRooms() {
               <Link to="/admin" className="text-sm text-primary hover:underline">&larr; Dashboard</Link>
               <h1 className="font-heading text-2xl font-bold text-gray-900">Manage Rooms</h1>
             </div>
-            <button onClick={() => { if (!selectedHotel) { toast.error('Select a hotel first'); return }; setModal({ name: '', room_type: 'double', price_per_night: 0, total_quantity: 1, max_guests: 2 }) }}
+            <button onClick={() => { if (!selectedHotel) { toast.error('Select a hotel first'); return }; setModal({ name: '', room_type: 'double', price_per_night: 1, total_quantity: 1, max_guests: 2 }) }}
               className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2">
               <Plus className="w-4 h-4" /> Add Room
             </button>

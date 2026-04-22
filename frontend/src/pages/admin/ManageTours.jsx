@@ -18,10 +18,15 @@ export default function ManageTours() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
+  const ownerId = user?.role === 'superadmin' ? undefined : user?.id
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-tours', page, search, user?.id],
-    queryFn: () => toursApi.list({ page, per_page: 10, q: search || undefined, owner_id: user?.id }),
+    queryKey: ['admin-tours', page, search, user?.role, user?.id],
+    queryFn: () => {
+      const params = { page, per_page: 10, q: search || undefined }
+      if (ownerId) params.owner_id = ownerId
+      return toursApi.list(params)
+    },
     select: (res) => res.data,
     enabled: !!user?.id,
   })
@@ -35,7 +40,18 @@ export default function ManageTours() {
   const saveMut = useMutation({
     mutationFn: ({ id, data }) => id ? toursApi.update(id, data) : toursApi.create(data),
     onSuccess: () => { toast.success('Saved'); setModal(null); qc.invalidateQueries({ queryKey: ['admin-tours'] }) },
-    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to save'),
+    onError: (err) => {
+      const detail = err.response?.data?.detail
+      if (Array.isArray(detail)) {
+        toast.error(detail.map((e) => e.msg).join(', '))
+        return
+      }
+      if (typeof detail === 'string') {
+        toast.error(detail)
+        return
+      }
+      toast.error('Failed to save')
+    },
   })
 
   const tours = data?.items || []
@@ -51,7 +67,7 @@ export default function ManageTours() {
               <Link to="/admin" className="text-sm text-primary hover:underline">&larr; Dashboard</Link>
               <h1 className="font-heading text-2xl font-bold text-gray-900">Manage Tours</h1>
             </div>
-            <button onClick={() => setModal({ name: '', city: '', country: '', category: 'adventure', duration_days: 1, max_participants: 20, price_per_person: 0, description: '' })}
+            <button onClick={() => setModal({ name: '', city: '', country: '', category: 'adventure', duration_days: 1, max_participants: 20, price_per_person: 1, description: '' })}
               className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2">
               <Plus className="w-4 h-4" /> Add Tour
             </button>

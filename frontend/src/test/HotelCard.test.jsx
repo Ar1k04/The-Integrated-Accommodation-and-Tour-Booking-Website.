@@ -8,7 +8,7 @@ const mockHotel = {
   name: 'Grand Palace Hotel',
   city: 'Bangkok',
   country: 'Thailand',
-  base_price: 120,
+  min_room_price: 120,
   star_rating: 5,
   avg_rating: 9.2,
   total_reviews: 45,

@@ -8,6 +8,8 @@ export const adminApi = {
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   listBookings: (params) => api.get('/admin/bookings', { params }),
   updateBooking: (id, status) => api.patch(`/admin/bookings/${id}?status=${status}`),
+  listTourBookings: (params) => api.get('/admin/tour-bookings', { params }),
+  updateTourBooking: (id, status) => api.patch(`/admin/tour-bookings/${id}?status=${status}`),
 
   listPromoCodes: (params) => api.get('/promo-codes', { params }),
   createPromoCode: (data) => api.post('/promo-codes', data),
