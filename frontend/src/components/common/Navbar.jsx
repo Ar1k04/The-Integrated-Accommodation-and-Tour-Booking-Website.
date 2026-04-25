@@ -35,6 +35,9 @@ export default function Navbar() {
           <Link to="/tours" className="text-sm font-medium hover:text-accent-light transition-colors">
             Tours
           </Link>
+          <Link to="/flights" className="text-sm font-medium hover:text-accent-light transition-colors">
+            Flights
+          </Link>
 
           <div className="relative">
             <button
@@ -122,6 +125,7 @@ export default function Navbar() {
         <div className="md:hidden bg-primary-dark px-4 pb-4 space-y-2">
           <Link to="/hotels/search" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Hotels</Link>
           <Link to="/tours" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Tours</Link>
+          <Link to="/flights" onClick={() => setMobileOpen(false)} className="block py-2 text-sm">Flights</Link>
           {isAuthenticated ? (
             <>
               {isAdmin && (

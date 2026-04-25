@@ -9,13 +9,14 @@ import { toursApi } from '@/api/toursApi'
 import { reviewsApi } from '@/api/reviewsApi'
 import { adminApi } from '@/api/adminApi'
 import { authApi } from '@/api/authApi'
+import { loyaltyApi } from '@/api/loyaltyApi'
 import BookingStatusBadge from '@/components/common/BookingStatusBadge'
 import ReviewCard from '@/components/review/ReviewCard'
 import Skeleton from '@/components/common/Skeleton'
 import { formatDate, formatCurrency } from '@/utils/formatters'
 import {
   User, Briefcase, Star, Heart, Award, Shield,
-  Camera, Trash2, MapPin, Clock, Calendar, Eye,
+  Camera, Trash2, MapPin, Clock, Calendar, Eye, TrendingUp, TrendingDown,
 } from 'lucide-react'
 
 const TABS = [
@@ -342,53 +343,115 @@ function WishlistTab() {
   )
 }
 
+const TIER_COLORS = {
+  Bronze: { bg: 'bg-amber-600', ring: 'ring-amber-600/30', text: 'text-amber-600' },
+  Silver: { bg: 'bg-gray-400', ring: 'ring-gray-400/30', text: 'text-gray-500' },
+  Gold: { bg: 'bg-yellow-500', ring: 'ring-yellow-500/30', text: 'text-yellow-600' },
+  Platinum: { bg: 'bg-purple-500', ring: 'ring-purple-500/30', text: 'text-purple-600' },
+}
+
 function LoyaltyTab() {
-  const { user } = useAuth()
-  const points = user?.loyalty_points || 0
+  const { data: loyaltyData, isLoading } = useQuery({
+    queryKey: ['loyalty-status'],
+    queryFn: () => loyaltyApi.getStatus(),
+    select: (res) => res.data,
+  })
 
-  const tiers = [
-    { name: 'Bronze', min: 0, color: 'bg-amber-600' },
-    { name: 'Silver', min: 500, color: 'bg-gray-400' },
-    { name: 'Gold', min: 1500, color: 'bg-yellow-500' },
-    { name: 'Platinum', min: 5000, color: 'bg-purple-500' },
-  ]
+  if (isLoading) {
+    return (
+      <div className="max-w-2xl space-y-4">
+        {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}
+      </div>
+    )
+  }
 
-  const currentTier = tiers.filter((t) => points >= t.min).pop()
-  const nextTier = tiers.find((t) => t.min > points)
+  const totalPoints = loyaltyData?.total_points || 0
+  const currentTier = loyaltyData?.current_tier
+  const nextTier = loyaltyData?.next_tier
+  const pointsToNext = loyaltyData?.points_to_next_tier || 0
+  const transactions = loyaltyData?.recent_transactions || []
+  const tierName = currentTier?.name || 'Bronze'
+  const colors = TIER_COLORS[tierName] || TIER_COLORS.Bronze
+
+  const progressPct = nextTier && currentTier
+    ? Math.min(
+        ((totalPoints - currentTier.min_points) /
+          (nextTier.min_points - currentTier.min_points)) * 100,
+        100
+      )
+    : 100
 
   return (
     <div className="max-w-2xl space-y-6">
+      {/* Tier card */}
       <div className="bg-white rounded-xl border p-6 text-center">
-        <div className={`w-16 h-16 rounded-full ${currentTier?.color} text-white flex items-center justify-center mx-auto mb-3`}>
+        <div className={`w-16 h-16 rounded-full ${colors.bg} text-white flex items-center justify-center mx-auto mb-3 ring-4 ${colors.ring}`}>
           <Award className="w-8 h-8" />
         </div>
         <p className="text-sm text-gray-500">Current Tier</p>
-        <p className="font-heading text-2xl font-bold">{currentTier?.name}</p>
-        <p className="text-4xl font-bold text-primary mt-4">{points.toLocaleString()}</p>
+        <p className={`font-heading text-2xl font-bold ${colors.text}`}>{tierName}</p>
+        {currentTier?.discount_percent > 0 && (
+          <p className="text-xs text-gray-400 mt-1">{currentTier.discount_percent}% tier discount</p>
+        )}
+        <p className="text-4xl font-bold text-primary mt-4">{totalPoints.toLocaleString()}</p>
         <p className="text-sm text-gray-500">loyalty points</p>
+        <p className="text-xs text-gray-400 mt-1">≈ {formatCurrency(totalPoints * 0.01)} redemption value</p>
+
         {nextTier && (
           <div className="mt-6">
-            <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>{currentTier?.name}</span>
-              <span>{nextTier.name}</span>
+            <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+              <span className="font-medium">{tierName}</span>
+              <span className="font-medium">{nextTier.name}</span>
             </div>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
               <div
-                className="h-full bg-primary rounded-full transition-all"
-                style={{ width: `${Math.min(((points - currentTier.min) / (nextTier.min - currentTier.min)) * 100, 100)}%` }}
+                className="h-full bg-primary rounded-full transition-all duration-500"
+                style={{ width: `${progressPct}%` }}
               />
             </div>
-            <p className="text-xs text-gray-500 mt-1">{nextTier.min - points} points to {nextTier.name}</p>
+            <p className="text-xs text-gray-500 mt-1.5">
+              {pointsToNext.toLocaleString()} more points to reach <strong>{nextTier.name}</strong>
+            </p>
           </div>
+        )}
+        {!nextTier && (
+          <p className="text-xs text-success mt-4 font-semibold">🎉 Maximum tier reached!</p>
         )}
       </div>
 
+      {/* Transaction history */}
+      {transactions.length > 0 && (
+        <div className="bg-white rounded-xl border p-6">
+          <h3 className="font-heading font-bold mb-4">Recent Transactions</h3>
+          <div className="space-y-3">
+            {transactions.map((txn) => (
+              <div key={txn.id} className="flex items-center gap-3 py-2 border-b last:border-0">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                  txn.points > 0 ? 'bg-success/10 text-success' : 'bg-error/10 text-error'
+                }`}>
+                  {txn.points > 0
+                    ? <TrendingUp className="w-4 h-4" />
+                    : <TrendingDown className="w-4 h-4" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{txn.description || (txn.type === 'earn' ? 'Points earned' : 'Points redeemed')}</p>
+                  <p className="text-xs text-gray-400">{formatDate(txn.created_at)}</p>
+                </div>
+                <span className={`text-sm font-bold shrink-0 ${txn.points > 0 ? 'text-success' : 'text-error'}`}>
+                  {txn.points > 0 ? '+' : ''}{txn.points} pts
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* How to earn */}
       <div className="bg-white rounded-xl border p-6">
         <h3 className="font-heading font-bold mb-3">How to Earn Points</h3>
         <ul className="space-y-2 text-sm text-gray-600">
           <li className="flex items-center gap-2"><Star className="w-4 h-4 text-warning" />1 point per $1 spent on bookings</li>
-          <li className="flex items-center gap-2"><Star className="w-4 h-4 text-warning" />50 bonus points for writing a review</li>
-          <li className="flex items-center gap-2"><Star className="w-4 h-4 text-warning" />100 bonus points for referring a friend</li>
+          <li className="flex items-center gap-2"><Star className="w-4 h-4 text-warning" />Redeem 100 points = $1 off your next booking</li>
         </ul>
       </div>
     </div>

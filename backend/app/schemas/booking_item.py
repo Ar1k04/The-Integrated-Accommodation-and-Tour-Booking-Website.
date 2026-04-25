@@ -2,12 +2,18 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.flight import PassengerInfo
 
 
 class RoomItemCreate(BaseModel):
     item_type: Literal["room"] = "room"
-    room_id: uuid.UUID
+    room_id: uuid.UUID | None = None
+    liteapi_rate_id: str | None = None
+    liteapi_hotel_id: str | None = None
+    liteapi_room_name: str | None = None
+    liteapi_price: float | None = None
     check_in: date
     check_out: date
     quantity: int = Field(default=1, ge=1)
@@ -16,15 +22,28 @@ class RoomItemCreate(BaseModel):
 
 class TourItemCreate(BaseModel):
     item_type: Literal["tour"] = "tour"
-    tour_id: uuid.UUID
+    tour_id: uuid.UUID | None = None
+    viator_product_code: str | None = None
+    viator_price: float | None = None
+    viator_tour_name: str | None = None
     tour_date: date
     quantity: int = Field(default=1, ge=1)
 
 
 class FlightItemCreate(BaseModel):
     item_type: Literal["flight"] = "flight"
-    flight_booking_id: uuid.UUID
+    flight_booking_id: uuid.UUID | None = None
+    duffel_offer_id: str | None = None
+    passenger: PassengerInfo | None = None
     quantity: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def check_flight_source(self) -> "FlightItemCreate":
+        if not self.flight_booking_id and not self.duffel_offer_id:
+            raise ValueError("Either flight_booking_id or duffel_offer_id must be set")
+        if self.duffel_offer_id and not self.passenger:
+            raise ValueError("passenger is required when duffel_offer_id is set")
+        return self
 
 
 BookingItemCreate = Annotated[
@@ -42,6 +61,10 @@ class BookingItemResponse(BaseModel):
     check_out: date | None = None
     tour_schedule_id: uuid.UUID | None = None
     flight_booking_id: uuid.UUID | None = None
+    liteapi_prebook_id: str | None = None
+    liteapi_booking_id: str | None = None
+    viator_product_code: str | None = None
+    viator_booking_ref: str | None = None
     unit_price: float
     subtotal: float
     quantity: int

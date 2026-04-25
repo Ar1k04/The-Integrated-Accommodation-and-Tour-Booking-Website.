@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,9 +49,9 @@ class OwnerInfo(BaseModel):
 
 
 class HotelResponse(BaseModel):
-    id: uuid.UUID
+    id: uuid.UUID | None = None
     name: str
-    slug: str
+    slug: str | None = None
     description: str | None = None
     address: str | None = None
     city: str
@@ -61,18 +62,31 @@ class HotelResponse(BaseModel):
     property_type: str | None = None
     amenities: list | None = None
     images: list | None = None
-    base_price: float
-    # Minimum room price for this hotel (optionally date-filtered by list queries).
+    base_price: float | None = None
     min_room_price: float | None = None
     currency: str = "USD"
-    avg_rating: float
-    total_reviews: int
+    avg_rating: float = 0
+    total_reviews: int = 0
     owner_id: uuid.UUID | None = None
     owner_name: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    source: Literal["local", "liteapi"] = "local"
+    liteapi_hotel_id: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class HotelRateResponse(BaseModel):
+    rate_id: str
+    room_name: str
+    price: float
+    currency: str
+    cancellation_policy: str | None = None
+    max_guests: int
+    images: list | None = None
+    meal_type: str | None = None
+    refundable: bool = True
 
 
 class HotelListResponse(BaseModel):

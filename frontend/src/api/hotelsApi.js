@@ -3,6 +3,8 @@ import api from './axiosInstance'
 export const hotelsApi = {
   list: (params) => api.get('/hotels', { params }),
   get: (id) => api.get(`/hotels/${id}`),
+  getLiteapi: (liteapiId) => api.get(`/hotels/liteapi/${liteapiId}`),
+  getRates: (liteapiId, params) => api.get(`/hotels/liteapi/${liteapiId}/rates`, { params }),
   create: (data) => api.post('/hotels', data),
   update: (id, data) => api.patch(`/hotels/${id}`, data),
   replace: (id, data) => api.put(`/hotels/${id}`, data),

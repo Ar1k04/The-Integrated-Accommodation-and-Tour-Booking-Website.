@@ -4,6 +4,11 @@ import StarRating from '@/components/common/StarRating'
 import { formatCurrency } from '@/utils/formatters'
 
 export default function HotelCard({ hotel }) {
+  const isLiteapi = hotel.source === 'liteapi'
+  const hotelHref = isLiteapi
+    ? `/hotels/liteapi/${hotel.liteapi_hotel_id}`
+    : `/hotels/${hotel.id}`
+
   const mainImage = hotel.images?.[0] || 'https://placehold.co/400x300?text=Hotel'
 
   const ratingLabel = (r) => {
@@ -16,19 +21,24 @@ export default function HotelCard({ hotel }) {
 
   return (
     <div className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col md:flex-row group">
-      <Link to={`/hotels/${hotel.id}`} className="relative md:w-72 shrink-0 overflow-hidden">
+      <Link to={hotelHref} className="relative md:w-72 shrink-0 overflow-hidden">
         <img
           src={mainImage}
           alt={hotel.name}
           className="w-full h-48 md:h-full object-cover group-hover:scale-105 transition-transform duration-500"
         />
+        {isLiteapi && (
+          <span className="absolute top-2 left-2 bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+            Live rates
+          </span>
+        )}
       </Link>
 
       <div className="flex-1 p-4 flex flex-col justify-between min-w-0">
         <div>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <Link to={`/hotels/${hotel.id}`} className="font-heading font-bold text-lg text-gray-900 hover:text-primary line-clamp-1">
+              <Link to={hotelHref} className="font-heading font-bold text-lg text-gray-900 hover:text-primary line-clamp-1">
                 {hotel.name}
               </Link>
               <div className="flex items-center gap-2 mt-1">
@@ -81,7 +91,7 @@ export default function HotelCard({ hotel }) {
             <p className="text-xs text-gray-500">per night</p>
           </div>
           <Link
-            to={`/hotels/${hotel.id}`}
+            to={hotelHref}
             className="bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors"
           >
             See Availability

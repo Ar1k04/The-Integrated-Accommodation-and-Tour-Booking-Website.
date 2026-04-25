@@ -5,7 +5,7 @@ import PageTransition from './PageTransition'
 import { Toaster } from 'sonner'
 import {
   LayoutDashboard, Hotel, MapPin, Briefcase,
-  CalendarCheck, UserCheck, LogOut, ChevronRight, Crown,
+  CalendarCheck, UserCheck, LogOut, ChevronRight, Crown, Tag,
 } from 'lucide-react'
 
 const BASE_LINKS = [
@@ -14,6 +14,7 @@ const BASE_LINKS = [
   { label: 'Rooms', to: '/admin/rooms', icon: MapPin },
   { label: 'Tours', to: '/admin/tours', icon: Briefcase },
   { label: 'Bookings', to: '/admin/bookings', icon: CalendarCheck },
+  { label: 'Vouchers', to: '/admin/vouchers', icon: Tag },
 ]
 
 const SUPERADMIN_LINKS = [

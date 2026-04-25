@@ -8,6 +8,9 @@ export const useBookingStore = create((set) => ({
   guests: 1,
   promoCode: '',
   discount: 0,
+  selectedTour: null,
+  tourDate: null,
+  selectedFlight: null,
 
   setBookingData: (data) => set(data),
   applyPromo: (code, discount) => set({ promoCode: code, discount }),
@@ -20,5 +23,10 @@ export const useBookingStore = create((set) => ({
       guests: 1,
       promoCode: '',
       discount: 0,
+      selectedTour: null,
+      tourDate: null,
+      selectedFlight: null,
     }),
 }))
+
+export const isLiteapiRoom = (room) => Boolean(room?.liteapi_rate_id)

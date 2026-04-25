@@ -2,12 +2,14 @@
 import stripe
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.booking import Booking
-from app.models.payment import Payment, PaymentStatus
+from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.models.tour_booking import TourBooking
 from app.models.user import User
+from app.services import loyalty_service
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -53,6 +55,7 @@ async def create_payment_intent(
 
     payment = Payment(
         booking_id=booking_id,
+        provider=PaymentProvider.stripe.value,
         stripe_payment_intent_id=intent.id,
         amount=amount_cents / 100,
         currency=currency,
@@ -82,10 +85,20 @@ async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
         payment.status = PaymentStatus.succeeded.value
 
         if payment.booking_id:
-            booking = (await db.execute(select(Booking).where(Booking.id == payment.booking_id))).scalar_one_or_none()
+            from app.services.booking_service import confirm_booking
+            booking = (
+                await db.execute(
+                    select(Booking)
+                    .options(selectinload(Booking.items))
+                    .where(Booking.id == payment.booking_id)
+                )
+            ).scalar_one_or_none()
             if booking:
-                booking.status = "confirmed"
-                await _award_loyalty_points(db, booking.user_id, float(payment.amount))
+                user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
+                fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
+                ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
+                email = user.email if user else "guest@example.com"
+                await confirm_booking(db, booking, guest_first_name=fn, guest_last_name=ln, guest_email=email)
 
     elif event_type == "payment_intent.payment_failed":
         payment.status = PaymentStatus.failed.value
@@ -115,8 +128,18 @@ async def refund_payment(db: AsyncSession, payment_id) -> Payment:
     return payment
 
 
-async def _award_loyalty_points(db: AsyncSession, user_id, amount: float) -> None:
-    """Award 1 loyalty point per $1 spent."""
-    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-    if user:
-        user.loyalty_points += int(amount)
+async def _award_loyalty_points(db: AsyncSession, user_id, booking_id, amount: float) -> None:
+    """Award 1 loyalty point per $1 spent via the loyalty ledger."""
+    pts = int(amount)
+    if pts <= 0:
+        return
+    try:
+        await loyalty_service.award_points(
+            db,
+            user_id=user_id,
+            booking_id=booking_id,
+            amount=pts,
+            description=f"Earned {pts} pts from payment",
+        )
+    except loyalty_service.LoyaltyError:
+        pass

@@ -19,7 +19,7 @@ export default function PriceBreakdown({ pricePerNight, nights, discount = 0, cu
       </div>
       {discount > 0 && (
         <div className="flex justify-between text-success">
-          <span>Promo discount</span>
+          <span>Discount</span>
           <span>-{formatCurrency(discount, currency)}</span>
         </div>
       )}

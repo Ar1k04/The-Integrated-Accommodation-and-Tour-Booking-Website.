@@ -52,6 +52,7 @@ from app.api.v1.routes.promo_codes import router as promo_codes_router  # noqa: 
 from app.api.v1.routes.vouchers import router as vouchers_router  # noqa: E402
 from app.api.v1.routes.loyalty import router as loyalty_router  # noqa: E402
 from app.api.v1.routes.admin import router as admin_router  # noqa: E402
+from app.api.v1.routes.flights import router as flights_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(hotels_router, prefix="/api/v1")
@@ -66,6 +67,7 @@ app.include_router(promo_codes_router, prefix="/api/v1")
 app.include_router(vouchers_router, prefix="/api/v1")
 app.include_router(loyalty_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(flights_router, prefix="/api/v1")
 
 
 @app.get("/health")

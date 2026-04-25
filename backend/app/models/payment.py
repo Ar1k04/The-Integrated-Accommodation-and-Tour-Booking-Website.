@@ -15,13 +15,22 @@ class PaymentStatus(str, enum.Enum):
     refunded = "refunded"
 
 
+class PaymentProvider(str, enum.Enum):
+    stripe = "stripe"
+    vnpay = "vnpay"
+
+
 class Payment(Base):
     __tablename__ = "payments"
 
     booking_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="SET NULL")
     )
+    provider: Mapped[str] = mapped_column(
+        String(20), default=PaymentProvider.stripe.value, server_default="stripe"
+    )
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    vnpay_transaction_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(10), default="usd", server_default="usd")
     status: Mapped[str] = mapped_column(

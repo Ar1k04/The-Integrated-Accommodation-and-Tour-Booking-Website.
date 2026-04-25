@@ -34,8 +34,8 @@ class BookingItem(Base):
             name="ck_booking_item_status",
         ),
         CheckConstraint(
-            "(item_type = 'room' AND room_id IS NOT NULL AND tour_schedule_id IS NULL AND flight_booking_id IS NULL) "
-            "OR (item_type = 'tour' AND tour_schedule_id IS NOT NULL AND room_id IS NULL AND flight_booking_id IS NULL) "
+            "(item_type = 'room' AND (room_id IS NOT NULL OR liteapi_prebook_id IS NOT NULL) AND tour_schedule_id IS NULL AND flight_booking_id IS NULL) "
+            "OR (item_type = 'tour' AND (tour_schedule_id IS NOT NULL OR viator_product_code IS NOT NULL) AND room_id IS NULL AND flight_booking_id IS NULL) "
             "OR (item_type = 'flight' AND flight_booking_id IS NOT NULL AND room_id IS NULL AND tour_schedule_id IS NULL)",
             name="ck_booking_item_target",
         ),
@@ -63,6 +63,10 @@ class BookingItem(Base):
         String(20), default=BookingItemStatus.pending.value,
         server_default="pending", nullable=False,
     )
+    liteapi_prebook_id: Mapped[str | None] = mapped_column(String(255))
+    liteapi_booking_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    viator_product_code: Mapped[str | None] = mapped_column(String(100))
+    viator_booking_ref: Mapped[str | None] = mapped_column(String(255), unique=True)
 
     booking = relationship("Booking", back_populates="items")
     room = relationship("Room", back_populates="booking_items")

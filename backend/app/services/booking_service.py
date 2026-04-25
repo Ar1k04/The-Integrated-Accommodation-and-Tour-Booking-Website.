@@ -4,9 +4,12 @@ Input: a BookingCreate with items[] (each item is a room, tour, or flight).
 Output: a Booking row + one BookingItem per cart entry, with vouchers/loyalty
 points applied and inventory locked atomically.
 """
+import logging
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +27,10 @@ from app.schemas.booking_item import (
     RoomItemCreate,
     TourItemCreate,
 )
-from app.services import loyalty_service, voucher_service
+from app.services import duffel_service, email_service, liteapi_service, loyalty_service, viator_service, voucher_service
+from app.services.duffel_service import DuffelError
+from app.services.liteapi_service import LiteAPIError
+from app.services.viator_service import ViatorError
 
 
 class BookingServiceError(ValueError):
@@ -38,9 +44,39 @@ def _daterange(start: date, end: date):
         cur += timedelta(days=1)
 
 
+async def _reserve_liteapi_room_item(
+    item: RoomItemCreate,
+) -> tuple[BookingItem, Decimal]:
+    """Prebook a LiteAPI rate and return a BookingItem with liteapi_prebook_id set."""
+    try:
+        result = await liteapi_service.prebook(item.liteapi_rate_id, guests=item.guests_count)
+    except LiteAPIError as exc:
+        raise BookingServiceError(f"LiteAPI prebook failed: {exc.message}")
+
+    price = item.liteapi_price if item.liteapi_price else result["price"]
+    unit_price = Decimal(str(price)).quantize(Decimal("0.01"))
+    subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
+
+    bi = BookingItem(
+        item_type=BookingItemType.room.value,
+        room_id=None,
+        check_in=item.check_in,
+        check_out=item.check_out,
+        unit_price=unit_price,
+        subtotal=subtotal,
+        quantity=item.quantity,
+        status=BookingItemStatus.pending.value,
+        liteapi_prebook_id=result["prebook_id"],
+    )
+    return bi, subtotal
+
+
 async def _reserve_room_item(
     db: AsyncSession, item: RoomItemCreate
 ) -> tuple[BookingItem, Decimal]:
+    if item.liteapi_rate_id:
+        return await _reserve_liteapi_room_item(item)
+
     if item.check_in >= item.check_out:
         raise BookingServiceError("check_out must be after check_in")
 
@@ -110,9 +146,40 @@ async def _reserve_room_item(
     return bi, subtotal
 
 
+async def _reserve_viator_tour_item(
+    item: TourItemCreate,
+) -> tuple[BookingItem, Decimal]:
+    """Reserve a Viator tour by checking availability; no local DB locking needed."""
+    try:
+        avail = await viator_service.check_availability(
+            item.viator_product_code, item.tour_date, guests=item.quantity
+        )
+    except ViatorError as exc:
+        raise BookingServiceError(f"Viator availability check failed: {exc.message}")
+
+    price = item.viator_price if item.viator_price else avail.get("price", 0)
+    unit_price = Decimal(str(price)).quantize(Decimal("0.01"))
+    subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
+
+    bi = BookingItem(
+        item_type=BookingItemType.tour.value,
+        tour_schedule_id=None,
+        check_in=item.tour_date,  # store tour_date in check_in for confirm_booking lookup
+        viator_product_code=item.viator_product_code,
+        unit_price=unit_price,
+        subtotal=subtotal,
+        quantity=item.quantity,
+        status=BookingItemStatus.pending.value,
+    )
+    return bi, subtotal
+
+
 async def _reserve_tour_item(
     db: AsyncSession, item: TourItemCreate
 ) -> tuple[BookingItem, Decimal]:
+    if item.viator_product_code:
+        return await _reserve_viator_tour_item(item)
+
     tour = (
         await db.execute(select(Tour).where(Tour.id == item.tour_id).with_for_update())
     ).scalar_one_or_none()
@@ -156,9 +223,75 @@ async def _reserve_tour_item(
     return bi, subtotal
 
 
+async def _reserve_duffel_flight_item(
+    db: AsyncSession, item: FlightItemCreate
+) -> tuple[BookingItem, Decimal]:
+    """Validate a Duffel offer and create a pending FlightBooking snapshot."""
+    from app.models.flight_booking import FlightBookingStatus
+
+    try:
+        offer = await duffel_service.get_offer(item.duffel_offer_id)
+    except DuffelError as exc:
+        raise BookingServiceError(f"Duffel offer validation failed: {exc.message}")
+
+    # Extract first-segment details for the snapshot
+    first_slice = offer["slices"][0] if offer.get("slices") else {}
+    first_seg = first_slice.get("segments", [{}])[0]
+    last_slice = offer["slices"][-1] if offer.get("slices") else {}
+    last_seg = last_slice.get("segments", [{}])[-1]
+
+    def _parse_dt(s: str) -> datetime:
+        if not s:
+            return datetime.now(tz=timezone.utc)
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return datetime.now(tz=timezone.utc)
+
+    pax = item.passenger
+    flight = FlightBooking(
+        duffel_order_id=None,
+        airline_name=offer.get("airline_name", "Unknown"),
+        flight_number=first_seg.get("flight_number", ""),
+        departure_airport=first_slice.get("origin", first_seg.get("origin_iata", "")),
+        arrival_airport=last_slice.get("destination", last_seg.get("destination_iata", "")),
+        departure_at=_parse_dt(first_seg.get("departure_at", "")),
+        arrival_at=_parse_dt(last_seg.get("arrival_at", "")),
+        cabin_class=offer.get("cabin_class"),
+        passenger_name=f"{pax.first_name} {pax.last_name}",
+        passenger_email=pax.email,
+        base_amount=offer["total_amount"],
+        total_amount=offer["total_amount"],
+        currency=offer["currency"],
+        status=FlightBookingStatus.pending.value,
+        passenger_details={
+            "offer_id": item.duffel_offer_id,
+            "passenger": pax.model_dump(mode="json"),
+        },
+    )
+    db.add(flight)
+    await db.flush()
+
+    unit_price = Decimal(str(offer["total_amount"])).quantize(Decimal("0.01"))
+    subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
+
+    bi = BookingItem(
+        item_type=BookingItemType.flight.value,
+        flight_booking_id=flight.id,
+        unit_price=unit_price,
+        subtotal=subtotal,
+        quantity=item.quantity,
+        status=BookingItemStatus.pending.value,
+    )
+    return bi, subtotal
+
+
 async def _reserve_flight_item(
     db: AsyncSession, item: FlightItemCreate
 ) -> tuple[BookingItem, Decimal]:
+    if item.duffel_offer_id:
+        return await _reserve_duffel_flight_item(db, item)
+
     flight = (
         await db.execute(
             select(FlightBooking).where(FlightBooking.id == item.flight_booking_id)
@@ -255,12 +388,77 @@ async def create_booking(
     return booking
 
 
-async def confirm_booking(db: AsyncSession, booking: Booking) -> Booking:
+async def confirm_booking(
+    db: AsyncSession,
+    booking: Booking,
+    guest_first_name: str = "Guest",
+    guest_last_name: str = "Guest",
+    guest_email: str = "guest@example.com",
+) -> Booking:
     """Mark booking + items confirmed and award loyalty points based on final total."""
 
     booking.status = BookingStatus.confirmed.value
     for item in booking.items:
         item.status = BookingItemStatus.confirmed.value
+        # Finalize any LiteAPI prebook → real booking
+        if item.liteapi_prebook_id and not item.liteapi_booking_id:
+            try:
+                result = await liteapi_service.book(
+                    prebook_id=item.liteapi_prebook_id,
+                    guest_first_name=guest_first_name,
+                    guest_last_name=guest_last_name,
+                    guest_email=guest_email,
+                )
+                item.liteapi_booking_id = result["liteapi_booking_id"]
+            except LiteAPIError as exc:
+                logger.warning(
+                    "LiteAPI book failed for prebook %s: %s — booking recorded locally",
+                    item.liteapi_prebook_id,
+                    exc.message,
+                )
+
+        # Finalize any Viator tour → real booking
+        if item.viator_product_code and not item.viator_booking_ref:
+            try:
+                tour_date_val = item.check_in or date.today()
+                result = await viator_service.book_tour(
+                    viator_product_code=item.viator_product_code,
+                    tour_date=tour_date_val,
+                    guests=item.quantity,
+                    guest_first_name=guest_first_name,
+                    guest_last_name=guest_last_name,
+                    guest_email=guest_email,
+                )
+                item.viator_booking_ref = result["viator_booking_ref"]
+            except ViatorError as exc:
+                logger.warning(
+                    "Viator book failed for %s: %s — booking recorded locally",
+                    item.viator_product_code,
+                    exc.message,
+                )
+
+        # Finalize any pending Duffel flight → real order
+        if item.item_type == BookingItemType.flight.value:
+            flight = item.flight_booking
+            if flight and flight.status == "pending" and not flight.duffel_order_id:
+                details = flight.passenger_details or {}
+                if details.get("offer_id"):
+                    try:
+                        result = await duffel_service.create_order(
+                            duffel_offer_id=details["offer_id"],
+                            passenger=details.get("passenger", {}),
+                            amount=str(flight.total_amount),
+                            currency=flight.currency,
+                        )
+                        flight.duffel_order_id = result["duffel_order_id"]
+                        flight.duffel_booking_ref = result.get("duffel_booking_ref")
+                        flight.status = "confirmed"
+                    except DuffelError as exc:
+                        logger.warning(
+                            "Duffel order failed for offer %s: %s — booking recorded locally",
+                            details.get("offer_id"),
+                            exc.message,
+                        )
 
     points = int(Decimal(str(booking.total_price)))
     if points > 0:
@@ -275,6 +473,13 @@ async def confirm_booking(db: AsyncSession, booking: Booking) -> Booking:
 
     await db.flush()
     await db.refresh(booking)
+
+    # Non-blocking confirmation email
+    try:
+        await email_service.send_booking_confirmation(booking, guest_email)
+    except Exception as exc:
+        logger.warning("Confirmation email failed for booking %s: %s", booking.id, exc)
+
     return booking
 
 
@@ -286,6 +491,15 @@ async def cancel_booking(db: AsyncSession, booking: Booking) -> Booking:
 
     booking.status = BookingStatus.cancelled.value
     for item in booking.items:
+        if item.liteapi_booking_id:
+            await liteapi_service.cancel_booking(item.liteapi_booking_id)
+        if item.viator_booking_ref:
+            await viator_service.cancel_booking(item.viator_booking_ref)
+        if item.item_type == BookingItemType.flight.value:
+            flight = item.flight_booking
+            if flight and flight.duffel_order_id:
+                await duffel_service.cancel_order(flight.duffel_order_id)
+                flight.status = "cancelled"
         item.status = BookingItemStatus.cancelled.value
         if item.item_type == BookingItemType.tour.value and item.tour_schedule_id:
             schedule = (
@@ -312,4 +526,14 @@ async def cancel_booking(db: AsyncSession, booking: Booking) -> Booking:
 
     await db.flush()
     await db.refresh(booking)
+
+    # Non-blocking cancellation email — look up user email from booking
+    try:
+        from app.models.user import User
+        user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
+        if user and user.email:
+            await email_service.send_booking_cancellation(booking, user.email)
+    except Exception as exc:
+        logger.warning("Cancellation email failed for booking %s: %s", booking.id, exc)
+
     return booking

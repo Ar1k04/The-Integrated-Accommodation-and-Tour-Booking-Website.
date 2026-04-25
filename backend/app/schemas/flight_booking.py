@@ -24,7 +24,7 @@ class FlightBookingCreate(BaseModel):
 
 class FlightBookingResponse(BaseModel):
     id: uuid.UUID
-    duffel_order_id: str
+    duffel_order_id: str | None = None
     duffel_booking_ref: str | None = None
     airline_name: str
     flight_number: str

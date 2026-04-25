@@ -3,11 +3,16 @@ import { Clock, MapPin, Star, User, Users } from 'lucide-react'
 import { formatCurrency } from '@/utils/formatters'
 
 export default function TourCard({ tour }) {
+  const isViator = tour.source === 'viator'
+  const tourHref = isViator
+    ? `/tours/viator/${tour.viator_product_code}`
+    : `/tours/${tour.id}`
+
   const mainImage = tour.images?.[0] || 'https://placehold.co/400x300?text=Tour'
 
   return (
     <div className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden group">
-      <Link to={`/tours/${tour.id}`} className="block relative overflow-hidden">
+      <Link to={tourHref} className="block relative overflow-hidden">
         <img
           src={mainImage}
           alt={tour.name}
@@ -18,10 +23,15 @@ export default function TourCard({ tour }) {
             {tour.category}
           </span>
         )}
+        {isViator && (
+          <span className="absolute top-3 right-3 bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+            Live
+          </span>
+        )}
       </Link>
 
       <div className="p-4">
-        <Link to={`/tours/${tour.id}`} className="font-heading font-bold text-gray-900 hover:text-primary line-clamp-2">
+        <Link to={tourHref} className="font-heading font-bold text-gray-900 hover:text-primary line-clamp-2">
           {tour.name}
         </Link>
 
@@ -58,7 +68,7 @@ export default function TourCard({ tour }) {
             <p className="text-xs text-gray-500">per person</p>
           </div>
           <Link
-            to={`/tours/${tour.id}`}
+            to={tourHref}
             className="bg-accent hover:bg-accent-dark text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors"
           >
             Book Now

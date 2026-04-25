@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,29 +39,38 @@ class TourUpdate(BaseModel):
 
 
 class TourResponse(BaseModel):
-    id: uuid.UUID
+    id: uuid.UUID | None = None
     name: str
-    slug: str
+    slug: str | None = None
     description: str | None = None
     city: str
-    country: str
+    country: str | None = None
     category: str | None = None
-    duration_days: int
-    max_participants: int
-    price_per_person: float
+    duration_days: int = 1
+    max_participants: int = 20
+    price_per_person: float = 0
     highlights: list | None = None
     itinerary: list | None = None
     includes: list | None = None
     excludes: list | None = None
     images: list | None = None
-    avg_rating: float
-    total_reviews: int
+    avg_rating: float = 0
+    total_reviews: int = 0
     owner_id: uuid.UUID | None = None
     owner_name: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    source: Literal["local", "viator"] = "local"
+    viator_product_code: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class TourAvailabilityResponse(BaseModel):
+    available: bool
+    price: float
+    currency: str
+    tour_date: str
 
 
 class TourListResponse(BaseModel):

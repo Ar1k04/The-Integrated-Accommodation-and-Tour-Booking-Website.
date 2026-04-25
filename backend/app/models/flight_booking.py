@@ -2,12 +2,14 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, Numeric, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 
 class FlightBookingStatus(str, enum.Enum):
+    pending = "pending"
     confirmed = "confirmed"
     cancelled = "cancelled"
     refunded = "refunded"
@@ -17,12 +19,12 @@ class FlightBooking(Base):
     __tablename__ = "flight_booking"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('confirmed', 'cancelled', 'refunded')",
+            "status IN ('pending', 'confirmed', 'cancelled', 'refunded')",
             name="ck_flight_booking_status",
         ),
     )
 
-    duffel_order_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    duffel_order_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
     duffel_booking_ref: Mapped[str | None] = mapped_column(String(50))
     airline_name: Mapped[str] = mapped_column(String(100), nullable=False)
     flight_number: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -40,5 +42,7 @@ class FlightBooking(Base):
         String(20), default=FlightBookingStatus.confirmed.value,
         server_default="confirmed", nullable=False,
     )
+
+    passenger_details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     booking_items = relationship("BookingItem", back_populates="flight_booking", lazy="selectin")
