@@ -1,12 +1,22 @@
 import { format, parseISO, differenceInDays } from 'date-fns'
 
-export function formatCurrency(amount, currency = 'USD') {
+const USD_TO_VND = 25_000
+
+export function formatCurrency(amountUsd, currency = 'USD') {
+  if (currency === 'VND') {
+    const vnd = Math.round((amountUsd || 0) * USD_TO_VND)
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+      maximumFractionDigits: 0,
+    }).format(vnd)
+  }
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency,
+    currency: 'USD',
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(amount)
+  }).format(amountUsd || 0)
 }
 
 export function formatDate(dateStr, fmt = 'MMM dd, yyyy') {

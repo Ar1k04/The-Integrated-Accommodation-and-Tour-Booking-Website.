@@ -15,6 +15,12 @@ describe('formatCurrency', () => {
   it('handles zero', () => {
     expect(formatCurrency(0)).toBe('$0')
   })
+
+  it('formats VND with multiplied amount', () => {
+    const vnd = formatCurrency(50, 'VND')
+    expect(vnd).toContain('₫')
+    expect(vnd).toContain('1.250.000')
+  })
 })
 
 describe('nightsBetween', () => {

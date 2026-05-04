@@ -10,8 +10,8 @@ from app.db.base import Base
 
 class UserRole(str, enum.Enum):
     user = "user"
+    partner = "partner"
     admin = "admin"
-    superadmin = "superadmin"
 
 
 class User(Base):
@@ -25,6 +25,8 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default=UserRole.user.value, server_default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     loyalty_points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    preferred_locale: Mapped[str] = mapped_column(String(2), default="en", server_default="en", nullable=False)
+    preferred_currency: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD", nullable=False)
     loyalty_tier_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("loyalty_tier.id", ondelete="SET NULL"), index=True
     )
@@ -35,7 +37,6 @@ class User(Base):
         return self.loyalty_points
 
     bookings = relationship("Booking", back_populates="user", lazy="selectin")
-    tour_bookings = relationship("TourBooking", back_populates="user", lazy="selectin")
     reviews = relationship("Review", back_populates="user", lazy="selectin")
     wishlists = relationship("Wishlist", back_populates="user", lazy="selectin")
     loyalty_tier = relationship("LoyaltyTier", back_populates="users")

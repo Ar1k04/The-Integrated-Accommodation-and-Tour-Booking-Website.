@@ -100,8 +100,8 @@ async def test_polymorphic_booking_room_plus_tour(
     assert schedule.booked_slots == 2
     assert schedule.available_date == tour_date
 
-    assert booking.room_id == test_room.id
-    assert booking.check_in == check_in
+    assert room_item.room_id == test_room.id
+    assert room_item.check_in == check_in
 
 
 @pytest.mark.asyncio

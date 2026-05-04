@@ -1,0 +1,54 @@
+{
+  "tabs": {
+    "profile": "Hồ sơ",
+    "bookings": "Đặt phòng của tôi",
+    "reviews": "Đánh giá của tôi",
+    "wishlist": "Danh sách yêu thích",
+    "loyalty": "Điểm thưởng",
+    "security": "Bảo mật"
+  },
+  "bookings": {
+    "hotels": "Đặt khách sạn",
+    "tours": "Đặt tour",
+    "empty": {
+      "hotels": "Chưa có đặt phòng khách sạn nào",
+      "tours": "Chưa có đặt tour nào"
+    },
+    "cancel": "Hủy",
+    "cancelled": "Đã hủy đặt phòng"
+  },
+  "loyalty": {
+    "title": "Điểm thưởng",
+    "current": "Điểm hiện tại",
+    "tier": "Hạng thành viên",
+    "nextTier": "Hạng tiếp theo",
+    "progress": "{{current}} / {{max}} điểm để đạt {{tier}}",
+    "history": "Lịch sử điểm",
+    "redeem": "Dùng điểm",
+    "earn": "Kiếm 1 điểm cho mỗi $1 chi tiêu"
+  },
+  "reviews": {
+    "empty": "Bạn chưa viết đánh giá nào",
+    "delete": "Xóa đánh giá"
+  },
+  "wishlist": {
+    "empty": "Danh sách yêu thích của bạn trống",
+    "remove": "Xóa"
+  },
+  "editProfile": {
+    "title": "Chỉnh sửa hồ sơ",
+    "fullName": "Họ và tên",
+    "email": "Email",
+    "phone": "Số điện thoại",
+    "save": "Lưu thay đổi",
+    "saved": "Đã cập nhật hồ sơ!"
+  },
+  "security": {
+    "changePassword": "Đổi mật khẩu",
+    "currentPassword": "Mật khẩu hiện tại",
+    "newPassword": "Mật khẩu mới",
+    "confirmPassword": "Xác nhận mật khẩu",
+    "update": "Cập nhật mật khẩu",
+    "updated": "Đã cập nhật mật khẩu!"
+  }
+}

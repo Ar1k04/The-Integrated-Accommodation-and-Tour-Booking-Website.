@@ -10,8 +10,8 @@ from app.db.base import Base
 
 # Import all models so that Base.metadata is complete
 from app.models import (  # noqa: F401
-    User, Hotel, Room, Booking, Tour, TourBooking,
-    Review, Payment, Wishlist, PromoCode,
+    User, Hotel, Room, Booking, Tour,
+    Review, Payment, Wishlist,
     LoyaltyTier, LoyaltyTransaction,
     Voucher, VoucherUsage,
     RoomAvailability, TourSchedule,

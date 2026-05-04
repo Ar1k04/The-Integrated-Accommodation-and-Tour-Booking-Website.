@@ -1,0 +1,55 @@
+{
+  "nav": {
+    "hotels": "Khách sạn",
+    "tours": "Tour du lịch",
+    "flights": "Chuyến bay",
+    "dashboard": "Bảng điều khiển",
+    "profile": "Hồ sơ của tôi",
+    "bookings": "Đặt phòng của tôi",
+    "wishlist": "Danh sách yêu thích",
+    "signIn": "Đăng nhập",
+    "signOut": "Đăng xuất",
+    "register": "Đăng ký"
+  },
+  "common": {
+    "skipToContent": "Bỏ qua đến nội dung chính",
+    "search": "Tìm kiếm",
+    "filter": "Lọc",
+    "sort": "Sắp xếp",
+    "cancel": "Hủy",
+    "save": "Lưu",
+    "confirm": "Xác nhận",
+    "loading": "Đang tải...",
+    "noResults": "Không tìm thấy kết quả",
+    "viewAll": "Xem tất cả",
+    "learnMore": "Tìm hiểu thêm",
+    "bookNow": "Đặt ngay",
+    "from": "Từ",
+    "perNight": "mỗi đêm",
+    "perPerson": "mỗi người",
+    "guests": "khách",
+    "night": "đêm",
+    "nights": "đêm",
+    "back": "Quay lại",
+    "next": "Tiếp theo",
+    "submit": "Gửi",
+    "close": "Đóng",
+    "edit": "Chỉnh sửa",
+    "delete": "Xóa",
+    "status": "Trạng thái",
+    "total": "Tổng cộng",
+    "discount": "Giảm giá",
+    "subtotal": "Tạm tính",
+    "taxes": "Thuế & phí"
+  },
+  "roles": {
+    "user": "Khách hàng",
+    "partner": "Đối tác",
+    "admin": "Quản trị viên"
+  },
+  "errors": {
+    "generic": "Có lỗi xảy ra. Vui lòng thử lại.",
+    "notFound": "Không tìm thấy trang",
+    "unauthorized": "Vui lòng đăng nhập để tiếp tục"
+  }
+}

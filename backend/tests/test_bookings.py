@@ -9,6 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.conftest import auth_header
 
 
+def _room_payload(room_id, check_in, check_out, guests=1, **kw):
+    return {
+        "items": [{"item_type": "room", "room_id": str(room_id),
+                   "check_in": check_in, "check_out": check_out,
+                   "guests_count": guests, "quantity": 1}],
+        **kw,
+    }
+
+
 @pytest.mark.asyncio
 async def test_create_booking_success(client: AsyncClient, test_user, test_room, user_token):
     check_in = (date.today() + timedelta(days=10)).isoformat()
@@ -16,12 +25,7 @@ async def test_create_booking_success(client: AsyncClient, test_user, test_room,
 
     res = await client.post(
         "/api/v1/bookings",
-        json={
-            "room_id": str(test_room.id),
-            "check_in": check_in,
-            "check_out": check_out,
-            "guests_count": 2,
-        },
+        json=_room_payload(test_room.id, check_in, check_out, guests=2),
         headers=auth_header(user_token),
     )
     assert res.status_code == 201
@@ -31,15 +35,26 @@ async def test_create_booking_success(client: AsyncClient, test_user, test_room,
 
 
 @pytest.mark.asyncio
-async def test_create_booking_invalid_dates(client: AsyncClient, test_user, test_room, user_token):
+async def test_legacy_payload_returns_400(client: AsyncClient, test_user, test_room, user_token):
+    """POST /bookings with old room_id key (no items[]) must be rejected."""
     res = await client.post(
         "/api/v1/bookings",
         json={
             "room_id": str(test_room.id),
-            "check_in": "2026-04-15",
-            "check_out": "2026-04-10",
+            "check_in": "2026-05-01",
+            "check_out": "2026-05-03",
             "guests_count": 1,
         },
+        headers=auth_header(user_token),
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_booking_invalid_dates(client: AsyncClient, test_user, test_room, user_token):
+    res = await client.post(
+        "/api/v1/bookings",
+        json=_room_payload(test_room.id, "2026-04-15", "2026-04-10"),
         headers=auth_header(user_token),
     )
     assert res.status_code in (400, 422)
@@ -52,12 +67,7 @@ async def test_create_booking_too_many_guests(client: AsyncClient, test_user, te
 
     res = await client.post(
         "/api/v1/bookings",
-        json={
-            "room_id": str(test_room.id),
-            "check_in": check_in,
-            "check_out": check_out,
-            "guests_count": 10,
-        },
+        json=_room_payload(test_room.id, check_in, check_out, guests=10),
         headers=auth_header(user_token),
     )
     assert res.status_code in (400, 422)
@@ -65,12 +75,9 @@ async def test_create_booking_too_many_guests(client: AsyncClient, test_user, te
 
 @pytest.mark.asyncio
 async def test_create_booking_unauthenticated(client: AsyncClient, test_room):
-    res = await client.post("/api/v1/bookings", json={
-        "room_id": str(test_room.id),
-        "check_in": "2026-05-01",
-        "check_out": "2026-05-03",
-        "guests_count": 1,
-    })
+    res = await client.post("/api/v1/bookings", json=_room_payload(
+        test_room.id, "2026-05-01", "2026-05-03"
+    ))
     assert res.status_code == 401
 
 
@@ -81,7 +88,7 @@ async def test_list_my_bookings(client: AsyncClient, test_user, test_room, user_
 
     await client.post(
         "/api/v1/bookings",
-        json={"room_id": str(test_room.id), "check_in": check_in, "check_out": check_out, "guests_count": 1},
+        json=_room_payload(test_room.id, check_in, check_out),
         headers=auth_header(user_token),
     )
 
@@ -117,14 +124,14 @@ async def test_double_booking_prevention(
         token = create_access_token(extra_user.id, extra={"role": "user"})
         res = await client.post(
             "/api/v1/bookings",
-            json={"room_id": str(test_room.id), "check_in": check_in, "check_out": check_out, "guests_count": 1},
+            json=_room_payload(test_room.id, check_in, check_out),
             headers=auth_header(token),
         )
         assert res.status_code == 201
 
     overflow_res = await client.post(
         "/api/v1/bookings",
-        json={"room_id": str(test_room.id), "check_in": check_in, "check_out": check_out, "guests_count": 1},
+        json=_room_payload(test_room.id, check_in, check_out),
         headers=auth_header(user_token),
     )
     assert overflow_res.status_code in (400, 409)
@@ -137,7 +144,7 @@ async def test_cancel_booking(client: AsyncClient, test_user, test_room, user_to
 
     create_res = await client.post(
         "/api/v1/bookings",
-        json={"room_id": str(test_room.id), "check_in": check_in, "check_out": check_out, "guests_count": 1},
+        json=_room_payload(test_room.id, check_in, check_out),
         headers=auth_header(user_token),
     )
     booking_id = create_res.json()["id"]

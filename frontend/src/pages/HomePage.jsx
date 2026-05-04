@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
 import { hotelsApi } from '@/api/hotelsApi'
 import { toursApi } from '@/api/toursApi'
 import SearchBar from '@/components/common/SearchBar'
@@ -26,6 +27,7 @@ const VALUE_PROPS = [
 ]
 
 export default function HomePage() {
+  const { t } = useTranslation(['common', 'hotels', 'tours'])
   const { data: hotelsData, isLoading: hotelsLoading } = useQuery({
     queryKey: ['popular-hotels'],
     queryFn: () => hotelsApi.list({ sort_by: 'avg_rating', sort_order: 'desc', per_page: 4 }),
@@ -50,13 +52,13 @@ export default function HomePage() {
 
       {/* Hero */}
       <section className="relative bg-gradient-to-br from-primary via-primary-light to-primary-dark py-20 md:py-32">
-        <div className="absolute inset-0 bg-black/20" />
+        <div className="absolute inset-0 bg-black/20 pointer-events-none" />
         <div className="relative z-10 max-w-7xl mx-auto px-4 text-center">
           <h1 className="font-heading text-3xl md:text-5xl font-extrabold text-white mb-4 leading-tight">
-            Find Your Next Adventure
+            {t('hotels:search.title')}
           </h1>
           <p className="text-white/80 text-lg md:text-xl mb-10 max-w-2xl mx-auto">
-            Search and book hotels, tours & activities at the best prices worldwide.
+            {t('tours:search.title')}
           </p>
           <SearchBar variant="hero" />
         </div>
@@ -96,11 +98,11 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h2 className="font-heading text-2xl font-bold text-gray-900">Popular Hotels</h2>
+              <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:nav.hotels')}</h2>
               <p className="text-gray-500 mt-1">Top-rated stays loved by travelers</p>
             </div>
             <Link to="/hotels/search" className="text-primary font-semibold text-sm flex items-center gap-1 hover:underline">
-              View All <ChevronRight className="w-4 h-4" />
+              {t('common:common.viewAll')} <ChevronRight className="w-4 h-4" />
             </Link>
           </div>
           <div className="space-y-4">
@@ -119,11 +121,11 @@ export default function HomePage() {
       <section className="max-w-7xl mx-auto px-4 py-16">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="font-heading text-2xl font-bold text-gray-900">Top-Rated Tours</h2>
+            <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:nav.tours')}</h2>
             <p className="text-gray-500 mt-1">Unforgettable experiences</p>
           </div>
           <Link to="/tours" className="text-primary font-semibold text-sm flex items-center gap-1 hover:underline">
-            View All <ChevronRight className="w-4 h-4" />
+            {t('common:common.viewAll')} <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

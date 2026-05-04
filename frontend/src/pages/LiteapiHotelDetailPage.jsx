@@ -26,10 +26,17 @@ export default function LiteapiHotelDetailPage() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const tomorrow = format(addDays(new Date(), 1), 'yyyy-MM-dd')
 
-  const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || today)
-  const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || tomorrow)
-  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '1'))
-  const [showRates, setShowRates] = useState(false)
+  const urlCheckIn = searchParams.get('check_in')
+  const urlCheckOut = searchParams.get('check_out')
+  const urlGuests = searchParams.get('guests')
+  const urlRooms = searchParams.get('rooms')
+
+  const [checkIn, setCheckIn] = useState(urlCheckIn || today)
+  const [checkOut, setCheckOut] = useState(urlCheckOut || tomorrow)
+  const [guests, setGuests] = useState(parseInt(urlGuests || '1'))
+  const [rooms, setRooms] = useState(parseInt(urlRooms || '1'))
+  // Auto-show rates if dates were passed from search
+  const [showRates, setShowRates] = useState(!!(urlCheckIn && urlCheckOut))
 
   const { data: hotel, isLoading } = useQuery({
     queryKey: ['liteapi-hotel', liteapiId],
@@ -163,7 +170,7 @@ export default function LiteapiHotelDetailPage() {
             {hotel.description && (
               <div>
                 <h2 className="font-heading font-bold text-lg mb-3">About this hotel</h2>
-                <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{hotel.description}</p>
+                <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line text-justify">{hotel.description}</p>
               </div>
             )}
 
@@ -172,14 +179,14 @@ export default function LiteapiHotelDetailPage() {
               <h2 className="font-heading font-bold text-lg mb-4">Available Rooms & Rates</h2>
 
               {/* Date + Guest selector */}
-              <div className="bg-gray-50 rounded-xl p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-gray-50 rounded-xl p-4 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Check-in</label>
                   <input
                     type="date"
                     value={checkIn}
                     min={today}
-                    onChange={(e) => setCheckIn(e.target.value)}
+                    onChange={(e) => { setCheckIn(e.target.value); setShowRates(false) }}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
@@ -189,26 +196,38 @@ export default function LiteapiHotelDetailPage() {
                     type="date"
                     value={checkOut}
                     min={checkIn || today}
-                    onChange={(e) => setCheckOut(e.target.value)}
+                    onChange={(e) => { setCheckOut(e.target.value); setShowRates(false) }}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Guests</label>
+                  <input
+                    type="number"
+                    value={guests}
+                    min={1}
+                    max={10}
+                    onChange={(e) => { setGuests(parseInt(e.target.value) || 1); setShowRates(false) }}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Rooms</label>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
-                      value={guests}
+                      value={rooms}
                       min={1}
                       max={10}
-                      onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
+                      onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
                       className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                     <button
+                      type="button"
                       onClick={handleSearchRates}
                       className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors whitespace-nowrap"
                     >
-                      Check rates
+                      Search
                     </button>
                   </div>
                 </div>
@@ -262,7 +281,7 @@ export default function LiteapiHotelDetailPage() {
               {!showRates && (
                 <div className="text-center py-8 text-gray-400">
                   <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">Select your dates and click "Check rates" to see available rooms.</p>
+                  <p className="text-sm">Select your dates and click "Search" to see available rooms.</p>
                 </div>
               )}
             </div>

@@ -22,7 +22,7 @@ export default function RegisterPage() {
   const [adminErrors, setAdminErrors] = useState({})
 
   if (isAuthenticated) {
-    return <Navigate to={user?.role === 'admin' ? '/admin' : '/'} replace />
+    return <Navigate to={user?.role === 'partner' || user?.role === 'admin' ? '/admin' : '/'} replace />
   }
 
   const validate = () => {
@@ -72,9 +72,9 @@ export default function RegisterPage() {
         full_name: adminForm.full_name,
         email: adminForm.email,
         password: adminForm.password,
-        role: 'admin',
+        role: 'partner',
       })
-      toast.success('Admin account created!')
+      toast.success('Partner account created!')
       navigate('/admin', { replace: true })
     } catch (err) {
       const detail = err.response?.data?.detail
@@ -186,14 +186,14 @@ export default function RegisterPage() {
             >
               <span className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-primary" />
-                Register as Admin
+                Register as Partner
               </span>
               <ChevronDown className={`w-4 h-4 transition-transform ${showAdminRegister ? 'rotate-180' : ''}`} />
             </button>
 
             {showAdminRegister && (
               <div className="px-8 pb-8 pt-2">
-                <p className="text-gray-500 text-sm mb-6">Create an administrator account to manage the platform.</p>
+                <p className="text-gray-500 text-sm mb-6">Create a partner account to list and manage your hotels and tours.</p>
 
                 {adminError && (
                   <div className="bg-red-50 text-error text-sm px-4 py-3 rounded-lg mb-6">{adminError}</div>
@@ -209,7 +209,7 @@ export default function RegisterPage() {
                         value={adminForm.full_name}
                         onChange={(e) => setAdminForm({ ...adminForm, full_name: e.target.value })}
                         className={adminInputClass('full_name')}
-                        placeholder="Admin Name"
+                        placeholder="Partner Name"
                       />
                     </div>
                     {adminErrors.full_name && <p className="text-error text-xs mt-1">{adminErrors.full_name}</p>}
@@ -269,7 +269,7 @@ export default function RegisterPage() {
                     disabled={loading}
                     className="w-full bg-primary hover:bg-primary/90 disabled:bg-gray-300 text-white font-semibold py-3 rounded-lg transition-colors"
                   >
-                    {loading ? 'Creating admin...' : 'Create Admin Account'}
+                    {loading ? 'Creating partner...' : 'Create Partner Account'}
                   </button>
                 </form>
               </div>

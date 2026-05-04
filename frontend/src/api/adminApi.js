@@ -8,15 +8,6 @@ export const adminApi = {
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   listBookings: (params) => api.get('/admin/bookings', { params }),
   updateBooking: (id, status) => api.patch(`/admin/bookings/${id}?status=${status}`),
-  listTourBookings: (params) => api.get('/admin/tour-bookings', { params }),
-  updateTourBooking: (id, status) => api.patch(`/admin/tour-bookings/${id}?status=${status}`),
-
-  listPromoCodes: (params) => api.get('/promo-codes', { params }),
-  createPromoCode: (data) => api.post('/promo-codes', data),
-  updatePromoCode: (id, data) => api.patch(`/promo-codes/${id}`, data),
-  deletePromoCode: (id) => api.delete(`/promo-codes/${id}`),
-  validatePromoCode: (params) => api.post('/promo-codes/validate', null, { params }),
-
   listWishlists: (params) => api.get('/wishlists', { params }),
   addToWishlist: (data) => api.post('/wishlists', data),
   removeFromWishlist: (id) => api.delete(`/wishlists/${id}`),

@@ -27,14 +27,30 @@ from app.schemas.booking_item import (
     RoomItemCreate,
     TourItemCreate,
 )
-from app.services import duffel_service, email_service, liteapi_service, loyalty_service, viator_service, voucher_service
+from app.services import duffel_service, email_service, liteapi_service, lock_service, loyalty_service, viator_service, voucher_service
 from app.services.duffel_service import DuffelError
 from app.services.liteapi_service import LiteAPIError
+from app.services.lock_service import LockCollisionError
 from app.services.viator_service import ViatorError
 
 
 class BookingServiceError(ValueError):
     """Domain errors raised by the booking flow."""
+
+
+def _soft_lock_keys(entry) -> list[str]:
+    """Return Redis lock keys to acquire for a BookingItemCreate entry.
+
+    Only local (DB-backed) inventory gets locked; external API items
+    (LiteAPI, Viator, Duffel) rely on their own prebook/TTL mechanisms.
+    """
+    if isinstance(entry, RoomItemCreate):
+        if entry.room_id and entry.check_in and entry.check_out and not entry.liteapi_rate_id:
+            return [lock_service.room_key(entry.room_id, entry.check_in, entry.check_out)]
+    elif isinstance(entry, TourItemCreate):
+        if entry.tour_id and entry.tour_date and not entry.viator_product_code:
+            return [lock_service.tour_key(entry.tour_id, entry.tour_date)]
+    return []
 
 
 def _daterange(start: date, end: date):
@@ -94,13 +110,15 @@ async def _reserve_room_item(
     overlap = (
         await db.execute(
             select(func.count())
-            .select_from(Booking)
+            .select_from(BookingItem)
+            .join(Booking, BookingItem.booking_id == Booking.id)
             .where(
                 and_(
-                    Booking.room_id == item.room_id,
+                    BookingItem.room_id == item.room_id,
+                    BookingItem.item_type == BookingItemType.room.value,
                     Booking.status.in_(["pending", "confirmed"]),
-                    Booking.check_in < item.check_out,
-                    Booking.check_out > item.check_in,
+                    BookingItem.check_in < item.check_out,
+                    BookingItem.check_out > item.check_in,
                 )
             )
         )
@@ -318,8 +336,24 @@ async def create_booking(
     db: AsyncSession,
     user_id: uuid.UUID,
     data: BookingCreate,
+    redis=None,
 ) -> Booking:
     """Create a polymorphic booking + items. Runs inside the caller's transaction."""
+
+    owner = str(user_id)
+    acquired_lock_keys: list[str] = []
+
+    # Acquire Redis soft-locks for all local inventory items before touching the DB.
+    # If any slot is held by a concurrent checkout, raise immediately (→ 409).
+    for entry in data.items:
+        keys = _soft_lock_keys(entry)
+        try:
+            for key in keys:
+                await lock_service.acquire(redis, key, owner)
+                acquired_lock_keys.append(key)
+        except LockCollisionError:
+            await lock_service.release_many(redis, acquired_lock_keys, owner)
+            raise  # propagates to route → HTTP 409
 
     booking = Booking(
         user_id=user_id,
@@ -333,30 +367,25 @@ async def create_booking(
     items: list[BookingItem] = []
     running_subtotal = Decimal("0")
 
-    for entry in data.items:
-        if isinstance(entry, RoomItemCreate):
-            bi, subtotal = await _reserve_room_item(db, entry)
-        elif isinstance(entry, TourItemCreate):
-            bi, subtotal = await _reserve_tour_item(db, entry)
-        elif isinstance(entry, FlightItemCreate):
-            bi, subtotal = await _reserve_flight_item(db, entry)
-        else:
-            raise BookingServiceError("Unknown item type in cart")
+    try:
+        for entry in data.items:
+            if isinstance(entry, RoomItemCreate):
+                bi, subtotal = await _reserve_room_item(db, entry)
+            elif isinstance(entry, TourItemCreate):
+                bi, subtotal = await _reserve_tour_item(db, entry)
+            elif isinstance(entry, FlightItemCreate):
+                bi, subtotal = await _reserve_flight_item(db, entry)
+            else:
+                raise BookingServiceError("Unknown item type in cart")
 
-        bi.booking_id = booking.id
-        db.add(bi)
-        items.append(bi)
-        running_subtotal += subtotal
-
-    first_room_entry = next(
-        (e for e in data.items if isinstance(e, RoomItemCreate)), None
-    )
-    first_room_item = next((i for i in items if i.item_type == "room"), None)
-    if first_room_item:
-        booking.room_id = first_room_item.room_id
-        booking.check_in = first_room_item.check_in
-        booking.check_out = first_room_item.check_out
-        booking.guests_count = first_room_entry.guests_count if first_room_entry else first_room_item.quantity
+            bi.booking_id = booking.id
+            db.add(bi)
+            items.append(bi)
+            running_subtotal += subtotal
+    except Exception:
+        # Reservation failed — release any acquired locks and re-raise
+        await lock_service.release_many(redis, acquired_lock_keys, owner)
+        raise
 
     booking.total_price = running_subtotal.quantize(Decimal("0.01"))
 
@@ -385,6 +414,10 @@ async def create_booking(
 
     await db.flush()
     await db.refresh(booking)
+
+    # Store which lock keys this booking holds so confirm/cancel can release them.
+    await lock_service.store_booking_locks(redis, booking.id, acquired_lock_keys, owner)
+
     return booking
 
 
@@ -394,6 +427,7 @@ async def confirm_booking(
     guest_first_name: str = "Guest",
     guest_last_name: str = "Guest",
     guest_email: str = "guest@example.com",
+    redis=None,
 ) -> Booking:
     """Mark booking + items confirmed and award loyalty points based on final total."""
 
@@ -474,6 +508,9 @@ async def confirm_booking(
     await db.flush()
     await db.refresh(booking)
 
+    # Release soft-locks — booking is now confirmed, inventory is committed.
+    await lock_service.release_booking_locks(redis, booking.id)
+
     # Non-blocking confirmation email
     try:
         await email_service.send_booking_confirmation(booking, guest_email)
@@ -483,7 +520,7 @@ async def confirm_booking(
     return booking
 
 
-async def cancel_booking(db: AsyncSession, booking: Booking) -> Booking:
+async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> Booking:
     """Cancel booking and release inventory (tour slots, room_availability rows)."""
 
     if booking.status == BookingStatus.cancelled.value:
@@ -526,6 +563,9 @@ async def cancel_booking(db: AsyncSession, booking: Booking) -> Booking:
 
     await db.flush()
     await db.refresh(booking)
+
+    # Release soft-locks — slot is freed, next user can book.
+    await lock_service.release_booking_locks(redis, booking.id)
 
     # Non-blocking cancellation email — look up user email from booking
     try:

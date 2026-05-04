@@ -17,7 +17,9 @@ import { vouchersApi } from '@/api/vouchersApi'
 import { loyaltyApi } from '@/api/loyaltyApi'
 import PriceBreakdown from '@/components/common/PriceBreakdown'
 import Breadcrumb from '@/components/common/Breadcrumb'
-import { nightsBetween, formatDate, formatCurrency } from '@/utils/formatters'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import { useTranslation } from 'react-i18next'
+import { nightsBetween, formatDate } from '@/utils/formatters'
 import { format } from 'date-fns'
 import {
   Calendar, Users, CreditCard, Tag, Award, ChevronRight,
@@ -44,7 +46,10 @@ export default function BookingPage() {
   const { selectedRoom, hotel, checkIn, checkOut, guests, selectedTour, tourDate, selectedFlight, clearBooking } =
     useBookingStore()
 
+  const { t } = useTranslation('booking')
+  const fmt = useFormatCurrency()
   const isViatorTour = Boolean(selectedTour?.viator_product_code)
+  const isRegularTour = Boolean(selectedTour && !selectedTour.viator_product_code)
   const isFlightBooking = Boolean(selectedFlight?.duffel_offer_id)
 
   const [step, setStep] = useState('details') // 'details' | 'payment'
@@ -85,14 +90,14 @@ export default function BookingPage() {
   const nights = nightsBetween(effectiveCheckIn, effectiveCheckOut) || 1
   const subtotal = isFlightBooking
     ? (selectedFlight?.total_amount || 0)
-    : isViatorTour
+    : (isViatorTour || isRegularTour)
     ? (selectedTour?.price_per_person || 0) * (guests || 1)
     : (selectedRoom?.price_per_night || 0) * nights
   const taxes = Math.round(subtotal * 0.1 * 100) / 100
   const totalDiscount = (appliedVoucher?.discount_amount || 0) + loyaltyDiscount
   const finalTotal = Math.max(0, subtotal + taxes - totalDiscount)
 
-  if (!isFlightBooking && !isViatorTour && (!selectedRoom || !hotel)) {
+  if (!isFlightBooking && !isViatorTour && !isRegularTour && (!selectedRoom || !hotel)) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-20 text-center">
         <h2 className="text-xl font-bold text-gray-900 mb-2">No booking selected</h2>
@@ -117,7 +122,7 @@ export default function BookingPage() {
           code: res.data.code,
           discount_amount: res.data.discount_amount,
         })
-        toast.success(`Voucher applied — ${formatCurrency(res.data.discount_amount)} off`)
+        toast.success(`Voucher applied — ${fmt(res.data.discount_amount)} off`)
       } else {
         toast.error(res.data?.message || 'Invalid voucher')
       }
@@ -135,7 +140,7 @@ export default function BookingPage() {
     const disc = pts * 0.01
     setLoyaltyDiscount(disc)
     setPointsApplied(true)
-    toast.success(`${pts} points redeemed — ${formatCurrency(disc)} off`)
+    toast.success(`${pts} points redeemed — ${fmt(disc)} off`)
   }
 
   const handleProceedToPayment = async () => {
@@ -143,14 +148,14 @@ export default function BookingPage() {
       toast.error('Please select check-in and check-out dates')
       return
     }
-    if (isViatorTour && !tourDate) {
+    if ((isViatorTour || isRegularTour) && !tourDate) {
       toast.error('Please select a tour date')
       return
     }
     setProceeding(true)
     try {
       // 1. Create booking
-      const isLiteapi = !isViatorTour && !isFlightBooking && Boolean(selectedRoom?.liteapi_rate_id)
+      const isLiteapi = !isViatorTour && !isRegularTour && !isFlightBooking && Boolean(selectedRoom?.liteapi_rate_id)
       const bookingPayload = isFlightBooking
         ? {
             items: [{
@@ -175,6 +180,17 @@ export default function BookingPage() {
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
           }
+        : isRegularTour
+        ? {
+            items: [{
+              item_type: 'tour',
+              tour_id: selectedTour.id,
+              tour_date: tourDate,
+              quantity: guests || 1,
+            }],
+            special_requests: form.special_requests || undefined,
+            voucher_code: appliedVoucher?.code || undefined,
+          }
         : isLiteapi
         ? {
             items: [{
@@ -192,10 +208,14 @@ export default function BookingPage() {
             voucher_code: appliedVoucher?.code || undefined,
           }
         : {
-            room_id: selectedRoom.id,
-            check_in: effectiveCheckIn,
-            check_out: effectiveCheckOut,
-            guests_count: guests || 1,
+            items: [{
+              item_type: 'room',
+              room_id: selectedRoom.id,
+              check_in: effectiveCheckIn,
+              check_out: effectiveCheckOut,
+              guests_count: guests || 1,
+              quantity: 1,
+            }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
           }
@@ -266,8 +286,8 @@ export default function BookingPage() {
             { label: 'Home', to: '/' },
             isFlightBooking
               ? { label: 'Flights', to: '/flights' }
-              : isViatorTour
-              ? { label: 'Tours', to: '/tours' }
+              : (isViatorTour || isRegularTour)
+              ? { label: selectedTour?.name || 'Tour', to: selectedTour?.id ? `/tours/${selectedTour.id}` : '/tours' }
               : { label: hotel?.name || 'Hotel', to: hotel?.id ? `/hotels/${hotel.id}` : '/hotels/search' },
             { label: 'Booking' },
           ]}
@@ -283,7 +303,7 @@ export default function BookingPage() {
             </button>
           )}
           <h1 className="font-heading text-2xl font-bold">
-            {step === 'details' ? 'Complete Your Booking' : 'Payment'}
+            {step === 'details' ? t('page.title') : t('payment.title')}
           </h1>
         </div>
 
@@ -355,20 +375,20 @@ export default function BookingPage() {
                   <div className="flex gap-3">
                     <img
                       src={
-                        isViatorTour
+                        (isViatorTour || isRegularTour)
                           ? (selectedTour?.images?.[0] || 'https://placehold.co/80x80?text=Tour')
                           : (hotel?.images?.[0] || 'https://placehold.co/80x80?text=Hotel')
                       }
-                      alt={isViatorTour ? selectedTour?.name : hotel?.name}
+                      alt={(isViatorTour || isRegularTour) ? selectedTour?.name : hotel?.name}
                       className="w-20 h-20 rounded-lg object-cover"
                     />
                     <div className="min-w-0">
                       <p className="font-bold text-sm line-clamp-1">
-                        {isViatorTour ? selectedTour?.name : hotel?.name}
+                        {(isViatorTour || isRegularTour) ? selectedTour?.name : hotel?.name}
                       </p>
-                      {!isViatorTour && <p className="text-xs text-gray-500">{selectedRoom?.name}</p>}
+                      {!(isViatorTour || isRegularTour) && <p className="text-xs text-gray-500">{selectedRoom?.name}</p>}
                       <p className="text-xs text-gray-400">
-                        {isViatorTour ? selectedTour?.city : `${hotel?.city}, ${hotel?.country}`}
+                        {(isViatorTour || isRegularTour) ? selectedTour?.city : `${hotel?.city}, ${hotel?.country}`}
                       </p>
                     </div>
                   </div>
@@ -377,7 +397,7 @@ export default function BookingPage() {
                     <div className="flex items-center gap-2">
                       <Calendar className="w-4 h-4 text-gray-400" />
                       <span>
-                        {isViatorTour
+                        {(isViatorTour || isRegularTour)
                           ? (tourDate ? formatDate(tourDate) : '---')
                           : `${effectiveCheckIn ? formatDate(effectiveCheckIn) : '---'} — ${effectiveCheckOut ? formatDate(effectiveCheckOut) : '---'}`}
                       </span>
@@ -393,10 +413,10 @@ export default function BookingPage() {
                   <hr />
 
                   <PriceBreakdown
-                    pricePerNight={isViatorTour ? (selectedTour?.price_per_person || 0) : (selectedRoom?.price_per_night || 0)}
-                    nights={isViatorTour ? (guests || 1) : nights}
+                    pricePerNight={(isViatorTour || isRegularTour) ? (selectedTour?.price_per_person || 0) : (selectedRoom?.price_per_night || 0)}
+                    nights={(isViatorTour || isRegularTour) ? (guests || 1) : nights}
                     discount={totalDiscount}
-                    labelOverride={isViatorTour ? 'per person' : undefined}
+                    labelOverride={(isViatorTour || isRegularTour) ? 'per person' : undefined}
                   />
                 </>
               )}
@@ -404,10 +424,10 @@ export default function BookingPage() {
               {(appliedVoucher || pointsApplied) && (
                 <div className="space-y-1 text-xs text-success bg-success/5 rounded-lg p-3">
                   {appliedVoucher && (
-                    <p>✓ Voucher <strong>{appliedVoucher.code}</strong>: -{formatCurrency(appliedVoucher.discount_amount)}</p>
+                    <p>✓ Voucher <strong>{appliedVoucher.code}</strong>: -{fmt(appliedVoucher.discount_amount)}</p>
                   )}
                   {pointsApplied && loyaltyDiscount > 0 && (
-                    <p>✓ {pointsToRedeem} loyalty pts: -{formatCurrency(loyaltyDiscount)}</p>
+                    <p>✓ {pointsToRedeem} loyalty pts: -{fmt(loyaltyDiscount)}</p>
                   )}
                 </div>
               )}
@@ -443,7 +463,7 @@ function FlightOrderSummary({ flight }) {
       <hr />
       <div className="flex justify-between text-sm font-bold">
         <span>Total</span>
-        <span>{formatCurrency(flight.total_amount, flight.currency)}</span>
+        <span>{fmt(flight.total_amount, flight.currency)}</span>
       </div>
     </div>
   )
@@ -539,7 +559,7 @@ function DetailsStep({
             <CheckCircle className="w-4 h-4 text-success shrink-0" />
             <div className="flex-1 text-sm">
               <span className="font-semibold">{appliedVoucher.code}</span> applied —{' '}
-              {formatCurrency(appliedVoucher.discount_amount)} off
+              {fmt(appliedVoucher.discount_amount)} off
             </div>
             <button
               onClick={() => { setVoucherInput('') }}
@@ -581,7 +601,7 @@ function DetailsStep({
             <div className="flex items-center gap-3 bg-success/10 rounded-lg p-3 text-sm">
               <CheckCircle className="w-4 h-4 text-success shrink-0" />
               <span>
-                {pointsToRedeem} pts redeemed — {formatCurrency(loyaltyDiscount)} off
+                {pointsToRedeem} pts redeemed — {fmt(loyaltyDiscount)} off
               </span>
             </div>
           ) : (
@@ -696,6 +716,7 @@ function PaymentStep({
 function StripeCardForm({ clientSecret, onSuccess, finalTotal }) {
   const stripe = useStripe()
   const elements = useElements()
+  const fmt = useFormatCurrency()
   const [paying, setPaying] = useState(false)
   const [cardError, setCardError] = useState('')
 
@@ -745,7 +766,7 @@ function StripeCardForm({ clientSecret, onSuccess, finalTotal }) {
           className="w-full bg-accent hover:bg-accent/90 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl transition-colors flex items-center justify-center gap-2 text-base"
         >
           <CreditCard className="w-5 h-5" />
-          {paying ? 'Processing...' : `Pay ${formatCurrency(finalTotal)}`}
+          {paying ? 'Processing...' : `Pay ${fmt(finalTotal)}`}
         </button>
       </form>
     </div>

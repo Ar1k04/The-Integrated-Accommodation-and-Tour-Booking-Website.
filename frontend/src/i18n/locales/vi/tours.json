@@ -1,0 +1,26 @@
+{
+  "search": {
+    "title": "Khám phá những tour tuyệt vời",
+    "placeholder": "Thành phố, tên tour...",
+    "date": "Ngày khởi hành",
+    "participants": "Số người tham gia",
+    "searchBtn": "Tìm tour",
+    "duration": "Thời gian",
+    "category": "Danh mục",
+    "noResults": "Không tìm thấy tour phù hợp"
+  },
+  "detail": {
+    "overview": "Tổng quan",
+    "itinerary": "Lịch trình",
+    "includes": "Bao gồm",
+    "excludes": "Không bao gồm",
+    "reviews": "Đánh giá",
+    "bookTour": "Đặt tour này",
+    "selectDate": "Chọn ngày",
+    "participants": "Số người tham gia",
+    "perPerson": "/ người",
+    "day": "Ngày {{num}}",
+    "maxParticipants": "Tối đa {{count}} người",
+    "duration": "{{days}} ngày"
+  }
+}

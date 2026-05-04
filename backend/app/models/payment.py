@@ -37,4 +37,4 @@ class Payment(Base):
         String(20), default=PaymentStatus.pending.value, server_default="pending"
     )
 
-    booking = relationship("Booking", back_populates="payment")
+    booking = relationship("Booking", back_populates="payments")

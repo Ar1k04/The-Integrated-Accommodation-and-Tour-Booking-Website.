@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { HelmetProvider } from 'react-helmet-async'
 import { router } from './router'
 import { useAuthStore } from './store/authStore'
+import './i18n'
 import './index.css'
 
 const queryClient = new QueryClient({

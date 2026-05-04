@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.db.session import get_db
 
-ADMIN_ROLES = {"admin", "superadmin"}
+# All staff roles (partner = hotel/tour owner, admin = platform admin)
+STAFF_ROLES = {"partner", "admin"}
 
 
 async def get_current_user(
@@ -49,20 +50,22 @@ async def get_current_user(
     return user
 
 
+async def require_staff(current_user=Depends(get_current_user)):
+    """Allow partner OR admin (any platform staff)."""
+    if current_user.role not in STAFF_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required")
+    return current_user
+
+
 async def require_admin(current_user=Depends(get_current_user)):
-    """Allow both admin and superadmin roles."""
-    if current_user.role not in ADMIN_ROLES:
+    """Allow only admin role (full platform admin, formerly superadmin)."""
+    if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
 
-async def require_superadmin(current_user=Depends(get_current_user)):
-    """Allow only superadmin role."""
-    if current_user.role != "superadmin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access required")
-    return current_user
-
-
 CurrentUser = Annotated[object, Depends(get_current_user)]
-AdminUser = Annotated[object, Depends(require_admin)]
-SuperAdminUser = Annotated[object, Depends(require_superadmin)]
+StaffUser = Annotated[object, Depends(require_staff)]    # partner OR admin
+AdminUser = Annotated[object, Depends(require_admin)]    # admin only
+# Legacy alias — kept so any remaining code that imports SuperAdminUser still compiles
+SuperAdminUser = AdminUser

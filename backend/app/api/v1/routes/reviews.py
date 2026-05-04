@@ -10,10 +10,12 @@ from sqlalchemy.orm import selectinload
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
+from app.models.booking_item import BookingItem
 from app.models.hotel import Hotel
 from app.models.review import Review
+from app.models.room import Room
 from app.models.tour import Tour
-from app.models.tour_booking import TourBooking
+from app.models.tour_schedule import TourSchedule
 from app.schemas.review import ReviewCreate, ReviewListResponse, ReviewResponse, ReviewUpdate
 
 router = APIRouter(tags=["Reviews"])
@@ -99,10 +101,11 @@ async def create_review(
         has_booking = (
             await db.execute(
                 select(Booking.id)
-                .join(Booking.room)
+                .join(BookingItem, BookingItem.booking_id == Booking.id)
+                .join(Room, BookingItem.room_id == Room.id)
                 .where(
                     Booking.user_id == current_user.id,
-                    Booking.room.has(hotel_id=data.hotel_id),
+                    Room.hotel_id == data.hotel_id,
                     Booking.status == "completed",
                 )
                 .limit(1)
@@ -128,10 +131,13 @@ async def create_review(
     if data.tour_id:
         has_booking = (
             await db.execute(
-                select(TourBooking.id).where(
-                    TourBooking.user_id == current_user.id,
-                    TourBooking.tour_id == data.tour_id,
-                    TourBooking.status == "completed",
+                select(Booking.id)
+                .join(BookingItem, BookingItem.booking_id == Booking.id)
+                .join(TourSchedule, BookingItem.tour_schedule_id == TourSchedule.id)
+                .where(
+                    Booking.user_id == current_user.id,
+                    TourSchedule.tour_id == data.tour_id,
+                    Booking.status == "completed",
                 )
                 .limit(1)
             )

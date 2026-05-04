@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.models.user import User
 
 from app.core.config import settings
-from app.core.dependencies import AdminUser, CurrentUser
+from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
@@ -28,7 +28,7 @@ WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def _owns_payment(payment: Payment, user) -> bool:
-    if user.role in ("admin", "superadmin"):
+    if user.role in ("partner", "admin"):
         return True
     booking = payment.booking
     return bool(booking and booking.user_id == user.id)
@@ -108,7 +108,7 @@ async def stripe_webhook(
     if not added:
         return {"status": "duplicate"}
 
-    await handle_webhook_event(db, event)
+    await handle_webhook_event(db, event, redis=redis)
     return {"status": "ok"}
 
 
@@ -233,7 +233,8 @@ async def vnpay_return(
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
         email = user.email if user else "guest@example.com"
-        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email)
+        redis = getattr(request.app.state, "redis", None)
+        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
         await db.flush()
         return {
             "success": True,
@@ -313,7 +314,8 @@ async def vnpay_ipn(
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
         email = user.email if user else "guest@example.com"
-        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email)
+        redis = getattr(request.app.state, "redis", None)
+        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
         await db.flush()
         return {"RspCode": "00", "Message": "Success"}
     else:

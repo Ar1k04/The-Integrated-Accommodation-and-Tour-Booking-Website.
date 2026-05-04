@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import AdminUser, CurrentUser
+from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.tour import Tour
 from app.schemas.tour import (
@@ -176,18 +176,20 @@ async def list_tours(
     # Collect viator_product_codes already in DB to avoid duplicates
     db_viator_codes: set[str] = {t.viator_product_code for t in tours if t.viator_product_code}
 
-    # ── Viator hybrid search (page 1, city filter, no owner/q filter) ─────────
+    # ── Viator hybrid search (page 1, no owner filter) ───────────────────────
+    # Use explicit city filter first; fall back to q as a destination name.
+    viator_city = city or q
     viator_items: list[TourResponse] = []
-    if city and not owner_id and not q and page == 1:
+    if viator_city and not owner_id and page == 1:
         redis = getattr(request.app.state, "redis", None)
-        cache_key = f"viator:tours:{city}"
+        cache_key = f"viator:tours:{viator_city}"
         cached = await _get_cached(redis, cache_key)
 
         if cached is not None:
             raw_tours = cached
         else:
             try:
-                raw_tours = await viator_service.search_tours(city=city, limit=20)
+                raw_tours = await viator_service.search_tours(city=viator_city, limit=20)
                 await _set_cached(redis, cache_key, raw_tours)
             except ViatorError as exc:
                 if exc.status_code != 400:
@@ -225,8 +227,8 @@ async def get_tour(tour_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
     return _tour_response(tour)
 
 
-def _assert_tour_owner_or_superadmin(tour: Tour, user) -> None:
-    if user.role == "superadmin":
+def _assert_tour_owner_or_admin(tour: Tour, user) -> None:
+    if user.role == "admin":
         return
     if tour.owner_id and tour.owner_id != user.id:
         raise HTTPException(
@@ -239,7 +241,7 @@ def _assert_tour_owner_or_superadmin(tour: Tour, user) -> None:
 async def create_tour(
     data: TourCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     existing = await db.execute(select(Tour).where(Tour.slug == data.slug))
     if existing.scalar_one_or_none():
@@ -257,13 +259,13 @@ async def replace_tour(
     tour_id: uuid.UUID,
     data: TourCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     result = await db.execute(select(Tour).where(Tour.id == tour_id))
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
-    _assert_tour_owner_or_superadmin(tour, current_user)
+    _assert_tour_owner_or_admin(tour, current_user)
 
     for field, value in data.model_dump().items():
         setattr(tour, field, value)
@@ -277,13 +279,13 @@ async def update_tour(
     tour_id: uuid.UUID,
     data: TourUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     result = await db.execute(select(Tour).where(Tour.id == tour_id))
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
-    _assert_tour_owner_or_superadmin(tour, current_user)
+    _assert_tour_owner_or_admin(tour, current_user)
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(tour, field, value)
@@ -296,13 +298,13 @@ async def update_tour(
 async def delete_tour(
     tour_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     result = await db.execute(select(Tour).where(Tour.id == tour_id))
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
-    _assert_tour_owner_or_superadmin(tour, current_user)
+    _assert_tour_owner_or_admin(tour, current_user)
     await db.delete(tour)
     await db.flush()
 
@@ -311,7 +313,7 @@ async def delete_tour(
 async def upload_tour_images(
     tour_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
     files: list[UploadFile] = File(...),
 ):
     from app.services.cloudinary_service import upload_images
@@ -320,7 +322,7 @@ async def upload_tour_images(
     tour = result.scalar_one_or_none()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
-    _assert_tour_owner_or_superadmin(tour, current_user)
+    _assert_tour_owner_or_admin(tour, current_user)
 
     urls = await upload_images(files, folder="tours")
     existing = tour.images or []

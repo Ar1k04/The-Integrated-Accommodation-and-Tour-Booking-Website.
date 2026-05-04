@@ -1,0 +1,36 @@
+{
+  "search": {
+    "title": "Tìm khách sạn hoàn hảo cho bạn",
+    "placeholder": "Thành phố, tên khách sạn...",
+    "checkIn": "Ngày nhận phòng",
+    "checkOut": "Ngày trả phòng",
+    "guests": "Số khách",
+    "searchBtn": "Tìm khách sạn",
+    "filters": "Bộ lọc",
+    "sortBy": "Sắp xếp theo",
+    "starRating": "Hạng sao",
+    "priceRange": "Khoảng giá",
+    "amenities": "Tiện nghi",
+    "noResults": "Không tìm thấy khách sạn phù hợp",
+    "showing": "Hiển thị {{count}} khách sạn"
+  },
+  "detail": {
+    "overview": "Tổng quan",
+    "rooms": "Phòng còn trống",
+    "reviews": "Đánh giá",
+    "location": "Vị trí",
+    "amenities": "Tiện nghi",
+    "selectRoom": "Chọn phòng",
+    "checkAvailability": "Kiểm tra tình trạng phòng",
+    "maxGuests": "Tối đa {{count}} khách",
+    "perNight": "/ đêm",
+    "reserve": "Đặt phòng"
+  },
+  "booking": {
+    "checkIn": "Ngày nhận phòng",
+    "checkOut": "Ngày trả phòng",
+    "guests": "Số lượng khách",
+    "nights": "{{count}} đêm",
+    "totalPrice": "Tổng giá"
+  }
+}

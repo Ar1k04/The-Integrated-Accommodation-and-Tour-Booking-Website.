@@ -1,4 +1,5 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { hotelsApi } from '@/api/hotelsApi'
@@ -14,15 +15,25 @@ import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency } from '@/utils/formatters'
-import { MapPin, Wifi, Car, Dumbbell, UtensilsCrossed, Waves, Star } from 'lucide-react'
+import { MapPin, Wifi, Car, Dumbbell, UtensilsCrossed, Waves, Star, Calendar, Users } from 'lucide-react'
+import { format, addDays } from 'date-fns'
 
 const AMENITY_ICONS = { wifi: Wifi, parking: Car, gym: Dumbbell, restaurant: UtensilsCrossed, pool: Waves }
 
 export default function HotelDetailPage() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const setBookingData = useBookingStore((s) => s.setBookingData)
+
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const tomorrow = format(addDays(new Date(), 1), 'yyyy-MM-dd')
+
+  const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || '')
+  const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || '')
+  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '1'))
+  const [rooms, setRooms] = useState(parseInt(searchParams.get('rooms') || '1'))
 
   const { data: hotel, isLoading } = useQuery({
     queryKey: ['hotel', id],
@@ -30,9 +41,14 @@ export default function HotelDetailPage() {
     select: (res) => res.data,
   })
 
-  const { data: rooms } = useQuery({
-    queryKey: ['hotel-rooms', id],
-    queryFn: () => roomsApi.listByHotel(id),
+  const roomParams = {
+    ...(checkIn && checkOut ? { check_in: checkIn, check_out: checkOut } : {}),
+    guests,
+  }
+
+  const { data: allRooms } = useQuery({
+    queryKey: ['hotel-rooms', id, checkIn, checkOut, guests],
+    queryFn: () => roomsApi.listByHotel(id, roomParams),
     select: (res) => res.data?.items || [],
   })
 
@@ -43,7 +59,7 @@ export default function HotelDetailPage() {
   })
 
   const handleReserve = (room) => {
-    setBookingData({ selectedRoom: room, hotel })
+    setBookingData({ selectedRoom: room, hotel, checkIn, checkOut, guests, rooms })
     navigate('/bookings/new')
   }
 
@@ -61,8 +77,8 @@ export default function HotelDetailPage() {
   if (!hotel) return <div className="text-center py-20 text-gray-400">Hotel not found</div>
 
   const reviews = reviewsData?.items || []
-  const cheapestRoom = rooms?.length
-    ? rooms.reduce((min, r) => (min === null || r.price_per_night < min.price_per_night ? r : min), null)
+  const cheapestRoom = allRooms?.length
+    ? allRooms.reduce((min, r) => (min === null || r.price_per_night < min.price_per_night ? r : min), null)
     : null
   const startingPrice = cheapestRoom?.price_per_night
 
@@ -132,18 +148,49 @@ export default function HotelDetailPage() {
             {hotel.description && (
               <div>
                 <h2 className="font-heading font-bold text-lg mb-3">About this hotel</h2>
-                <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{hotel.description}</p>
+                <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line text-justify">{hotel.description}</p>
               </div>
             )}
 
             {/* Rooms */}
             <div>
               <h2 className="font-heading font-bold text-lg mb-4">Available Rooms</h2>
+
+              {/* Date + guest selector */}
+              <div className="bg-gray-50 rounded-xl p-4 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Check-in</label>
+                  <input type="date" value={checkIn} min={today}
+                    onChange={(e) => setCheckIn(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Check-out</label>
+                  <input type="date" value={checkOut} min={checkIn || today}
+                    onChange={(e) => setCheckOut(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Guests</label>
+                  <input type="number" value={guests} min={1} max={20}
+                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Rooms</label>
+                  <input type="number" value={rooms} min={1} max={10}
+                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+              </div>
+
               <div className="space-y-4">
-                {rooms?.map((room) => (
+                {allRooms?.map((room) => (
                   <RoomCard key={room.id} room={room} onReserve={handleReserve} />
                 ))}
-                {rooms?.length === 0 && <p className="text-gray-400 text-sm">No rooms available for selected dates.</p>}
+                {allRooms?.length === 0 && (
+                  <p className="text-gray-400 text-sm">No rooms available for the selected dates and guests.</p>
+                )}
               </div>
             </div>
 

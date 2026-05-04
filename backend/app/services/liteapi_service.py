@@ -260,6 +260,48 @@ async def get_hotel(liteapi_hotel_id: str) -> dict:
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
 
 
+async def get_min_rates_batch(
+    hotel_ids: list[str],
+    check_in: date,
+    check_out: date,
+    guests: int = 1,
+) -> dict[str, float]:
+    """Batch-fetch minimum room rate for multiple LiteAPI hotels.
+
+    Returns {liteapi_hotel_id: min_price}. Hotels with no available rates are omitted.
+    """
+    if not hotel_ids:
+        return {}
+    body = {
+        "hotelIds": hotel_ids,
+        "checkin": check_in.isoformat(),
+        "checkout": check_out.isoformat(),
+        "occupancies": [{"adults": guests, "children": []}],
+        "currency": "USD",
+        "guestNationality": "US",
+    }
+    try:
+        resp = await _client().post("/hotels/rates", json=body)
+        _raise_for_status(resp)
+        data = resp.json()
+        hotels_data = data.get("data") or []
+        result: dict[str, float] = {}
+        for hotel_entry in hotels_data:
+            hid = hotel_entry.get("hotelId") or hotel_entry.get("id") or ""
+            room_types = hotel_entry.get("roomTypes") or hotel_entry.get("rooms") or []
+            prices = []
+            for rt in room_types:
+                normalized = _normalize_rate(rt)
+                if normalized["price"] > 0:
+                    prices.append(normalized["price"])
+            if prices:
+                result[hid] = min(prices)
+        return result
+    except Exception as exc:
+        logger.warning("LiteAPI batch min-rates failed: %s", exc)
+        return {}
+
+
 async def get_rates(
     liteapi_hotel_id: str,
     check_in: date,

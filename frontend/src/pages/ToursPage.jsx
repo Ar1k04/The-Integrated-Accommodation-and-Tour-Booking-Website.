@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
@@ -18,11 +18,12 @@ const SORT_OPTIONS = [
 ]
 
 export default function ToursPage() {
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState('created_at')
   const [category, setCategory] = useState(params.get('category') || '')
   const [searchText, setSearchText] = useState(params.get('q') || '')
+  const [submittedSearch, setSubmittedSearch] = useState(params.get('q') || '')
   const [filters, setFilters] = useState({
     min_price: null,
     max_price: null,
@@ -31,8 +32,11 @@ export default function ToursPage() {
 
   const [sortBy, sortOrder] = sort.includes(':') ? sort.split(':') : [sort, 'desc']
 
+  // Scroll to top whenever the active query changes (new search / filter / sort).
+  // Skip the very first render so the user's initial scroll position is respected.
+  const isFirstRender = useRef(true)
   const queryParams = useMemo(() => ({
-    q: searchText || undefined,
+    q: submittedSearch || undefined,
     city: filters.city || undefined,
     category: category || undefined,
     min_price: filters.min_price || undefined,
@@ -40,13 +44,35 @@ export default function ToursPage() {
     sort_by: sortBy,
     sort_order: sortOrder,
     per_page: 12,
-  }), [searchText, filters, category, sortBy, sortOrder])
+  }), [submittedSearch, filters, category, sortBy, sortOrder])
+
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [queryParams])
+
+  // Submit the hero text search.
+  // Clears the sidebar city filter so results are not contaminated by the old location.
+  const handleSearch = () => {
+    if (searchText) {
+      setFilters(f => ({ ...f, city: '' }))
+    }
+    setSubmittedSearch(searchText)
+  }
+
+  // Change the sidebar city filter and clear the hero text search to avoid conflict.
+  const handleCityFilterChange = (city) => {
+    setFilters(f => ({ ...f, city }))
+    setSearchText('')
+    setSubmittedSearch('')
+  }
 
   const {
     data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading,
   } = useInfiniteQuery({
     queryKey: ['tours-search', queryParams],
-    queryFn: ({ pageParam = 1 }) => toursApi.list({ ...queryParams, page: pageParam }),
+    queryFn: ({ pageParam }) => toursApi.list({ ...queryParams, page: pageParam }),
+    initialPageParam: 1,
     getNextPageParam: (lastPage) => {
       const meta = lastPage.data?.meta
       if (meta && meta.page < meta.total_pages) return meta.page + 1
@@ -79,10 +105,18 @@ export default function ToursPage() {
               <input
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 placeholder="Search tours by name or destination..."
                 className="w-full pl-10 pr-4 py-3 rounded-lg bg-white/15 text-white placeholder-white/60 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
+            <button
+              onClick={handleSearch}
+              className="bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-3 rounded-lg text-sm transition-colors flex items-center gap-2 shrink-0"
+            >
+              <Search className="w-4 h-4" />
+              Search
+            </button>
           </div>
         </div>
       </div>
@@ -134,7 +168,8 @@ export default function ToursPage() {
                     <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <input
                       value={filters.city}
-                      onChange={(e) => setFilters({ ...filters, city: e.target.value })}
+                      onChange={(e) => handleCityFilterChange(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && window.scrollTo({ top: 0, behavior: 'smooth' })}
                       placeholder="City or country"
                       className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     />
@@ -160,7 +195,12 @@ export default function ToursPage() {
                   </div>
                 </div>
                 <button
-                  onClick={() => { setFilters({ min_price: null, max_price: null, city: '' }); setCategory(''); setSearchText('') }}
+                  onClick={() => {
+                    setFilters({ min_price: null, max_price: null, city: '' })
+                    setCategory('')
+                    setSearchText('')
+                    setSubmittedSearch('')
+                  }}
                   className="text-sm text-primary hover:underline"
                 >
                   Clear all filters
@@ -184,7 +224,12 @@ export default function ToursPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
                 {isLoading
                   ? Array.from({ length: 6 }, (_, i) => <TourCardSkeleton key={i} />)
-                  : allTours.map((tour) => <TourCard key={tour.id} tour={tour} />)
+                  : allTours.map((tour) => (
+                      <TourCard
+                        key={tour.viator_product_code || String(tour.id)}
+                        tour={tour}
+                      />
+                    ))
                 }
               </div>
               {!isLoading && allTours.length === 0 && (

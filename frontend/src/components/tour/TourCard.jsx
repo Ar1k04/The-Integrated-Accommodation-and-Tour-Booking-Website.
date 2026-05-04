@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Clock, MapPin, Star, User, Users } from 'lucide-react'
-import { formatCurrency } from '@/utils/formatters'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 
 export default function TourCard({ tour }) {
+  const { t } = useTranslation('common')
+  const fmt = useFormatCurrency()
   const isViator = tour.source === 'viator'
   const tourHref = isViator
     ? `/tours/viator/${tour.viator_product_code}`
@@ -64,14 +67,14 @@ export default function TourCard({ tour }) {
 
         <div className="flex items-end justify-between mt-3 pt-3 border-t border-gray-100">
           <div>
-            <p className="text-xl font-bold text-gray-900">{formatCurrency(tour.price_per_person)}</p>
-            <p className="text-xs text-gray-500">per person</p>
+            <p className="text-xl font-bold text-gray-900">{fmt(tour.price_per_person)}</p>
+            <p className="text-xs text-gray-500">{t('common.perPerson')}</p>
           </div>
           <Link
             to={tourHref}
             className="bg-accent hover:bg-accent-dark text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors"
           >
-            Book Now
+            {t('common.bookNow')}
           </Link>
         </div>
       </div>

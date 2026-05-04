@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { hotelsApi } from '@/api/hotelsApi'
 import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
@@ -15,10 +17,11 @@ import {
 export default function ManageHotels() {
   const qc = useQueryClient()
   const { user } = useAuth()
+  const { t } = useTranslation('admin')
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
-  const ownerId = user?.role === 'superadmin' ? undefined : user?.id
+  const ownerId = user?.role === 'admin' ? undefined : user?.id
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-hotels', page, search, user?.role, user?.id],
@@ -72,25 +75,26 @@ export default function ManageHotels() {
 
   return (
     <>
-      <Helmet><title>Manage Hotels — Admin</title></Helmet>
+      <Helmet><title>{t('dashboard.manageHotels')} — Admin</title></Helmet>
       <div className="bg-surface min-h-screen">
         <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
             <div>
-              <Link to="/admin" className="text-sm text-primary hover:underline">&larr; Dashboard</Link>
-              <h1 className="font-heading text-2xl font-bold text-gray-900">Manage Hotels</h1>
+              <Link to="/admin" className="text-sm text-primary hover:underline">{t('actions.backToDashboard')}</Link>
+              <h1 className="font-heading text-2xl font-bold text-gray-900">{t('dashboard.manageHotels')}</h1>
             </div>
             <button onClick={() => setModal({ name: '', city: '', country: '', star_rating: 3, description: '' })}
               className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Add Hotel
+              <Plus className="w-4 h-4" aria-hidden="true" /> {t('actions.addHotel')}
             </button>
           </div>
 
           <div className="bg-white rounded-xl border p-5">
             <div className="mb-4 relative max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" aria-hidden="true" />
               <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-                placeholder="Search hotels..." className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm" />
+                placeholder={t('filter.searchHotels')} aria-label={t('filter.searchHotels')}
+                className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm" />
             </div>
 
             {isLoading ? (
@@ -100,12 +104,12 @@ export default function ManageHotels() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 border-b">
-                      <th className="pb-3 font-medium">Hotel</th>
-                      <th className="pb-3 font-medium">Location</th>
-                      <th className="pb-3 font-medium">Stars</th>
-                      <th className="pb-3 font-medium">From</th>
-                      <th className="pb-3 font-medium">Rating</th>
-                      <th className="pb-3 font-medium text-right">Actions</th>
+                      <th className="pb-3 font-medium">{t('table.hotel')}</th>
+                      <th className="pb-3 font-medium">{t('table.location')}</th>
+                      <th className="pb-3 font-medium">{t('table.stars')}</th>
+                      <th className="pb-3 font-medium">{t('table.from')}</th>
+                      <th className="pb-3 font-medium">{t('table.rating')}</th>
+                      <th className="pb-3 font-medium text-right">{t('table.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -136,7 +140,7 @@ export default function ManageHotels() {
                       </tr>
                     ))}
                     {hotels.length === 0 && (
-                      <tr><td colSpan={6} className="py-12 text-center text-gray-400">No hotels found</td></tr>
+                      <tr><td colSpan={6} className="py-12 text-center text-gray-400">{t('empty.noHotels')}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -172,6 +176,8 @@ function slugify(text) {
 }
 
 function HotelModal({ hotel, onClose, onSave, saving }) {
+  const { t } = useTranslation('admin')
+  useEscapeKey(onClose)
   const [form, setForm] = useState({
     name: hotel.name || '',
     city: hotel.city || '',
@@ -221,57 +227,60 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
     onSave(payload, newFiles, imageOrder)
   }
 
+  const modalTitle = hotel.id ? t('actions.editHotel') : t('actions.newHotel')
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="hotel-modal-title"
+        className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-heading font-bold text-lg">{hotel.id ? 'Edit Hotel' : 'New Hotel'}</h2>
-          <button onClick={onClose}><X className="w-5 h-5" /></button>
+          <h2 id="hotel-modal-title" className="font-heading font-bold text-lg">{modalTitle}</h2>
+          <button onClick={onClose} aria-label={t('actions.cancel')}><X className="w-5 h-5" aria-hidden="true" /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.name')}</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
               className="w-full border rounded-lg px-4 py-2.5 text-sm" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.city')}</label>
               <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} required
                 className="w-full border rounded-lg px-4 py-2.5 text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.country')}</label>
               <input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} required
                 className="w-full border rounded-lg px-4 py-2.5 text-sm" />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.address')}</label>
             <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })}
               className="w-full border rounded-lg px-4 py-2.5 text-sm" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Stars</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.starRating')}</label>
               <select value={form.star_rating} onChange={(e) => setForm({ ...form, star_rating: Number(e.target.value) })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm">
-                {[1, 2, 3, 4, 5].map((s) => <option key={s} value={s}>{s} Star</option>)}
+                {[1, 2, 3, 4, 5].map((s) => <option key={s} value={s}>{s} ★</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.propertyType')}</label>
               <select value={form.property_type} onChange={(e) => setForm({ ...form, property_type: e.target.value })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm">
-                {['hotel', 'resort', 'apartment', 'villa', 'hostel'].map((t) => (
-                  <option key={t} value={t} className="capitalize">{t}</option>
+                {['hotel', 'resort', 'apartment', 'villa', 'hostel'].map((pt) => (
+                  <option key={pt} value={pt} className="capitalize">{pt}</option>
                 ))}
               </select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.currency')}</label>
               <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm">
                 {CURRENCIES.map((c) => (
@@ -281,17 +290,16 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.description')}</label>
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full border rounded-lg px-4 py-2.5 text-sm resize-none h-20" />
           </div>
 
-          {/* Images */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">Images</label>
+              <label className="block text-sm font-medium text-gray-700">{t('form.images')}</label>
               {images.length > 1 && (
-                <span className="text-xs text-gray-400">Click an image to set as thumbnail</span>
+                <span className="text-xs text-gray-400">{t('actions.setAsThumbnail')}</span>
               )}
             </div>
             {images.length > 0 && (
@@ -306,12 +314,12 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
                       <img src={src} alt="" className="w-full h-full object-cover" />
                       {isThumbnail && (
                         <span className="absolute top-1 left-1 bg-primary text-white text-[10px] font-semibold px-1.5 py-0.5 rounded">
-                          Thumbnail
+                          {t('actions.thumbnail')}
                         </span>
                       )}
                       {!isThumbnail && (
                         <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <span className="text-white text-[10px] font-medium">Set as thumbnail</span>
+                          <span className="text-white text-[10px] font-medium">{t('actions.setAsThumbnail')}</span>
                         </span>
                       )}
                       <button type="button"
@@ -328,17 +336,17 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
               </div>
             )}
             <label className="flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-lg py-4 cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
-              <Upload className="w-4 h-4 text-gray-400" />
-              <span className="text-sm text-gray-500">Click to upload images</span>
-              <input type="file" multiple accept="image/*" onChange={handleFiles} className="hidden" />
+              <Upload className="w-4 h-4 text-gray-400" aria-hidden="true" />
+              <span className="text-sm text-gray-500">{t('actions.uploadImages')}</span>
+              <input type="file" multiple accept="image/*" onChange={handleFiles} className="hidden" aria-label={t('actions.uploadImages')} />
             </label>
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 border py-2.5 rounded-lg text-sm font-medium">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 border py-2.5 rounded-lg text-sm font-medium">{t('actions.cancel')}</button>
             <button type="submit" disabled={saving}
               className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50">
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? t('actions.saving') : t('actions.save')}
             </button>
           </div>
         </form>

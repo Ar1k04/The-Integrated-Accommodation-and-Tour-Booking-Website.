@@ -6,12 +6,15 @@ import { toast } from 'sonner'
 import { toursApi } from '@/api/toursApi'
 import { reviewsApi } from '@/api/reviewsApi'
 import { useAuth } from '@/hooks/useAuth'
+import { useBookingStore } from '@/store/bookingStore'
 import ImageGallery from '@/components/hotel/ImageGallery'
 import ReviewCard from '@/components/review/ReviewCard'
 import ReviewForm from '@/components/review/ReviewForm'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
-import { formatCurrency, formatDate } from '@/utils/formatters'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import { useTranslation } from 'react-i18next'
+import { formatDate } from '@/utils/formatters'
 import { format } from 'date-fns'
 import {
   MapPin, Clock, Users, Star, Calendar, ChevronDown, ChevronUp,
@@ -22,6 +25,9 @@ export default function TourDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
+  const { setBookingData } = useBookingStore()
+  const { t } = useTranslation(['common', 'tours'])
+  const fmt = useFormatCurrency()
   const [participants, setParticipants] = useState(1)
   const [tourDate, setTourDate] = useState('')
   const [expandedDay, setExpandedDay] = useState(0)
@@ -39,23 +45,15 @@ export default function TourDetailPage() {
     select: (res) => res.data,
   })
 
-  const handleBook = async () => {
+  const handleBook = () => {
     if (!isAuthenticated) { navigate('/login'); return }
     if (!tourDate) { toast.error('Please select a tour date'); return }
-    setBooking(true)
-    try {
-      const res = await toursApi.createBooking({
-        tour_id: id,
-        tour_date: tourDate,
-        participants_count: participants,
-      })
-      toast.success('Tour booked successfully!')
-      navigate(`/bookings/${res.data.id}/confirmation`)
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Booking failed')
-    } finally {
-      setBooking(false)
-    }
+    setBookingData({
+      selectedTour: tour,
+      tourDate,
+      guests: participants,
+    })
+    navigate('/bookings/new?type=tour')
   }
 
   if (isLoading) {
@@ -216,7 +214,7 @@ export default function TourDetailPage() {
           <div className="lg:col-span-1">
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-5">
               <div className="text-center">
-                <p className="text-3xl font-bold text-gray-900">{formatCurrency(tour.price_per_person)}</p>
+                <p className="text-3xl font-bold text-gray-900">{fmt(tour.price_per_person)}</p>
                 <p className="text-sm text-gray-500">per person</p>
               </div>
 
@@ -256,12 +254,12 @@ export default function TourDetailPage() {
 
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-500">{formatCurrency(tour.price_per_person)} x {participants}</span>
-                  <span className="font-semibold">{formatCurrency(totalPrice)}</span>
+                  <span className="text-gray-500">{fmt(tour.price_per_person)} x {participants}</span>
+                  <span className="font-semibold">{fmt(totalPrice)}</span>
                 </div>
                 <div className="flex justify-between text-base font-bold pt-2 border-t">
                   <span>Total</span>
-                  <span className="text-primary">{formatCurrency(totalPrice)}</span>
+                  <span className="text-primary">{fmt(totalPrice)}</span>
                 </div>
               </div>
 
@@ -270,7 +268,7 @@ export default function TourDetailPage() {
                 disabled={booking}
                 className="w-full bg-accent hover:bg-accent-dark disabled:bg-gray-300 text-white font-bold py-3 rounded-lg transition-colors"
               >
-                {booking ? 'Booking...' : 'Book Now'}
+                {booking ? t('common:common.loading') : t('tours:detail.bookTour')}
               </button>
 
               <ul className="text-xs text-gray-500 space-y-1">

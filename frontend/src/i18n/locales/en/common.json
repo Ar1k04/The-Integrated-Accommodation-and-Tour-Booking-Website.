@@ -1,0 +1,55 @@
+{
+  "nav": {
+    "hotels": "Hotels",
+    "tours": "Tours",
+    "flights": "Flights",
+    "dashboard": "Dashboard",
+    "profile": "My Profile",
+    "bookings": "My Bookings",
+    "wishlist": "Wishlist",
+    "signIn": "Sign In",
+    "signOut": "Sign Out",
+    "register": "Register"
+  },
+  "common": {
+    "skipToContent": "Skip to main content",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "cancel": "Cancel",
+    "save": "Save",
+    "confirm": "Confirm",
+    "loading": "Loading...",
+    "noResults": "No results found",
+    "viewAll": "View All",
+    "learnMore": "Learn More",
+    "bookNow": "Book Now",
+    "from": "From",
+    "perNight": "per night",
+    "perPerson": "per person",
+    "guests": "guests",
+    "night": "night",
+    "nights": "nights",
+    "back": "Back",
+    "next": "Next",
+    "submit": "Submit",
+    "close": "Close",
+    "edit": "Edit",
+    "delete": "Delete",
+    "status": "Status",
+    "total": "Total",
+    "discount": "Discount",
+    "subtotal": "Subtotal",
+    "taxes": "Taxes & fees"
+  },
+  "roles": {
+    "user": "Customer",
+    "partner": "Partner",
+    "admin": "Admin"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "notFound": "Page not found",
+    "unauthorized": "Please sign in to continue"
+  }
+}

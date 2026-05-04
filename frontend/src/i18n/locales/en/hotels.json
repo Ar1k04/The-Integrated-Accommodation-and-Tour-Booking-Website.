@@ -1,0 +1,36 @@
+{
+  "search": {
+    "title": "Find Your Perfect Hotel",
+    "placeholder": "City, hotel name...",
+    "checkIn": "Check-in",
+    "checkOut": "Check-out",
+    "guests": "Guests",
+    "searchBtn": "Search Hotels",
+    "filters": "Filters",
+    "sortBy": "Sort by",
+    "starRating": "Star Rating",
+    "priceRange": "Price Range",
+    "amenities": "Amenities",
+    "noResults": "No hotels found for your search",
+    "showing": "Showing {{count}} hotels"
+  },
+  "detail": {
+    "overview": "Overview",
+    "rooms": "Available Rooms",
+    "reviews": "Reviews",
+    "location": "Location",
+    "amenities": "Amenities",
+    "selectRoom": "Select Room",
+    "checkAvailability": "Check Availability",
+    "maxGuests": "Max {{count}} guests",
+    "perNight": "/ night",
+    "reserve": "Reserve"
+  },
+  "booking": {
+    "checkIn": "Check-in Date",
+    "checkOut": "Check-out Date",
+    "guests": "Number of Guests",
+    "nights": "{{count}} nights",
+    "totalPrice": "Total Price"
+  }
+}

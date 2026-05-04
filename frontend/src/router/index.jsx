@@ -66,31 +66,31 @@ export const router = createBrowserRouter([
     children: [
       {
         path: '/admin',
-        element: <ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>,
+        element: <ProtectedRoute requireStaff><AdminDashboard /></ProtectedRoute>,
       },
       {
         path: '/admin/hotels',
-        element: <ProtectedRoute requireAdmin><ManageHotels /></ProtectedRoute>,
+        element: <ProtectedRoute requireStaff><ManageHotels /></ProtectedRoute>,
       },
       {
         path: '/admin/rooms',
-        element: <ProtectedRoute requireAdmin><ManageRooms /></ProtectedRoute>,
+        element: <ProtectedRoute requireStaff><ManageRooms /></ProtectedRoute>,
       },
       {
         path: '/admin/tours',
-        element: <ProtectedRoute requireAdmin><ManageTours /></ProtectedRoute>,
+        element: <ProtectedRoute requireStaff><ManageTours /></ProtectedRoute>,
       },
       {
         path: '/admin/bookings',
-        element: <ProtectedRoute requireAdmin><ManageBookings /></ProtectedRoute>,
+        element: <ProtectedRoute requireStaff><ManageBookings /></ProtectedRoute>,
       },
       {
         path: '/admin/users',
-        element: <ProtectedRoute requireSuperAdmin><ManageUsers /></ProtectedRoute>,
+        element: <ProtectedRoute requireAdmin><ManageUsers /></ProtectedRoute>,
       },
       {
         path: '/admin/vouchers',
-        element: <ProtectedRoute requireAdmin><ManageVouchers /></ProtectedRoute>,
+        element: <ProtectedRoute requireStaff><ManageVouchers /></ProtectedRoute>,
       },
     ],
   },

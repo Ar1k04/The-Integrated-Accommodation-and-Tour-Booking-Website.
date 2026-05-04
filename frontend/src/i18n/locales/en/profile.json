@@ -1,0 +1,54 @@
+{
+  "tabs": {
+    "profile": "Profile",
+    "bookings": "My Bookings",
+    "reviews": "My Reviews",
+    "wishlist": "Wishlist",
+    "loyalty": "Loyalty Points",
+    "security": "Security"
+  },
+  "bookings": {
+    "hotels": "Hotel Bookings",
+    "tours": "Tour Bookings",
+    "empty": {
+      "hotels": "No hotel bookings yet",
+      "tours": "No tour bookings yet"
+    },
+    "cancel": "Cancel",
+    "cancelled": "Booking cancelled"
+  },
+  "loyalty": {
+    "title": "Loyalty Points",
+    "current": "Current Points",
+    "tier": "Your Tier",
+    "nextTier": "Next Tier",
+    "progress": "{{current}} / {{max}} pts to {{tier}}",
+    "history": "Points History",
+    "redeem": "Redeem Points",
+    "earn": "Earn 1 point per $1 spent"
+  },
+  "reviews": {
+    "empty": "You haven't written any reviews yet",
+    "delete": "Delete Review"
+  },
+  "wishlist": {
+    "empty": "Your wishlist is empty",
+    "remove": "Remove"
+  },
+  "editProfile": {
+    "title": "Edit Profile",
+    "fullName": "Full Name",
+    "email": "Email",
+    "phone": "Phone",
+    "save": "Save Changes",
+    "saved": "Profile updated!"
+  },
+  "security": {
+    "changePassword": "Change Password",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm Password",
+    "update": "Update Password",
+    "updated": "Password updated!"
+  }
+}

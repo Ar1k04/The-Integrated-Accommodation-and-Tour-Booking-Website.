@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import AdminUser, CurrentUser
+from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
+from app.models.booking_item import BookingItem
 from app.models.hotel import Hotel
 from app.models.room import Room
 from app.schemas.room import RoomAvailabilityResponse, RoomCreate, RoomListResponse, RoomResponse, RoomUpdate
@@ -42,13 +43,14 @@ async def list_hotel_rooms(
 
     if check_in and check_out:
         booked_room_ids = (
-            select(Booking.room_id)
+            select(BookingItem.room_id)
+            .join(Booking, BookingItem.booking_id == Booking.id)
             .where(
-                and_(
-                    Booking.status.in_(["pending", "confirmed"]),
-                    Booking.check_in < check_out,
-                    Booking.check_out > check_in,
-                )
+                BookingItem.item_type == "room",
+                BookingItem.room_id.is_not(None),
+                Booking.status.in_(["pending", "confirmed"]),
+                BookingItem.check_in < check_out,
+                BookingItem.check_out > check_in,
             )
         )
         query = query.where(Room.id.notin_(booked_room_ids))
@@ -71,8 +73,8 @@ async def list_hotel_rooms(
     )
 
 
-def _assert_hotel_owner_or_superadmin(hotel: Hotel, user) -> None:
-    if user.role == "superadmin":
+def _assert_hotel_owner_or_admin(hotel: Hotel, user) -> None:
+    if user.role == "admin":
         return
     if hotel.owner_id and hotel.owner_id != user.id:
         raise HTTPException(
@@ -86,7 +88,7 @@ async def _load_room_and_check(db: AsyncSession, room_id: uuid.UUID, user) -> Ro
     if not room:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
     hotel = (await db.execute(select(Hotel).where(Hotel.id == room.hotel_id))).scalar_one()
-    _assert_hotel_owner_or_superadmin(hotel, user)
+    _assert_hotel_owner_or_admin(hotel, user)
     return room
 
 
@@ -95,12 +97,12 @@ async def create_room(
     hotel_id: uuid.UUID,
     data: RoomCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     hotel = (await db.execute(select(Hotel).where(Hotel.id == hotel_id))).scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
-    _assert_hotel_owner_or_superadmin(hotel, current_user)
+    _assert_hotel_owner_or_admin(hotel, current_user)
 
     room = Room(hotel_id=hotel_id, **data.model_dump())
     db.add(room)
@@ -125,7 +127,7 @@ async def replace_room(
     room_id: uuid.UUID,
     data: RoomCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     room = await _load_room_and_check(db, room_id, current_user)
     for field, value in data.model_dump().items():
@@ -140,7 +142,7 @@ async def update_room(
     room_id: uuid.UUID,
     data: RoomUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     room = await _load_room_and_check(db, room_id, current_user)
     for field, value in data.model_dump(exclude_unset=True).items():
@@ -154,7 +156,7 @@ async def update_room(
 async def delete_room(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     room = await _load_room_and_check(db, room_id, current_user)
     await db.delete(room)
@@ -176,14 +178,14 @@ async def check_room_availability(
     overlap_count = (
         await db.execute(
             select(func.count())
-            .select_from(Booking)
+            .select_from(BookingItem)
+            .join(Booking, BookingItem.booking_id == Booking.id)
             .where(
-                and_(
-                    Booking.room_id == room_id,
-                    Booking.status.in_(["pending", "confirmed"]),
-                    Booking.check_in < check_out,
-                    Booking.check_out > check_in,
-                )
+                BookingItem.room_id == room_id,
+                BookingItem.item_type == "room",
+                Booking.status.in_(["pending", "confirmed"]),
+                BookingItem.check_in < check_out,
+                BookingItem.check_out > check_in,
             )
         )
     ).scalar() or 0
@@ -196,7 +198,7 @@ async def check_room_availability(
 async def upload_room_images(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
     files: list[UploadFile] = File(...),
 ):
     from app.services.cloudinary_service import upload_images

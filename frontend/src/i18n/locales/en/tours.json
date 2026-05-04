@@ -1,0 +1,26 @@
+{
+  "search": {
+    "title": "Discover Amazing Tours",
+    "placeholder": "City, tour name...",
+    "date": "Tour Date",
+    "participants": "Participants",
+    "searchBtn": "Search Tours",
+    "duration": "Duration",
+    "category": "Category",
+    "noResults": "No tours found for your search"
+  },
+  "detail": {
+    "overview": "Overview",
+    "itinerary": "Itinerary",
+    "includes": "What's Included",
+    "excludes": "What's Excluded",
+    "reviews": "Reviews",
+    "bookTour": "Book This Tour",
+    "selectDate": "Select Date",
+    "participants": "Participants",
+    "perPerson": "/ person",
+    "day": "Day {{num}}",
+    "maxParticipants": "Max {{count}} participants",
+    "duration": "{{days}} day(s)"
+  }
+}

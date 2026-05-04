@@ -7,7 +7,6 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.models.booking import Booking
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
-from app.models.tour_booking import TourBooking
 from app.models.user import User
 from app.services import loyalty_service
 
@@ -18,37 +17,24 @@ async def create_payment_intent(
     db: AsyncSession,
     user_id,
     booking_id=None,
-    tour_booking_id=None,
     currency: str = "usd",
 ) -> tuple[Payment, str]:
     """Create a Stripe PaymentIntent and store the local Payment record."""
-    if not booking_id and not tour_booking_id:
-        raise ValueError("Provide either booking_id or tour_booking_id")
+    if not booking_id:
+        raise ValueError("Provide booking_id")
 
-    amount_cents: int = 0
-
-    if booking_id:
-        booking = (await db.execute(select(Booking).where(Booking.id == booking_id))).scalar_one_or_none()
-        if not booking:
-            raise ValueError("Booking not found")
-        if str(booking.user_id) != str(user_id):
-            raise ValueError("Not your booking")
-        amount_cents = int(float(booking.total_price) * 100)
-
-    if tour_booking_id:
-        tb = (await db.execute(select(TourBooking).where(TourBooking.id == tour_booking_id))).scalar_one_or_none()
-        if not tb:
-            raise ValueError("Tour booking not found")
-        if str(tb.user_id) != str(user_id):
-            raise ValueError("Not your booking")
-        amount_cents = int(float(tb.total_price) * 100)
+    booking = (await db.execute(select(Booking).where(Booking.id == booking_id))).scalar_one_or_none()
+    if not booking:
+        raise ValueError("Booking not found")
+    if str(booking.user_id) != str(user_id):
+        raise ValueError("Not your booking")
+    amount_cents = int(float(booking.total_price) * 100)
 
     intent = stripe.PaymentIntent.create(
         amount=amount_cents,
         currency=currency,
         metadata={
-            "booking_id": str(booking_id) if booking_id else "",
-            "tour_booking_id": str(tour_booking_id) if tour_booking_id else "",
+            "booking_id": str(booking_id),
             "user_id": str(user_id),
         },
     )
@@ -68,7 +54,7 @@ async def create_payment_intent(
     return payment, intent.client_secret
 
 
-async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
+async def handle_webhook_event(db: AsyncSession, event: dict, redis=None) -> None:
     """Process Stripe webhook events."""
     event_type = event["type"]
     data_object = event["data"]["object"]
@@ -98,7 +84,7 @@ async def handle_webhook_event(db: AsyncSession, event: dict) -> None:
                 fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
                 ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
                 email = user.email if user else "guest@example.com"
-                await confirm_booking(db, booking, guest_first_name=fn, guest_last_name=ln, guest_email=email)
+                await confirm_booking(db, booking, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
 
     elif event_type == "payment_intent.payment_failed":
         payment.status = PaymentStatus.failed.value

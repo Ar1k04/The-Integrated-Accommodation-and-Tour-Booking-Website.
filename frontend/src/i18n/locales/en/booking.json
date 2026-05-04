@@ -1,0 +1,52 @@
+{
+  "page": {
+    "title": "Complete Your Booking",
+    "stepDetails": "Details",
+    "stepPayment": "Payment",
+    "noSelection": "No booking selected",
+    "noSelectionDesc": "Please select a room, tour, or flight first.",
+    "browseHotels": "Browse Hotels"
+  },
+  "form": {
+    "fullName": "Full Name",
+    "email": "Email Address",
+    "phone": "Phone Number",
+    "specialRequests": "Special Requests",
+    "specialRequestsPlaceholder": "Dietary requirements, accessibility needs, etc."
+  },
+  "voucher": {
+    "label": "Voucher Code",
+    "placeholder": "Enter voucher code",
+    "apply": "Apply",
+    "applied": "Voucher applied",
+    "invalid": "Invalid voucher"
+  },
+  "loyalty": {
+    "label": "Redeem Loyalty Points",
+    "available": "{{count}} pts available",
+    "apply": "Redeem",
+    "applied": "pts redeemed"
+  },
+  "payment": {
+    "title": "Payment Method",
+    "stripe": "Credit / Debit Card",
+    "vnpay": "VNPay (Vietnam)",
+    "payNow": "Pay Now",
+    "payVnpay": "Pay with VNPay",
+    "processing": "Processing..."
+  },
+  "summary": {
+    "orderSummary": "Order Summary",
+    "checkIn": "Check-in",
+    "checkOut": "Check-out",
+    "guests": "{{count}} guest(s)"
+  },
+  "confirmation": {
+    "title": "Booking Confirmed!",
+    "subtitle": "Your booking has been confirmed and payment processed.",
+    "bookingRef": "Booking Reference",
+    "downloadPdf": "Download PDF",
+    "returnHome": "Return to Home",
+    "viewBookings": "View My Bookings"
+  }
+}

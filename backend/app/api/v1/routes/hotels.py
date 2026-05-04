@@ -1,18 +1,18 @@
-import asyncio
 import json
 import logging
 import math
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import AdminUser, CurrentUser
+from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
+from app.models.booking_item import BookingItem
 from app.models.hotel import Hotel
 from app.models.room import Room
 from app.schemas.hotel import (
@@ -23,7 +23,7 @@ from app.schemas.hotel import (
     HotelUpdate,
 )
 from app.services import liteapi_service
-from app.services.liteapi_service import LiteAPIError
+from app.services.liteapi_service import LiteAPIError, get_min_rates_batch
 
 logger = logging.getLogger(__name__)
 
@@ -120,13 +120,14 @@ async def list_hotels(
     )
     if check_in and check_out:
         overlap_rooms_q = (
-            select(Booking.room_id)
+            select(BookingItem.room_id)
+            .join(Booking, BookingItem.booking_id == Booking.id)
             .where(
-                and_(
-                    Booking.status.in_(["pending", "confirmed"]),
-                    Booking.check_in < check_out,
-                    Booking.check_out > check_in,
-                )
+                BookingItem.item_type == "room",
+                BookingItem.room_id.is_not(None),
+                Booking.status.in_(["pending", "confirmed"]),
+                BookingItem.check_in < check_out,
+                BookingItem.check_out > check_in,
             )
         )
         room_price_q = room_price_q.where(Room.id.notin_(overlap_rooms_q))
@@ -213,13 +214,34 @@ async def list_hotels(
                     logger.warning("LiteAPI search degraded: %s", exc.message)
                 raw_hotels = []
 
+        # Build initial list and collect IDs that have no static minRate
+        no_price_ids: list[str] = []
         for raw in raw_hotels:
             lite_id = raw.get("liteapi_hotel_id")
             if lite_id and lite_id in db_liteapi_ids:
-                continue  # already represented by a local hotel
+                continue
             if star_rating and int(raw.get("star_rating") or 0) != star_rating:
                 continue
-            liteapi_items.append(_liteapi_hotel_to_response(raw))
+            item = _liteapi_hotel_to_response(raw)
+            liteapi_items.append(item)
+            if item.min_room_price is None and lite_id:
+                no_price_ids.append(lite_id)
+
+        # Batch-fetch min rates for hotels that have no static pricing
+        if no_price_ids:
+            rate_check_in = check_in or (date.today() + timedelta(days=7))
+            rate_check_out = check_out or (rate_check_in + timedelta(days=1))
+            rate_cache_key = f"liteapi:minrates:{','.join(sorted(no_price_ids))}:{rate_check_in}:{rate_check_out}"
+            cached_rates = await _get_cached_liteapi_hotels(redis, rate_cache_key)
+            if cached_rates is not None:
+                min_rates = {k: v for k, v in (cached_rates if isinstance(cached_rates, dict) else {}).items()}
+            else:
+                min_rates = await get_min_rates_batch(no_price_ids, rate_check_in, rate_check_out, guests or 1)
+                if min_rates:
+                    await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL) if redis else None
+            for item in liteapi_items:
+                if item.min_room_price is None and item.liteapi_hotel_id in min_rates:
+                    item.min_room_price = min_rates[item.liteapi_hotel_id]
 
     all_items = db_items + liteapi_items
     total = total_db + len(liteapi_items)
@@ -299,8 +321,8 @@ async def get_hotel(hotel_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get
     return _hotel_response(hotel, min_room_price)
 
 
-def _assert_owner_or_superadmin(hotel: Hotel, user) -> None:
-    if user.role == "superadmin":
+def _assert_owner_or_admin(hotel: Hotel, user) -> None:
+    if user.role == "admin":
         return
     if hotel.owner_id and hotel.owner_id != user.id:
         raise HTTPException(
@@ -319,7 +341,7 @@ def _slugify(text: str) -> str:
 async def create_hotel(
     data: HotelCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     slug = data.slug or _slugify(data.name)
     base_slug = slug
@@ -347,13 +369,13 @@ async def replace_hotel(
     hotel_id: uuid.UUID,
     data: HotelCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     result = await db.execute(select(Hotel).where(Hotel.id == hotel_id))
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
-    _assert_owner_or_superadmin(hotel, current_user)
+    _assert_owner_or_admin(hotel, current_user)
 
     for field, value in data.model_dump().items():
         if field == "base_price" and value is None:
@@ -369,13 +391,13 @@ async def update_hotel(
     hotel_id: uuid.UUID,
     data: HotelUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     result = await db.execute(select(Hotel).where(Hotel.id == hotel_id))
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
-    _assert_owner_or_superadmin(hotel, current_user)
+    _assert_owner_or_admin(hotel, current_user)
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(hotel, field, value)
@@ -388,13 +410,13 @@ async def update_hotel(
 async def delete_hotel(
     hotel_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     result = await db.execute(select(Hotel).where(Hotel.id == hotel_id))
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
-    _assert_owner_or_superadmin(hotel, current_user)
+    _assert_owner_or_admin(hotel, current_user)
     await db.delete(hotel)
     await db.flush()
 
@@ -403,7 +425,7 @@ async def delete_hotel(
 async def upload_hotel_images(
     hotel_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
     files: list[UploadFile] = File(...),
 ):
     from app.services.cloudinary_service import upload_images
@@ -412,7 +434,7 @@ async def upload_hotel_images(
     hotel = result.scalar_one_or_none()
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
-    _assert_owner_or_superadmin(hotel, current_user)
+    _assert_owner_or_admin(hotel, current_user)
 
     urls = await upload_images(files, folder="hotels")
     existing = hotel.images or []

@@ -84,3 +84,35 @@ async def test_update_me(client: AsyncClient, test_user, user_token):
 async def test_logout(client: AsyncClient, test_user, user_token):
     res = await client.post("/api/v1/auth/logout", headers=auth_header(user_token))
     assert res.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_user_preferences_defaults(client: AsyncClient, test_user, user_token):
+    res = await client.get("/api/v1/auth/me", headers=auth_header(user_token))
+    assert res.status_code == 200
+    data = res.json()
+    assert data["preferred_locale"] == "en"
+    assert data["preferred_currency"] == "USD"
+
+
+@pytest.mark.asyncio
+async def test_update_preferences(client: AsyncClient, test_user, user_token):
+    res = await client.patch(
+        "/api/v1/auth/me",
+        json={"preferred_locale": "vi", "preferred_currency": "VND"},
+        headers=auth_header(user_token),
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["preferred_locale"] == "vi"
+    assert data["preferred_currency"] == "VND"
+
+
+@pytest.mark.asyncio
+async def test_invalid_locale_rejected(client: AsyncClient, test_user, user_token):
+    res = await client.patch(
+        "/api/v1/auth/me",
+        json={"preferred_locale": "fr"},
+        headers=auth_header(user_token),
+    )
+    assert res.status_code == 422

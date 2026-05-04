@@ -185,6 +185,7 @@ export default function SearchBar({ variant = 'hero' }) {
         </div>
 
         <button
+          type="button"
           onClick={handleSearch}
           className="bg-accent hover:bg-accent-dark text-white font-semibold px-6 py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
         >

@@ -3,11 +3,9 @@ from app.models.hotel import Hotel
 from app.models.room import Room
 from app.models.booking import Booking, BookingStatus
 from app.models.tour import Tour
-from app.models.tour_booking import TourBooking, TourBookingStatus
 from app.models.review import Review
 from app.models.payment import Payment, PaymentStatus
 from app.models.wishlist import Wishlist
-from app.models.promo_code import PromoCode
 from app.models.loyalty_tier import LoyaltyTier
 from app.models.loyalty_transaction import LoyaltyTransaction, LoyaltyTransactionType
 from app.models.voucher import Voucher, VoucherDiscountType, VoucherStatus
@@ -23,11 +21,9 @@ __all__ = [
     "Room",
     "Booking", "BookingStatus",
     "Tour",
-    "TourBooking", "TourBookingStatus",
     "Review",
     "Payment", "PaymentStatus",
     "Wishlist",
-    "PromoCode",
     "LoyaltyTier",
     "LoyaltyTransaction", "LoyaltyTransactionType",
     "Voucher", "VoucherDiscountType", "VoucherStatus",

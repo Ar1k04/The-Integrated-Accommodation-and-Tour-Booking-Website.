@@ -1,8 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.core.rate_limit import limiter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -15,6 +14,7 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
+from app.services.email_service import send_password_reset
 from app.services.auth_service import (
     authenticate_user,
     blacklist_token,
@@ -27,7 +27,6 @@ from app.services.auth_service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
-limiter = Limiter(key_func=get_remote_address)
 
 REFRESH_COOKIE = "refresh_token"
 REFRESH_MAX_AGE = settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
@@ -197,6 +196,7 @@ async def update_me(
 
 
 async def _send_reset_email(email: str, reset_link: str) -> None:
-    """Placeholder for SendGrid email dispatch."""
     import logging
-    logging.getLogger(__name__).info("Reset email to %s: %s", email, reset_link)
+    sent = await send_password_reset(email, reset_link)
+    if not sent:
+        logging.getLogger(__name__).info("Reset email to %s: %s", email, reset_link)
