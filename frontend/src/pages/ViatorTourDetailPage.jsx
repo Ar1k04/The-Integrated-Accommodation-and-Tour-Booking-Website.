@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
 import { toursApi } from '@/api/toursApi'
 import { useBookingStore } from '@/store/bookingStore'
 import { useAuth } from '@/hooks/useAuth'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import ImageGallery from '@/components/hotel/ImageGallery'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
-import { formatCurrency } from '@/utils/formatters'
 import { format, addDays } from 'date-fns'
 import { toast } from 'sonner'
 import {
@@ -22,6 +23,8 @@ export default function ViatorTourDetailPage() {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const setBookingData = useBookingStore((s) => s.setBookingData)
+  const { t } = useTranslation(['common', 'tours'])
+  const fmt = useFormatCurrency()
 
   const today = format(new Date(), 'yyyy-MM-dd')
   const [tourDate, setTourDate] = useState(searchParams.get('tour_date') || format(addDays(new Date(), 7), 'yyyy-MM-dd'))
@@ -46,7 +49,7 @@ export default function ViatorTourDetailPage() {
   })
 
   const handleCheckAvailability = () => {
-    if (!tourDate) { toast.error('Please select a date'); return }
+    if (!tourDate) { toast.error(t('tours:errors.selectDate')); return }
     setShowAvailability(true)
     fetchAvailability()
   }
@@ -56,7 +59,7 @@ export default function ViatorTourDetailPage() {
       navigate('/login?redirect=/tours/viator/' + code)
       return
     }
-    if (!tourDate) { toast.error('Please select a tour date'); return }
+    if (!tourDate) { toast.error(t('tours:errors.selectDate')); return }
     const price = availability?.price || tour?.price_per_person || 0
     setBookingData({
       selectedTour: {
@@ -85,7 +88,7 @@ export default function ViatorTourDetailPage() {
     )
   }
 
-  if (!tour) return <div className="text-center py-20 text-gray-400">Tour not found</div>
+  if (!tour) return <div className="text-center py-20 text-gray-400">{t('tours:detail.notFound')}</div>
 
   const displayPrice = availability?.price || tour.price_per_person || 0
   const totalPrice = displayPrice * participants
@@ -99,8 +102,8 @@ export default function ViatorTourDetailPage() {
 
       <div className="max-w-7xl mx-auto px-4 py-4">
         <Breadcrumb items={[
-          { label: 'Home', to: '/' },
-          { label: 'Tours', to: '/tours' },
+          { label: t('common:common.home'), to: '/' },
+          { label: t('nav.tours'), to: '/tours' },
           { label: tour.name },
         ]} />
 
@@ -114,7 +117,7 @@ export default function ViatorTourDetailPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h1 className="font-heading text-2xl md:text-3xl font-bold text-gray-900">{tour.name}</h1>
-                    <span className="bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5 rounded-full">Live via Viator</span>
+                    <span className="bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5 rounded-full">{t('tours:detail.liveViaViator')}</span>
                   </div>
                   {tour.category && (
                     <span className="inline-block mt-1 bg-primary/10 text-primary text-xs font-medium px-2 py-0.5 rounded-full capitalize">
@@ -151,7 +154,7 @@ export default function ViatorTourDetailPage() {
             {/* Description */}
             {tour.description && (
               <div>
-                <h2 className="font-heading font-bold text-lg mb-3">About this tour</h2>
+                <h2 className="font-heading font-bold text-lg mb-3">{t('tours:detail.about')}</h2>
                 <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{tour.description}</p>
               </div>
             )}
@@ -159,7 +162,7 @@ export default function ViatorTourDetailPage() {
             {/* Highlights */}
             {tour.highlights?.length > 0 && (
               <div>
-                <h2 className="font-heading font-bold text-lg mb-3">Highlights</h2>
+                <h2 className="font-heading font-bold text-lg mb-3">{t('tours:detail.highlights')}</h2>
                 <ul className="space-y-2">
                   {tour.highlights.map((h, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
@@ -176,7 +179,7 @@ export default function ViatorTourDetailPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {tour.includes?.length > 0 && (
                   <div>
-                    <h3 className="font-semibold mb-2 text-gray-900">What's included</h3>
+                    <h3 className="font-semibold mb-2 text-gray-900">{t('tours:detail.includesTitle')}</h3>
                     <ul className="space-y-1">
                       {tour.includes.map((item, i) => (
                         <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
@@ -189,7 +192,7 @@ export default function ViatorTourDetailPage() {
                 )}
                 {tour.excludes?.length > 0 && (
                   <div>
-                    <h3 className="font-semibold mb-2 text-gray-900">Not included</h3>
+                    <h3 className="font-semibold mb-2 text-gray-900">{t('tours:detail.excludesTitle')}</h3>
                     <ul className="space-y-1">
                       {tour.excludes.map((item, i) => (
                         <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
@@ -205,10 +208,10 @@ export default function ViatorTourDetailPage() {
 
             {/* Availability checker */}
             <div>
-              <h2 className="font-heading font-bold text-lg mb-4">Check Availability</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('tours:detail.checkAvailability')}</h2>
               <div className="bg-gray-50 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Tour Date</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('tours:detail.tourDateLabel')}</label>
                   <input
                     type="date"
                     value={tourDate}
@@ -218,7 +221,7 @@ export default function ViatorTourDetailPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Participants</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('tours:detail.participantsLabel')}</label>
                   <div className="flex items-center border rounded-lg overflow-hidden">
                     <button
                       onClick={() => setParticipants(Math.max(1, participants - 1))}
@@ -240,7 +243,7 @@ export default function ViatorTourDetailPage() {
                     onClick={handleCheckAvailability}
                     className="w-full bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors"
                   >
-                    {availLoading ? 'Checking...' : 'Check rates'}
+                    {availLoading ? t('tours:detail.checking') : t('tours:detail.checkRates')}
                   </button>
                 </div>
               </div>
@@ -251,11 +254,11 @@ export default function ViatorTourDetailPage() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-green-700 font-semibold flex items-center gap-1.5">
-                          <CheckCircle className="w-4 h-4" /> Available on {tourDate}
+                          <CheckCircle className="w-4 h-4" /> {t('tours:detail.availableOn', { date: tourDate })}
                         </p>
                         {availability.price > 0 && (
                           <p className="text-sm text-gray-600 mt-0.5">
-                            {formatCurrency(availability.price)} per person
+                            {fmt(availability.price)} {t('common:common.perPerson')}
                           </p>
                         )}
                       </div>
@@ -263,12 +266,12 @@ export default function ViatorTourDetailPage() {
                         onClick={handleBook}
                         className="bg-accent hover:bg-accent-dark text-white font-semibold px-6 py-2 rounded-lg text-sm transition-colors"
                       >
-                        Book now
+                        {t('common:common.bookNow')}
                       </button>
                     </div>
                   ) : (
                     <p className="text-red-700 font-semibold flex items-center gap-1.5">
-                      <XIcon className="w-4 h-4" /> Not available on this date. Please try another date.
+                      <XIcon className="w-4 h-4" /> {t('tours:detail.notAvailableOnDate')}
                     </p>
                   )}
                 </div>
@@ -277,7 +280,7 @@ export default function ViatorTourDetailPage() {
               {!showAvailability && (
                 <div className="mt-3 text-center py-6 text-gray-400">
                   <Calendar className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">Select a date and click "Check rates" to see availability.</p>
+                  <p className="text-sm">{t('tours:detail.selectDateHint')}</p>
                 </div>
               )}
             </div>
@@ -288,12 +291,12 @@ export default function ViatorTourDetailPage() {
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-900">
-                  {formatCurrency(displayPrice)}
+                  {fmt(displayPrice)}
                 </p>
-                <p className="text-sm text-gray-500">per person</p>
+                <p className="text-sm text-gray-500">{t('common:common.perPerson')}</p>
                 {participants > 1 && (
                   <p className="text-sm text-gray-400 mt-1">
-                    Total: {formatCurrency(totalPrice)} for {participants} people
+                    {t('tours:detail.totalFor', { price: fmt(totalPrice), count: participants })}
                   </p>
                 )}
               </div>
@@ -301,11 +304,11 @@ export default function ViatorTourDetailPage() {
                 onClick={handleBook}
                 className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-3 rounded-lg transition-colors"
               >
-                Book Now
+                {t('common:common.bookNow')}
               </button>
               <ul className="text-xs text-gray-500 space-y-1">
-                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> Powered by Viator</li>
-                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> Instant confirmation</li>
+                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t('tours:detail.poweredByViator')}</li>
+                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t('tours:detail.instantConfirmation')}</li>
               </ul>
             </div>
           </div>

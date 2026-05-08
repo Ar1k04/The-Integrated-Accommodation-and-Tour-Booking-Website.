@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import AdminUser, CurrentUser
+from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.voucher import Voucher
 from app.schemas.voucher import (
@@ -51,7 +51,7 @@ async def validate_voucher(
 async def create_voucher(
     data: VoucherCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     existing = (
         await db.execute(select(Voucher).where(Voucher.code == data.code))
@@ -69,12 +69,12 @@ async def create_voucher(
 @router.get("")
 async def list_vouchers(
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
 ):
     query = select(Voucher)
-    if current_user.role != "superadmin":
+    if current_user.role != "admin":
         query = query.where(Voucher.admin_id == current_user.id)
 
     count_q = select(func.count()).select_from(query.subquery())
@@ -99,14 +99,14 @@ async def list_vouchers(
 async def get_voucher(
     voucher_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     voucher = (
         await db.execute(select(Voucher).where(Voucher.id == voucher_id))
     ).scalar_one_or_none()
     if not voucher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voucher not found")
-    if current_user.role != "superadmin" and voucher.admin_id != current_user.id:
+    if current_user.role != "admin" and voucher.admin_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your voucher")
     return voucher
 
@@ -116,14 +116,14 @@ async def update_voucher(
     voucher_id: uuid.UUID,
     data: VoucherUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     voucher = (
         await db.execute(select(Voucher).where(Voucher.id == voucher_id))
     ).scalar_one_or_none()
     if not voucher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voucher not found")
-    if current_user.role != "superadmin" and voucher.admin_id != current_user.id:
+    if current_user.role != "admin" and voucher.admin_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your voucher")
 
     for field, value in data.model_dump(exclude_unset=True).items():
@@ -137,14 +137,14 @@ async def update_voucher(
 async def delete_voucher(
     voucher_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: AdminUser,
+    current_user: StaffUser,
 ):
     voucher = (
         await db.execute(select(Voucher).where(Voucher.id == voucher_id))
     ).scalar_one_or_none()
     if not voucher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voucher not found")
-    if current_user.role != "superadmin" and voucher.admin_id != current_user.id:
+    if current_user.role != "admin" and voucher.admin_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your voucher")
     await db.delete(voucher)
     await db.flush()

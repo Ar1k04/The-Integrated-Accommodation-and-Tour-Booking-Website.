@@ -1,0 +1,39 @@
+{
+  "detail": {
+    "title": "Chi tiết chuyến bay — TravelBooking",
+    "notFound": "Không tìm thấy vé hoặc vé đã hết hạn",
+    "outbound": "Chuyến bay đi",
+    "returnFlight": "Chuyến bay về",
+    "passengerDetails": "Thông tin hành khách",
+    "perPersonTotalFare": "mỗi người · tổng giá vé",
+    "class": "hạng",
+    "poweredByDuffel": "Được cung cấp bởi Duffel",
+    "realtimeInventory": "Dữ liệu thời gian thực",
+    "continueCheckout": "Tiếp tục thanh toán",
+    "passenger": {
+      "title": "Danh xưng",
+      "gender": "Giới tính",
+      "firstName": "Tên",
+      "lastName": "Họ",
+      "email": "Email",
+      "dateOfBirth": "Ngày sinh",
+      "phoneOptional": "Số điện thoại (tùy chọn)",
+      "firstNamePlaceholder": "Văn A",
+      "lastNamePlaceholder": "Nguyễn",
+      "emailPlaceholder": "nguyenvana@example.com",
+      "phonePlaceholder": "+84 900 000 000"
+    }
+  },
+  "errors": {
+    "fillPassengerDetails": "Vui lòng điền đầy đủ thông tin hành khách"
+  },
+  "myBookings": {
+    "airline": "Hãng bay",
+    "route": "Tuyến bay",
+    "passenger": "Hành khách",
+    "departure": "Khởi hành",
+    "arrival": "Đến nơi",
+    "bookingRef": "Mã đặt chỗ",
+    "flightNumber": "Số hiệu chuyến bay"
+  }
+}

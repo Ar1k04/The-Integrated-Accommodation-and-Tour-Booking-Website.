@@ -10,15 +10,22 @@ export function useAuth() {
   const refreshToken = useAuthStore((s) => s.refreshToken)
   const updateProfile = useAuthStore((s) => s.updateProfile)
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
-  const isSuperAdmin = user?.role === 'superadmin'
+  // Any platform staff (partner = hotel/tour owner, admin = platform admin)
+  const isStaff = user?.role === 'partner' || user?.role === 'admin'
+  // Full platform admin only
+  const isAdmin = user?.role === 'admin'
+  // Hotel/tour owner only
+  const isPartner = user?.role === 'partner'
 
   return {
     user,
     isAuthenticated,
     isLoading,
+    isStaff,
     isAdmin,
-    isSuperAdmin,
+    isPartner,
+    // Legacy aliases kept so existing consumers don't break while we migrate
+    isSuperAdmin: isAdmin,
     login,
     logout,
     register,

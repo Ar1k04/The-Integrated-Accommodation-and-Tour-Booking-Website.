@@ -62,6 +62,13 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     mock_redis = AsyncMock()
     mock_redis.exists.return_value = 0
     mock_redis.setex.return_value = True
+    # Soft-lock: NX acquire always succeeds; GET returns None (no existing lock);
+    # Lua release returns 1 (released); helpers succeed.
+    mock_redis.set.return_value = True
+    mock_redis.get.return_value = None
+    mock_redis.eval.return_value = 1
+    mock_redis.expire.return_value = True
+    mock_redis.delete.return_value = 1
 
     app.dependency_overrides[get_db] = _override_get_db
     app.state.redis = mock_redis
@@ -93,6 +100,7 @@ async def test_user(db_session: AsyncSession):
 
 @pytest_asyncio.fixture
 async def admin_user(db_session: AsyncSession):
+    """Full platform admin (formerly superadmin). Can access user management."""
     from app.models.user import User
     user = User(
         id=uuid.uuid4(),
@@ -110,6 +118,25 @@ async def admin_user(db_session: AsyncSession):
 
 
 @pytest_asyncio.fixture
+async def partner_user(db_session: AsyncSession):
+    """Partner user (hotel/tour owner). Can manage own listings."""
+    from app.models.user import User
+    user = User(
+        id=uuid.uuid4(),
+        email="partner@example.com",
+        hashed_password=hash_password("PartnerPassword1!"),
+        full_name="Partner User",
+        role="partner",
+        is_active=True,
+        loyalty_points=0,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
 async def user_token(test_user):
     return create_access_token(test_user.id, extra={"role": test_user.role})
 
@@ -117,6 +144,11 @@ async def user_token(test_user):
 @pytest_asyncio.fixture
 async def admin_token(admin_user):
     return create_access_token(admin_user.id, extra={"role": admin_user.role})
+
+
+@pytest_asyncio.fixture
+async def partner_token(partner_user):
+    return create_access_token(partner_user.id, extra={"role": partner_user.role})
 
 
 @pytest_asyncio.fixture

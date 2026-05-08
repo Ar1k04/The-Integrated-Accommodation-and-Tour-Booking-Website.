@@ -10,14 +10,13 @@ from sqlalchemy.orm import selectinload
 from app.models.user import User
 
 from app.core.config import settings
-from app.core.dependencies import AdminUser, CurrentUser
+from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.schemas.payment import PaymentCreate, PaymentResponse, VnpayCreateRequest
 from app.services import vnpay_service
 from app.services.payment_service import (
-    _award_loyalty_points,
     create_payment_intent,
     handle_webhook_event,
     refund_payment,
@@ -28,7 +27,7 @@ WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def _owns_payment(payment: Payment, user) -> bool:
-    if user.role in ("admin", "superadmin"):
+    if user.role in ("partner", "admin"):
         return True
     booking = payment.booking
     return bool(booking and booking.user_id == user.id)
@@ -87,6 +86,55 @@ async def get_payment(
     return await _load_payment_for_user(db, payment_id, current_user)
 
 
+@router.post("/{payment_id}/confirm-stripe", status_code=status.HTTP_200_OK)
+async def confirm_stripe_payment(
+    payment_id: uuid.UUID,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Called by the frontend after Stripe confirms client-side.
+    Verifies the PaymentIntent is succeeded directly with Stripe,
+    then calls confirm_booking() to award loyalty points and send email.
+    Idempotent — safe to call multiple times.
+    """
+    payment = await _load_payment_for_user(db, payment_id, current_user)
+
+    # Already confirmed — nothing to do
+    if payment.status == PaymentStatus.succeeded.value:
+        return {"success": True, "data": {"booking_id": str(payment.booking_id), "status": "confirmed"}}
+
+    if not payment.stripe_payment_intent_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a Stripe payment")
+
+    # Verify with Stripe directly (handles webhook not arriving in local dev)
+    intent = stripe.PaymentIntent.retrieve(payment.stripe_payment_intent_id)
+    if intent.status != "succeeded":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Payment not succeeded: {intent.status}")
+
+    payment.status = PaymentStatus.succeeded.value
+
+    if payment.booking_id:
+        from app.services.booking_service import confirm_booking
+        booking = (
+            await db.execute(
+                select(Booking)
+                .options(selectinload(Booking.items))
+                .where(Booking.id == payment.booking_id)
+            )
+        ).scalar_one_or_none()
+        if booking:
+            redis = request.app.state.redis
+            user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
+            fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
+            ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
+            email = user.email if user else "guest@example.com"
+            await confirm_booking(db, booking, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
+
+    await db.flush()
+    return {"success": True, "data": {"booking_id": str(payment.booking_id), "status": "confirmed"}}
+
+
 @router.post("/webhooks", status_code=status.HTTP_200_OK)
 async def stripe_webhook(
     request: Request,
@@ -108,7 +156,7 @@ async def stripe_webhook(
     if not added:
         return {"status": "duplicate"}
 
-    await handle_webhook_event(db, event)
+    await handle_webhook_event(db, event, redis=redis)
     return {"status": "ok"}
 
 
@@ -233,7 +281,8 @@ async def vnpay_return(
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
         email = user.email if user else "guest@example.com"
-        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email)
+        redis = getattr(request.app.state, "redis", None)
+        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
         await db.flush()
         return {
             "success": True,
@@ -313,7 +362,8 @@ async def vnpay_ipn(
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
         email = user.email if user else "guest@example.com"
-        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email)
+        redis = getattr(request.app.state, "redis", None)
+        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
         await db.flush()
         return {"RspCode": "00", "Message": "Success"}
     else:

@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
 import { hotelsApi } from '@/api/hotelsApi'
 import { toursApi } from '@/api/toursApi'
+import { searchDestinationPhoto } from '@/api/unsplashApi'
 import SearchBar from '@/components/common/SearchBar'
 import HotelCard from '@/components/hotel/HotelCard'
 import TourCard from '@/components/tour/TourCard'
@@ -10,13 +12,66 @@ import { HotelCardSkeleton, TourCardSkeleton } from '@/components/common/Skeleto
 import { Shield, Clock, Headphones, CreditCard, ChevronRight } from 'lucide-react'
 
 const FEATURED_DESTINATIONS = [
-  { name: 'Ha Noi', country: 'Vietnam', img: 'https://placehold.co/300x200?text=Hanoi' },
-  { name: 'Bangkok', country: 'Thailand', img: 'https://placehold.co/300x200?text=Bangkok' },
-  { name: 'Tokyo', country: 'Japan', img: 'https://placehold.co/300x200?text=Tokyo' },
-  { name: 'Paris', country: 'France', img: 'https://placehold.co/300x200?text=Paris' },
-  { name: 'Bali', country: 'Indonesia', img: 'https://placehold.co/300x200?text=Bali' },
-  { name: 'Seoul', country: 'South Korea', img: 'https://placehold.co/300x200?text=Seoul' },
+  { name: 'Ha Noi', country: 'Vietnam', query: 'Hoan Kiem lake Hanoi' },
+  { name: 'Bangkok', country: 'Thailand' },
+  { name: 'Tokyo', country: 'Japan' },
+  { name: 'Paris', country: 'France' },
+  { name: 'Bali', country: 'Indonesia' },
+  { name: 'Seoul', country: 'South Korea' },
 ]
+
+// Gradient fallbacks per destination (shown while photo loads or if Unsplash key is absent)
+const DEST_GRADIENTS = {
+  'Ha Noi': 'from-red-500 to-orange-400',
+  'Bangkok': 'from-yellow-500 to-amber-400',
+  'Tokyo': 'from-pink-500 to-rose-400',
+  'Paris': 'from-blue-500 to-indigo-400',
+  'Bali': 'from-emerald-500 to-teal-400',
+  'Seoul': 'from-purple-500 to-violet-400',
+}
+
+function DestinationCard({ dest }) {
+  const { data: photoUrl, isLoading } = useQuery({
+    queryKey: ['unsplash-photo', dest.name],
+    queryFn: () => searchDestinationPhoto(dest.query || `${dest.name} ${dest.country}`),
+    staleTime: 90 * 60 * 1000,
+    gcTime: 90 * 60 * 1000,
+  })
+
+  const gradient = DEST_GRADIENTS[dest.name] || 'from-gray-500 to-gray-400'
+
+  return (
+    <Link
+      to={`/hotels/search?city=${encodeURIComponent(dest.name)}`}
+      className="shrink-0 w-48 group"
+    >
+      <div className="relative h-32 rounded-xl overflow-hidden">
+        {/* Gradient background always present as base */}
+        <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
+
+        {/* Skeleton shimmer while fetching */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-gray-200 animate-pulse" />
+        )}
+
+        {/* Photo from Unsplash */}
+        {photoUrl && (
+          <img
+            src={photoUrl}
+            alt={dest.name}
+            className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+          />
+        )}
+
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+        <div className="absolute bottom-3 left-3 text-white">
+          <p className="font-bold text-sm">{dest.name}</p>
+          <p className="text-xs opacity-80">{dest.country}</p>
+        </div>
+      </div>
+    </Link>
+  )
+}
 
 const VALUE_PROPS = [
   { icon: Shield, title: 'Best Price Guarantee', desc: 'Find a lower price? We match it.' },
@@ -26,6 +81,7 @@ const VALUE_PROPS = [
 ]
 
 export default function HomePage() {
+  const { t } = useTranslation(['common', 'hotels', 'tours'])
   const { data: hotelsData, isLoading: hotelsLoading } = useQuery({
     queryKey: ['popular-hotels'],
     queryFn: () => hotelsApi.list({ sort_by: 'avg_rating', sort_order: 'desc', per_page: 4 }),
@@ -50,13 +106,13 @@ export default function HomePage() {
 
       {/* Hero */}
       <section className="relative bg-gradient-to-br from-primary via-primary-light to-primary-dark py-20 md:py-32">
-        <div className="absolute inset-0 bg-black/20" />
+        <div className="absolute inset-0 bg-black/20 pointer-events-none" />
         <div className="relative z-10 max-w-7xl mx-auto px-4 text-center">
           <h1 className="font-heading text-3xl md:text-5xl font-extrabold text-white mb-4 leading-tight">
-            Find Your Next Adventure
+            {t('hotels:search.title')}
           </h1>
           <p className="text-white/80 text-lg md:text-xl mb-10 max-w-2xl mx-auto">
-            Search and book hotels, tours & activities at the best prices worldwide.
+            {t('tours:search.title')}
           </p>
           <SearchBar variant="hero" />
         </div>
@@ -72,21 +128,7 @@ export default function HomePage() {
         </div>
         <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
           {FEATURED_DESTINATIONS.map((dest) => (
-            <Link
-              key={dest.name}
-              to={`/hotels/search?city=${encodeURIComponent(dest.name)}`}
-              className="shrink-0 w-48 group"
-            >
-              <div className="relative h-32 rounded-xl overflow-hidden">
-                <img src={dest.img} alt={dest.name}
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                <div className="absolute bottom-3 left-3 text-white">
-                  <p className="font-bold text-sm">{dest.name}</p>
-                  <p className="text-xs opacity-80">{dest.country}</p>
-                </div>
-              </div>
-            </Link>
+            <DestinationCard key={dest.name} dest={dest} />
           ))}
         </div>
       </section>
@@ -96,11 +138,11 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h2 className="font-heading text-2xl font-bold text-gray-900">Popular Hotels</h2>
+              <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:nav.hotels')}</h2>
               <p className="text-gray-500 mt-1">Top-rated stays loved by travelers</p>
             </div>
             <Link to="/hotels/search" className="text-primary font-semibold text-sm flex items-center gap-1 hover:underline">
-              View All <ChevronRight className="w-4 h-4" />
+              {t('common:common.viewAll')} <ChevronRight className="w-4 h-4" />
             </Link>
           </div>
           <div className="space-y-4">
@@ -119,11 +161,11 @@ export default function HomePage() {
       <section className="max-w-7xl mx-auto px-4 py-16">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="font-heading text-2xl font-bold text-gray-900">Top-Rated Tours</h2>
+            <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:nav.tours')}</h2>
             <p className="text-gray-500 mt-1">Unforgettable experiences</p>
           </div>
           <Link to="/tours" className="text-primary font-semibold text-sm flex items-center gap-1 hover:underline">
-            View All <ChevronRight className="w-4 h-4" />
+            {t('common:common.viewAll')} <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

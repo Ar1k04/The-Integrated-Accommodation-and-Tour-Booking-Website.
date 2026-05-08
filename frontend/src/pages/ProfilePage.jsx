@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/hooks/useAuth'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { bookingsApi } from '@/api/bookingsApi'
-import { toursApi } from '@/api/toursApi'
 import { reviewsApi } from '@/api/reviewsApi'
 import { adminApi } from '@/api/adminApi'
 import { authApi } from '@/api/authApi'
@@ -13,25 +14,27 @@ import { loyaltyApi } from '@/api/loyaltyApi'
 import BookingStatusBadge from '@/components/common/BookingStatusBadge'
 import ReviewCard from '@/components/review/ReviewCard'
 import Skeleton from '@/components/common/Skeleton'
-import { formatDate, formatCurrency } from '@/utils/formatters'
+import { formatDate } from '@/utils/formatters'
 import {
   User, Briefcase, Star, Heart, Award, Shield,
   Camera, Trash2, MapPin, Clock, Calendar, Eye, TrendingUp, TrendingDown,
+  PlaneTakeoff,
 } from 'lucide-react'
 
-const TABS = [
-  { key: 'profile', label: 'Profile', icon: User },
-  { key: 'bookings', label: 'My Bookings', icon: Briefcase },
-  { key: 'reviews', label: 'My Reviews', icon: Star },
-  { key: 'wishlist', label: 'Wishlist', icon: Heart },
-  { key: 'loyalty', label: 'Loyalty Points', icon: Award },
-  { key: 'security', label: 'Security', icon: Shield },
-]
-
 export default function ProfilePage() {
+  const { t } = useTranslation('profile')
   const [params, setParams] = useSearchParams()
   const activeTab = params.get('tab') || 'profile'
-  const setTab = (t) => setParams({ tab: t })
+  const setTab = (key) => setParams({ tab: key })
+
+  const TABS = [
+    { key: 'profile', label: t('tabs.profile'), icon: User },
+    { key: 'bookings', label: t('tabs.bookings'), icon: Briefcase },
+    { key: 'reviews', label: t('tabs.reviews'), icon: Star },
+    { key: 'wishlist', label: t('tabs.wishlist'), icon: Heart },
+    { key: 'loyalty', label: t('tabs.loyalty'), icon: Award },
+    { key: 'security', label: t('tabs.security'), icon: Shield },
+  ]
 
   return (
     <>
@@ -41,20 +44,20 @@ export default function ProfilePage() {
           <h1 className="font-heading text-2xl font-bold text-gray-900 mb-6">My Account</h1>
 
           <div className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b">
-            {TABS.map((t) => {
-              const Icon = t.icon
+            {TABS.map((tab) => {
+              const Icon = tab.icon
               return (
                 <button
-                  key={t.key}
-                  onClick={() => setTab(t.key)}
+                  key={tab.key}
+                  onClick={() => setTab(tab.key)}
                   className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                    activeTab === t.key
+                    activeTab === tab.key
                       ? 'bg-primary text-white'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  {t.label}
+                  {tab.label}
                 </button>
               )
             })}
@@ -146,108 +149,200 @@ function ProfileTab() {
 }
 
 function BookingsTab() {
+  const { t } = useTranslation('profile')
+  const fmt = useFormatCurrency()
   const [subTab, setSubTab] = useState('hotels')
+  const [statusFilter, setStatusFilter] = useState('all')
   const qc = useQueryClient()
 
-  const { data: hotelBookings, isLoading: loadingHotel } = useQuery({
-    queryKey: ['my-bookings'],
-    queryFn: () => bookingsApi.list({ per_page: 50 }),
+  const { data: allBookings, isLoading: loadingAll } = useQuery({
+    queryKey: ['my-bookings', statusFilter],
+    queryFn: () => bookingsApi.list({
+      per_page: 100,
+      ...(statusFilter !== 'all' && { status: statusFilter }),
+    }),
     select: (res) => res.data?.items || [],
   })
 
-  const { data: tourBookings, isLoading: loadingTour } = useQuery({
-    queryKey: ['my-tour-bookings'],
-    queryFn: () => toursApi.listBookings({ per_page: 50 }),
-    select: (res) => res.data?.items || [],
-  })
+  const hotelBookings = allBookings?.filter(b => b.items?.some(i => i.item_type === 'room')) || []
+  const tourBookings = allBookings?.filter(b => b.items?.some(i => i.item_type === 'tour')) || []
+  const flightBookings = allBookings?.filter(b => b.items?.some(i => i.item_type === 'flight')) || []
 
-  const cancelHotel = useMutation({
+  const cancelBooking = useMutation({
     mutationFn: (id) => bookingsApi.cancel(id),
-    onSuccess: () => { toast.success('Booking cancelled'); qc.invalidateQueries({ queryKey: ['my-bookings'] }) },
-    onError: () => toast.error('Failed to cancel'),
+    onSuccess: () => { toast.success(t('bookings.cancelled')); qc.invalidateQueries({ queryKey: ['my-bookings'] }) },
+    onError: () => toast.error(t('bookings.failedCancel')),
   })
 
-  const cancelTour = useMutation({
-    mutationFn: (id) => toursApi.cancelBooking(id),
-    onSuccess: () => { toast.success('Tour booking cancelled'); qc.invalidateQueries({ queryKey: ['my-tour-bookings'] }) },
-    onError: () => toast.error('Failed to cancel'),
-  })
+  const SUBTABS = [
+    { key: 'hotels', label: t('bookings.hotels'), count: hotelBookings.length },
+    { key: 'tours', label: t('bookings.tours'), count: tourBookings.length },
+    { key: 'flights', label: t('bookings.flights'), count: flightBookings.length },
+  ]
+
+  const STATUS_OPTIONS = [
+    { value: 'all', label: t('bookings.allStatuses') },
+    { value: 'pending', label: 'Pending' },
+    { value: 'confirmed', label: 'Confirmed' },
+    { value: 'cancelled', label: 'Cancelled' },
+  ]
 
   return (
     <div>
-      <div className="flex gap-2 mb-6">
-        <button onClick={() => setSubTab('hotels')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${subTab === 'hotels' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600'}`}>
-          Hotel Bookings
-        </button>
-        <button onClick={() => setSubTab('tours')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${subTab === 'tours' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600'}`}>
-          Tour Bookings
-        </button>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
+        <div className="flex gap-2">
+          {SUBTABS.map(({ key, label, count }) => (
+            <button key={key} onClick={() => setSubTab(key)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${subTab === key ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              {label}{count > 0 ? ` (${count})` : ''}
+            </button>
+          ))}
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="ml-auto border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          aria-label={t('bookings.filterByStatus')}
+        >
+          {STATUS_OPTIONS.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
       </div>
 
-      {subTab === 'hotels' && (
-        loadingHotel ? (
-          <div className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>
-        ) : hotelBookings?.length > 0 ? (
-          <div className="space-y-4">
-            {hotelBookings.map((b) => (
-              <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <p className="font-semibold text-sm truncate">{b.room?.name || 'Room'}</p>
-                    <BookingStatusBadge status={b.status} />
-                  </div>
-                  <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                    <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(b.check_in)} — {formatDate(b.check_out)}</span>
-                    <span>{b.guests_count} guest{b.guests_count > 1 ? 's' : ''}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <p className="font-bold text-primary">{formatCurrency(b.total_price)}</p>
-                  {b.status === 'pending' && (
-                    <button onClick={() => cancelHotel.mutate(b.id)}
-                      className="text-error text-xs hover:underline">Cancel</button>
-                  )}
-                </div>
+      {loadingAll ? (
+        <div className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>
+      ) : (
+        <>
+          {subTab === 'hotels' && (
+            hotelBookings.length > 0 ? (
+              <div className="space-y-4">
+                {hotelBookings.map((b) => {
+                  const roomItem = b.items?.find(i => i.item_type === 'room')
+                  return (
+                    <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="font-semibold text-sm truncate">{roomItem?.room?.name || 'Hotel Room'}</p>
+                          <BookingStatusBadge status={b.status} />
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                          {roomItem?.check_in && roomItem?.check_out && (
+                            <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(roomItem.check_in)} — {formatDate(roomItem.check_out)}</span>
+                          )}
+                          {roomItem?.quantity && (
+                            <span>{roomItem.quantity} room{roomItem.quantity > 1 ? 's' : ''}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <p className="font-bold text-primary">{fmt(b.total_price)}</p>
+                        {b.status === 'pending' && (
+                          <button onClick={() => cancelBooking.mutate(b.id)}
+                            className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
-            ))}
-          </div>
-        ) : (
-          <EmptyState message="No hotel bookings yet" />
-        )
-      )}
+            ) : (
+              <EmptyState message={t('bookings.empty.hotels')} />
+            )
+          )}
 
-      {subTab === 'tours' && (
-        loadingTour ? (
-          <div className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>
-        ) : tourBookings?.length > 0 ? (
-          <div className="space-y-4">
-            {tourBookings.map((b) => (
-              <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <p className="font-semibold text-sm truncate">{b.tour?.name || 'Tour'}</p>
-                    <BookingStatusBadge status={b.status} />
-                  </div>
-                  <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                    <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(b.tour_date)}</span>
-                    <span>{b.participants_count} participant{b.participants_count > 1 ? 's' : ''}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <p className="font-bold text-primary">{formatCurrency(b.total_price)}</p>
-                  {b.status === 'pending' && (
-                    <button onClick={() => cancelTour.mutate(b.id)}
-                      className="text-error text-xs hover:underline">Cancel</button>
-                  )}
-                </div>
+          {subTab === 'tours' && (
+            tourBookings.length > 0 ? (
+              <div className="space-y-4">
+                {tourBookings.map((b) => {
+                  const tourItem = b.items?.find(i => i.item_type === 'tour')
+                  return (
+                    <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="font-semibold text-sm truncate">{tourItem?.viator_tour_name || 'Tour'}</p>
+                          <BookingStatusBadge status={b.status} />
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                          {tourItem?.check_in && (
+                            <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(tourItem.check_in)}</span>
+                          )}
+                          {tourItem?.quantity && (
+                            <span>{tourItem.quantity} participant{tourItem.quantity > 1 ? 's' : ''}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <p className="font-bold text-primary">{fmt(b.total_price)}</p>
+                        {b.status === 'pending' && (
+                          <button onClick={() => cancelBooking.mutate(b.id)}
+                            className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
-            ))}
-          </div>
-        ) : (
-          <EmptyState message="No tour bookings yet" />
-        )
+            ) : (
+              <EmptyState message={t('bookings.empty.tours')} />
+            )
+          )}
+
+          {subTab === 'flights' && (
+            flightBookings.length > 0 ? (
+              <div className="space-y-4">
+                {flightBookings.map((b) => {
+                  const flightItem = b.items?.find(i => i.item_type === 'flight')
+                  const fb = flightItem?.flight_booking
+                  return (
+                    <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="bg-primary/10 text-primary text-xs font-bold px-2 py-0.5 rounded-full">
+                            {fb?.airline_name || 'Flight'}
+                          </span>
+                          {fb?.flight_number && (
+                            <span className="text-xs text-gray-500 font-medium">· {fb.flight_number}</span>
+                          )}
+                          <BookingStatusBadge status={b.status} />
+                        </div>
+                        {fb && (
+                          <div className="flex flex-wrap gap-3 text-xs text-gray-500 mt-1">
+                            <span className="flex items-center gap-1">
+                              <PlaneTakeoff className="w-3 h-3" />
+                              {fb.departure_airport} → {fb.arrival_airport}
+                            </span>
+                            {fb.departure_at && (
+                              <span className="flex items-center gap-1">
+                                <Calendar className="w-3 h-3" />
+                                {formatDate(fb.departure_at)}
+                              </span>
+                            )}
+                            {fb.passenger_name && (
+                              <span>{fb.passenger_name}</span>
+                            )}
+                            {fb.duffel_booking_ref && (
+                              <span className="font-mono bg-gray-100 px-1.5 rounded">{fb.duffel_booking_ref}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <p className="font-bold text-primary">{fmt(b.total_price)}</p>
+                        {b.status === 'pending' && (
+                          <button onClick={() => cancelBooking.mutate(b.id)}
+                            className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <EmptyState message={t('bookings.empty.flights')} />
+            )
+          )}
+        </>
       )}
     </div>
   )
@@ -351,6 +446,7 @@ const TIER_COLORS = {
 }
 
 function LoyaltyTab() {
+  const fmt = useFormatCurrency()
   const { data: loyaltyData, isLoading } = useQuery({
     queryKey: ['loyalty-status'],
     queryFn: () => loyaltyApi.getStatus(),
@@ -395,7 +491,7 @@ function LoyaltyTab() {
         )}
         <p className="text-4xl font-bold text-primary mt-4">{totalPoints.toLocaleString()}</p>
         <p className="text-sm text-gray-500">loyalty points</p>
-        <p className="text-xs text-gray-400 mt-1">≈ {formatCurrency(totalPoints * 0.01)} redemption value</p>
+        <p className="text-xs text-gray-400 mt-1">≈ {fmt(totalPoints * 0.01)} redemption value</p>
 
         {nextTier && (
           <div className="mt-6">

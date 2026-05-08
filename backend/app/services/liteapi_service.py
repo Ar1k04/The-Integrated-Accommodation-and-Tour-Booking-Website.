@@ -108,6 +108,20 @@ def _infer_country_code(text: str) -> str | None:
     return None
 
 
+def _extract_facilities(raw: dict) -> list:
+    """Extract named facilities from a LiteAPI hotel detail response.
+
+    Returns [{id: int, name: str}, ...] from the raw 'facilities' field,
+    which is present in the detail endpoint but not in the list endpoint.
+    """
+    raw_facilities = raw.get("facilities") or raw.get("hotelFacilities") or []
+    result = []
+    for f in raw_facilities:
+        if isinstance(f, dict) and f.get("facilityId") and f.get("name"):
+            result.append({"id": f["facilityId"], "name": f["name"]})
+    return result
+
+
 def _normalize_hotel(raw: dict) -> dict:
     """Normalize a LiteAPI hotel object (list or detail endpoint) to a flat dict."""
     # list endpoint uses: id, stars, rating, main_photo, city, country (lowercase)
@@ -156,7 +170,7 @@ def _normalize_hotel(raw: dict) -> dict:
         "longitude": longitude,
         "star_rating": stars,
         "property_type": raw.get("propertyType") or raw.get("hotelTypeId") and "hotel",
-        "amenities": [],  # facilityIds are integers; skip for display
+        "amenities": _extract_facilities(raw),
         "images": images,
         "min_room_price": float(min_price) if min_price else None,
         "currency": raw.get("currency") or "USD",
@@ -207,6 +221,37 @@ def _normalize_rate(room_type: dict) -> dict:
     }
 
 
+async def list_facilities() -> list[dict]:
+    """Fetch canonical hotel facility list from LiteAPI GET /data/facilities.
+
+    Returns [{id: int, name: str}, ...]. The list is essentially static;
+    callers should cache the result (e.g. 24 h in Redis).
+    """
+    try:
+        resp = await _client().get("/data/facilities")
+        _raise_for_status(resp)
+        data = resp.json()
+        raw = data.get("data") if isinstance(data, dict) else data
+        facilities = raw if isinstance(raw, list) else []
+        result = []
+        for item in facilities:
+            fid = item.get("facility_id")
+            name = item.get("facility") or ""
+            # Prefer English translation when available
+            for t in item.get("translation") or []:
+                if t.get("lang") == "en":
+                    name = t.get("facility") or name
+                    break
+            if fid and name:
+                result.append({"id": fid, "name": name})
+        return result
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        logger.warning("LiteAPI list_facilities failed: %s", exc)
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
 async def search_hotels(
     country_code: str = "",
     city: str = "",
@@ -214,6 +259,8 @@ async def search_hotels(
     check_out: date | None = None,
     guests: int = 1,
     limit: int = 20,
+    facility_ids: list[int] | None = None,
+    strict_facilities_filtering: bool = False,
 ) -> list[dict]:
     """Search hotels via LiteAPI /data/hotels. Returns normalized hotel dicts.
 
@@ -228,6 +275,10 @@ async def search_hotels(
     params: dict[str, Any] = {"countryCode": resolved_cc, "limit": limit}
     if city:
         params["cityName"] = city
+    if facility_ids:
+        # LiteAPI expects a comma-separated string, e.g. "107,301"
+        params["facilityIds"] = ",".join(str(fid) for fid in facility_ids)
+        params["strictFacilitiesFiltering"] = strict_facilities_filtering
 
     try:
         resp = await _client().get("/data/hotels", params=params)
@@ -258,6 +309,48 @@ async def get_hotel(liteapi_hotel_id: str) -> dict:
     except Exception as exc:
         logger.warning("LiteAPI get_hotel failed: %s", exc)
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def get_min_rates_batch(
+    hotel_ids: list[str],
+    check_in: date,
+    check_out: date,
+    guests: int = 1,
+) -> dict[str, float]:
+    """Batch-fetch minimum room rate for multiple LiteAPI hotels.
+
+    Returns {liteapi_hotel_id: min_price}. Hotels with no available rates are omitted.
+    """
+    if not hotel_ids:
+        return {}
+    body = {
+        "hotelIds": hotel_ids,
+        "checkin": check_in.isoformat(),
+        "checkout": check_out.isoformat(),
+        "occupancies": [{"adults": guests, "children": []}],
+        "currency": "USD",
+        "guestNationality": "US",
+    }
+    try:
+        resp = await _client().post("/hotels/rates", json=body)
+        _raise_for_status(resp)
+        data = resp.json()
+        hotels_data = data.get("data") or []
+        result: dict[str, float] = {}
+        for hotel_entry in hotels_data:
+            hid = hotel_entry.get("hotelId") or hotel_entry.get("id") or ""
+            room_types = hotel_entry.get("roomTypes") or hotel_entry.get("rooms") or []
+            prices = []
+            for rt in room_types:
+                normalized = _normalize_rate(rt)
+                if normalized["price"] > 0:
+                    prices.append(normalized["price"])
+            if prices:
+                result[hid] = min(prices)
+        return result
+    except Exception as exc:
+        logger.warning("LiteAPI batch min-rates failed: %s", exc)
+        return {}
 
 
 async def get_rates(

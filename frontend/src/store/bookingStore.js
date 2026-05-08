@@ -6,14 +6,11 @@ export const useBookingStore = create((set) => ({
   checkIn: null,
   checkOut: null,
   guests: 1,
-  promoCode: '',
-  discount: 0,
   selectedTour: null,
   tourDate: null,
   selectedFlight: null,
 
   setBookingData: (data) => set(data),
-  applyPromo: (code, discount) => set({ promoCode: code, discount }),
   clearBooking: () =>
     set({
       selectedRoom: null,
@@ -21,8 +18,6 @@ export const useBookingStore = create((set) => ({
       checkIn: null,
       checkOut: null,
       guests: 1,
-      promoCode: '',
-      discount: 0,
       selectedTour: null,
       tourDate: null,
       selectedFlight: null,

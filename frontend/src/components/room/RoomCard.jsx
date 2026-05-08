@@ -1,7 +1,10 @@
 import { Users, Bed } from 'lucide-react'
-import { formatCurrency } from '@/utils/formatters'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import { useTranslation } from 'react-i18next'
 
 export default function RoomCard({ room, onReserve }) {
+  const fmt = useFormatCurrency()
+  const { t } = useTranslation('hotels')
   const mainImage = room.images?.[0] || 'https://placehold.co/300x200?text=Room'
 
   return (
@@ -20,7 +23,7 @@ export default function RoomCard({ room, onReserve }) {
             </div>
           </div>
           <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
-            <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {room.max_guests} guests</span>
+            <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {room.max_guests} {t('common.guests', { ns: 'common' })}</span>
             <span className="flex items-center gap-1"><Bed className="w-4 h-4" /> {room.room_type}</span>
           </div>
           {room.amenities?.length > 0 && (
@@ -33,12 +36,12 @@ export default function RoomCard({ room, onReserve }) {
         </div>
         <div className="flex items-end justify-between mt-3 pt-3 border-t">
           <div>
-            <p className="text-xl font-bold text-gray-900">{formatCurrency(room.price_per_night)}</p>
-            <p className="text-xs text-gray-500">per night</p>
+            <p className="text-xl font-bold text-gray-900">{fmt(room.price_per_night)}</p>
+            <p className="text-xs text-gray-500">{t('common.perNight', { ns: 'common' })}</p>
           </div>
           <button onClick={() => onReserve(room)}
             className="bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors">
-            Reserve
+            {t('detail.reserve')}
           </button>
         </div>
       </div>

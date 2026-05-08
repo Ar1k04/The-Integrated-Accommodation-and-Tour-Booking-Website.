@@ -1,0 +1,63 @@
+{
+  "search": {
+    "title": "Khám phá những tour tuyệt vời",
+    "placeholder": "Thành phố, tên tour...",
+    "date": "Ngày khởi hành",
+    "participants": "Số người tham gia",
+    "searchBtn": "Tìm tour",
+    "duration": "Thời gian",
+    "category": "Danh mục",
+    "noResults": "Không tìm thấy tour phù hợp"
+  },
+  "detail": {
+    "overview": "Tổng quan",
+    "itinerary": "Lịch trình chi tiết từng ngày",
+    "includes": "Bao gồm",
+    "includesTitle": "Bao gồm trong tour",
+    "excludes": "Không bao gồm",
+    "excludesTitle": "Không bao gồm",
+    "reviews": "Đánh giá",
+    "noReviews": "Chưa có đánh giá nào. Hãy là người đầu tiên!",
+    "bookTour": "Đặt tour này",
+    "selectDate": "Chọn ngày",
+    "participants": "Số người tham gia",
+    "perPerson": "/ người",
+    "day": "Ngày {{num}}",
+    "maxParticipants": "Tối đa {{count}} người",
+    "duration": "{{days}} ngày",
+    "notFound": "Không tìm thấy tour",
+    "about": "Giới thiệu về tour",
+    "highlights": "Điểm nổi bật",
+    "freeCancellation48h": "Hủy miễn phí trước 48 giờ",
+    "instantConfirmation": "Xác nhận ngay lập tức",
+    "liveViaViator": "Trực tiếp qua Viator",
+    "checkAvailability": "Kiểm tra lịch trống",
+    "tourDate": "Ngày tour",
+    "checkRates": "Xem giá",
+    "checking": "Đang kiểm tra...",
+    "availableOn": "Còn chỗ vào ngày {{date}}",
+    "notAvailableOnDate": "Không có chỗ vào ngày này. Vui lòng chọn ngày khác.",
+    "selectDateHint": "Chọn ngày và nhấn \"Xem giá\" để kiểm tra lịch trống.",
+    "totalFor": "Tổng: {{price}} cho {{count}} người",
+    "poweredByViator": "Được cung cấp bởi Viator",
+    "tourDateLabel": "Ngày tour",
+    "participantsLabel": "Số người tham gia"
+  },
+  "errors": {
+    "selectDate": "Vui lòng chọn ngày tour"
+  },
+  "page": {
+    "exploreTitle": "Khám phá những tour tuyệt vời",
+    "exploreSubtitle": "Tìm kiếm những trải nghiệm khó quên trên khắp thế giới",
+    "searchPlaceholder": "Tìm tour theo tên hoặc điểm đến...",
+    "allTours": "Tất cả tour",
+    "toursFound": "Tìm thấy {{count}} tour",
+    "destination": "Điểm đến",
+    "cityOrCountry": "Thành phố hoặc quốc gia",
+    "priceRange": "Khoảng giá",
+    "clearFilters": "Xóa tất cả bộ lọc",
+    "noResults": "Không tìm thấy tour",
+    "tryAdjusting": "Hãy thử điều chỉnh tìm kiếm hoặc bộ lọc.",
+    "filters": "Bộ lọc"
+  }
+}

@@ -9,7 +9,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-USD_TO_VND = 25_000
+USD_TO_VND = settings.USD_TO_VND_RATE
 
 
 def _hmac_sha512(secret: str, data: str) -> str:

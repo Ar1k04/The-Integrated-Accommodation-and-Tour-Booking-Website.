@@ -1,0 +1,39 @@
+{
+  "detail": {
+    "title": "Flight Details — TravelBooking",
+    "notFound": "Offer not found or expired",
+    "outbound": "Outbound Flight",
+    "returnFlight": "Return Flight",
+    "passengerDetails": "Passenger Details",
+    "perPersonTotalFare": "per person · total fare",
+    "class": "class",
+    "poweredByDuffel": "Powered by Duffel",
+    "realtimeInventory": "Real-time inventory",
+    "continueCheckout": "Continue to Checkout",
+    "passenger": {
+      "title": "Title",
+      "gender": "Gender",
+      "firstName": "First Name",
+      "lastName": "Last Name",
+      "email": "Email",
+      "dateOfBirth": "Date of Birth",
+      "phoneOptional": "Phone Number (optional)",
+      "firstNamePlaceholder": "John",
+      "lastNamePlaceholder": "Doe",
+      "emailPlaceholder": "john@example.com",
+      "phonePlaceholder": "+84 900 000 000"
+    }
+  },
+  "errors": {
+    "fillPassengerDetails": "Please fill in all required passenger details"
+  },
+  "myBookings": {
+    "airline": "Airline",
+    "route": "Route",
+    "passenger": "Passenger",
+    "departure": "Departure",
+    "arrival": "Arrival",
+    "bookingRef": "Booking Reference",
+    "flightNumber": "Flight Number"
+  }
+}

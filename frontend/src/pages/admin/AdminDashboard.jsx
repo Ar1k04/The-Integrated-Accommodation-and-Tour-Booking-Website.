@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
 import { adminApi } from '@/api/adminApi'
+import { useAuth } from '@/hooks/useAuth'
 import Skeleton from '@/components/common/Skeleton'
-import BookingStatusBadge from '@/components/common/BookingStatusBadge'
-import { formatCurrency, formatDate } from '@/utils/formatters'
+import { formatCurrency } from '@/utils/formatters'
 import {
   DollarSign, CalendarCheck, Users, TrendingUp,
   Hotel, MapPin, Briefcase, UserCheck,
@@ -15,16 +16,18 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 
-const PERIOD_OPTIONS = [
-  { label: 'This Week', value: 'week' },
-  { label: 'This Month', value: 'month' },
-  { label: 'This Year', value: 'year' },
-]
-
 const PIE_COLORS = ['#F59E0B', '#003580', '#EF4444', '#10B981']
 
 export default function AdminDashboard() {
+  const { isPartner } = useAuth()
+  const { t } = useTranslation('admin')
   const [period, setPeriod] = useState('month')
+
+  const PERIOD_OPTIONS = [
+    { label: t('dashboard.thisWeek'), value: 'week' },
+    { label: t('dashboard.thisMonth'), value: 'month' },
+    { label: t('dashboard.thisYear'), value: 'year' },
+  ]
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ['admin-stats', period],
@@ -32,17 +35,11 @@ export default function AdminDashboard() {
     select: (res) => res.data,
   })
 
-  const { data: recentBookings } = useQuery({
-    queryKey: ['admin-recent-bookings'],
-    queryFn: () => adminApi.listBookings({ per_page: 5, sort_by: 'created_at', sort_order: 'desc' }),
-    select: (res) => res.data?.items || [],
-  })
-
   const statCards = [
-    { label: 'Total Revenue', value: formatCurrency(stats?.total_revenue || 0), icon: DollarSign, color: 'bg-green-100 text-green-700' },
-    { label: 'Bookings', value: stats?.bookings_count || 0, icon: CalendarCheck, color: 'bg-blue-100 text-blue-700' },
-    { label: 'Occupancy Rate', value: `${(stats?.occupancy_rate || 0).toFixed(1)}%`, icon: TrendingUp, color: 'bg-purple-100 text-purple-700' },
-    { label: 'New Users', value: stats?.new_users || 0, icon: Users, color: 'bg-amber-100 text-amber-700' },
+    { label: t('dashboard.totalRevenue'), value: formatCurrency(stats?.total_revenue || 0), icon: DollarSign, color: 'bg-green-100 text-green-700' },
+    { label: t('dashboard.bookings'), value: stats?.bookings_count || 0, icon: CalendarCheck, color: 'bg-blue-100 text-blue-700' },
+    { label: t('dashboard.occupancyRate'), value: `${(stats?.occupancy_rate || 0).toFixed(1)}%`, icon: TrendingUp, color: 'bg-purple-100 text-purple-700' },
+    { label: t('dashboard.newUsers'), value: stats?.new_users || 0, icon: Users, color: 'bg-amber-100 text-amber-700' },
   ]
 
   const bookingsByStatus = stats?.bookings_by_status
@@ -51,16 +48,25 @@ export default function AdminDashboard() {
 
   const revenueChart = stats?.revenue_chart_data || []
 
+  const quickLinks = [
+    { label: t('dashboard.manageHotels'), to: '/admin/hotels', icon: Hotel },
+    { label: t('dashboard.manageRooms'), to: '/admin/rooms', icon: MapPin },
+    { label: t('dashboard.manageTours'), to: '/admin/tours', icon: Briefcase },
+    { label: t('dashboard.manageBookings'), to: '/admin/bookings', icon: CalendarCheck },
+    !isPartner && { label: t('dashboard.manageUsers'), to: '/admin/users', icon: UserCheck },
+  ].filter(Boolean)
+
   return (
     <>
-      <Helmet><title>Admin Dashboard — TravelBooking</title></Helmet>
+      <Helmet><title>{isPartner ? t('dashboard.partnerTitle') : t('dashboard.adminTitle')} — TravelBooking</title></Helmet>
       <div className="bg-surface min-h-screen">
         <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-            <h1 className="font-heading text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-            <div className="flex gap-2">
+            <h1 className="font-heading text-2xl font-bold text-gray-900">{isPartner ? t('dashboard.partnerTitle') : t('dashboard.adminTitle')}</h1>
+            <div className="flex gap-2" role="group" aria-label={t('dashboard.title')}>
               {PERIOD_OPTIONS.map((p) => (
                 <button key={p.value} onClick={() => setPeriod(p.value)}
+                  aria-pressed={period === p.value}
                   className={`px-4 py-2 rounded-lg text-sm font-medium ${
                     period === p.value ? 'bg-primary text-white' : 'bg-white border text-gray-600 hover:bg-gray-50'
                   }`}>
@@ -93,7 +99,7 @@ export default function AdminDashboard() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             <div className="lg:col-span-2 bg-white rounded-xl border p-5">
-              <h2 className="font-heading font-bold text-lg mb-4">Revenue Overview</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('dashboard.revenueOverview')}</h2>
               {revenueChart.length > 0 ? (
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={revenueChart}>
@@ -105,12 +111,12 @@ export default function AdminDashboard() {
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-[300px] flex items-center justify-center text-gray-400 text-sm">No revenue data yet</div>
+                <div className="h-[300px] flex items-center justify-center text-gray-400 text-sm">{t('dashboard.noRevenueData')}</div>
               )}
             </div>
 
             <div className="bg-white rounded-xl border p-5">
-              <h2 className="font-heading font-bold text-lg mb-4">Bookings by Status</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('dashboard.bookingsByStatus')}</h2>
               {bookingsByStatus.length > 0 ? (
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
@@ -125,61 +131,24 @@ export default function AdminDashboard() {
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-[300px] flex items-center justify-center text-gray-400 text-sm">No booking data yet</div>
+                <div className="h-[300px] flex items-center justify-center text-gray-400 text-sm">{t('dashboard.noBookingData')}</div>
               )}
             </div>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
-            {[
-              { label: 'Hotels', to: '/admin/hotels', icon: Hotel },
-              { label: 'Rooms', to: '/admin/rooms', icon: MapPin },
-              { label: 'Tours', to: '/admin/tours', icon: Briefcase },
-              { label: 'Bookings', to: '/admin/bookings', icon: CalendarCheck },
-              { label: 'Users', to: '/admin/users', icon: UserCheck },
-            ].map((link) => {
+            {quickLinks.map((link) => {
               const Icon = link.icon
               return (
                 <Link key={link.to} to={link.to}
                   className="bg-white rounded-xl border p-5 text-center hover:shadow-md transition-shadow group">
-                  <Icon className="w-8 h-8 mx-auto text-primary mb-2 group-hover:scale-110 transition-transform" />
-                  <p className="text-sm font-medium text-gray-700">Manage {link.label}</p>
+                  <Icon className="w-8 h-8 mx-auto text-primary mb-2 group-hover:scale-110 transition-transform" aria-hidden="true" />
+                  <p className="text-sm font-medium text-gray-700">{link.label}</p>
                 </Link>
               )
             })}
           </div>
 
-          <div className="bg-white rounded-xl border p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-heading font-bold text-lg">Recent Bookings</h2>
-              <Link to="/admin/bookings" className="text-sm text-primary hover:underline">View all</Link>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-gray-500 border-b">
-                    <th className="pb-3 font-medium">ID</th>
-                    <th className="pb-3 font-medium">Date</th>
-                    <th className="pb-3 font-medium">Status</th>
-                    <th className="pb-3 font-medium text-right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentBookings?.map((b) => (
-                    <tr key={b.id} className="border-b last:border-0">
-                      <td className="py-3 font-mono text-xs">{b.id?.slice(0, 8)}</td>
-                      <td className="py-3">{formatDate(b.created_at)}</td>
-                      <td className="py-3"><BookingStatusBadge status={b.status} /></td>
-                      <td className="py-3 text-right font-semibold">{formatCurrency(b.total_price)}</td>
-                    </tr>
-                  ))}
-                  {(!recentBookings || recentBookings.length === 0) && (
-                    <tr><td colSpan={4} className="py-8 text-center text-gray-400">No bookings yet</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
     </>

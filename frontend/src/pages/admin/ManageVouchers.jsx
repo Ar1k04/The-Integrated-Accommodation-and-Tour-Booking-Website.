@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { toast } from 'sonner'
 import { vouchersApi } from '@/api/vouchersApi'
 import { formatDate, formatCurrency } from '@/utils/formatters'
@@ -26,6 +28,7 @@ const EMPTY_FORM = {
 
 export default function ManageVouchers() {
   const qc = useQueryClient()
+  const { t } = useTranslation('admin')
   const [page, setPage] = useState(1)
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState(null)
@@ -122,33 +125,32 @@ export default function ManageVouchers() {
   return (
     <>
       <Helmet>
-        <title>Manage Vouchers — Admin</title>
+        <title>{t('sidebar.vouchers')} — Admin</title>
       </Helmet>
       <div className="p-6 max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="font-heading text-2xl font-bold">Vouchers</h1>
-            <p className="text-sm text-gray-500">Create and manage discount vouchers</p>
+            <h1 className="font-heading text-2xl font-bold">{t('sidebar.vouchers')}</h1>
+            <p className="text-sm text-gray-500">{t('actions.addVoucher')}</p>
           </div>
           <button
             onClick={openCreate}
             className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
           >
-            <Plus className="w-4 h-4" /> Create Voucher
+            <Plus className="w-4 h-4" aria-hidden="true" /> {t('actions.addVoucher')}
           </button>
         </div>
 
-        {/* Table */}
         <div className="bg-white rounded-xl border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Code / Name</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Discount</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Usage</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Valid Period</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('table.code')} / {t('table.name')}</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('table.discount')}</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('table.uses')}</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('table.validFrom')} / {t('table.validTo')}</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('table.status')}</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('table.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -165,8 +167,8 @@ export default function ManageVouchers() {
               ) : items.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="text-center py-16 text-gray-400">
-                    <Tag className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p>No vouchers yet</p>
+                    <Tag className="w-8 h-8 mx-auto mb-2 opacity-30" aria-hidden="true" />
+                    <p>{t('empty.noVouchers')}</p>
                   </td>
                 </tr>
               ) : (
@@ -204,16 +206,16 @@ export default function ManageVouchers() {
                         <button
                           onClick={() => openEdit(v)}
                           className="p-1.5 rounded hover:bg-primary/10 text-primary transition-colors"
-                          title="Edit"
+                          aria-label={t('actions.edit')}
                         >
-                          <Pencil className="w-4 h-4" />
+                          <Pencil className="w-4 h-4" aria-hidden="true" />
                         </button>
                         <button
                           onClick={() => handleDelete(v.id, v.code)}
                           className="p-1.5 rounded hover:bg-error/10 text-error transition-colors"
-                          title="Delete"
+                          aria-label={t('actions.delete')}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
                         </button>
                       </div>
                     </td>
@@ -253,21 +255,21 @@ export default function ManageVouchers() {
         </div>
       </div>
 
-      {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onKeyDown={(e) => e.key === 'Escape' && closeModal()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="voucher-modal-title"
+            className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-5 border-b flex items-center justify-between">
-              <h2 className="font-heading font-bold text-lg">
-                {editingId ? 'Edit Voucher' : 'Create Voucher'}
+              <h2 id="voucher-modal-title" className="font-heading font-bold text-lg">
+                {editingId ? t('actions.editVoucher') : t('actions.newVoucher')}
               </h2>
-              <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+              <button onClick={closeModal} aria-label={t('actions.cancel')} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Code *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.code')} *</label>
                   <input
                     required
                     value={form.code}
@@ -277,7 +279,7 @@ export default function ManageVouchers() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.name')} *</label>
                   <input
                     required
                     value={form.name}
@@ -290,19 +292,19 @@ export default function ManageVouchers() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Discount Type</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.discountType')}</label>
                   <select
                     value={form.discount_type}
                     onChange={(e) => setForm({ ...form, discount_type: e.target.value })}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   >
-                    <option value="percentage">Percentage (%)</option>
-                    <option value="fixed">Fixed ($)</option>
+                    <option value="percentage">{t('form.percentage')} (%)</option>
+                    <option value="fixed">{t('form.fixed')} ($)</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Discount Value {form.discount_type === 'percentage' ? '(%)' : '($)'}
+                    {t('form.discountValue')} {form.discount_type === 'percentage' ? '(%)' : '($)'}
                   </label>
                   <input
                     required
@@ -319,7 +321,7 @@ export default function ManageVouchers() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Min. Order ($)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.minOrderValue')} ($)</label>
                   <input
                     type="number"
                     min={0}
@@ -330,7 +332,7 @@ export default function ManageVouchers() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Uses</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.maxUses')}</label>
                   <input
                     required
                     type="number"
@@ -344,7 +346,7 @@ export default function ManageVouchers() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Valid From *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.validFrom')} *</label>
                   <input
                     required
                     type="date"
@@ -354,7 +356,7 @@ export default function ManageVouchers() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Valid To *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.validTo')} *</label>
                   <input
                     required
                     type="date"
@@ -368,15 +370,15 @@ export default function ManageVouchers() {
 
               {editingId && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.status')}</label>
                   <select
                     value={form.status}
                     onChange={(e) => setForm({ ...form, status: e.target.value })}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   >
-                    <option value="active">Active</option>
-                    <option value="disabled">Disabled</option>
-                    <option value="expired">Expired</option>
+                    <option value="active">{t('status.active')}</option>
+                    <option value="disabled">{t('status.disabled')}</option>
+                    <option value="expired">{t('status.expired')}</option>
                   </select>
                 </div>
               )}
@@ -387,14 +389,14 @@ export default function ManageVouchers() {
                   onClick={closeModal}
                   className="flex-1 border rounded-lg py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors"
                 >
-                  Cancel
+                  {t('actions.cancel')}
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
                   className="flex-1 bg-primary text-white rounded-lg py-2.5 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                 >
-                  {isSaving ? 'Saving...' : editingId ? 'Save Changes' : 'Create Voucher'}
+                  {isSaving ? t('actions.saving') : editingId ? t('actions.save') : t('actions.addVoucher')}
                 </button>
               </div>
             </form>

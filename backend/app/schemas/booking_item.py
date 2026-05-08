@@ -7,6 +7,33 @@ from pydantic import BaseModel, Field, model_validator
 from app.schemas.flight import PassengerInfo
 
 
+class _RoomSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    room_type: str
+
+    model_config = {"from_attributes": True}
+
+
+class _FlightSummary(BaseModel):
+    id: uuid.UUID
+    airline_name: str
+    flight_number: str
+    departure_airport: str
+    arrival_airport: str
+    departure_at: datetime
+    arrival_at: datetime
+    cabin_class: str | None = None
+    passenger_name: str
+    passenger_email: str
+    total_amount: float
+    currency: str
+    status: str
+    duffel_booking_ref: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class RoomItemCreate(BaseModel):
     item_type: Literal["room"] = "room"
     room_id: uuid.UUID | None = None
@@ -71,5 +98,7 @@ class BookingItemResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    room: _RoomSummary | None = None
+    flight_booking: _FlightSummary | None = None
 
     model_config = {"from_attributes": True}

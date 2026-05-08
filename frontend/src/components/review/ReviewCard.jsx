@@ -1,7 +1,9 @@
-import { Star, ThumbsUp } from 'lucide-react'
+import { Star } from 'lucide-react'
 import { formatDate } from '@/utils/formatters'
+import { useTranslation } from 'react-i18next'
 
 export default function ReviewCard({ review }) {
+  const { t } = useTranslation('hotels')
   const initial = review.user?.full_name?.[0]?.toUpperCase() || 'U'
 
   return (
@@ -13,7 +15,7 @@ export default function ReviewCard({ review }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-semibold text-sm">{review.user?.full_name || 'Anonymous'}</p>
+              <p className="font-semibold text-sm">{review.user?.full_name || t('detail.anonymous')}</p>
               <p className="text-xs text-gray-400">{formatDate(review.created_at)}</p>
             </div>
             <div className="flex items-center gap-1 bg-primary text-white px-2 py-0.5 rounded text-sm font-bold">

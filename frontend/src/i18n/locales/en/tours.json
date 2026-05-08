@@ -1,0 +1,63 @@
+{
+  "search": {
+    "title": "Discover Amazing Tours",
+    "placeholder": "City, tour name...",
+    "date": "Tour Date",
+    "participants": "Participants",
+    "searchBtn": "Search Tours",
+    "duration": "Duration",
+    "category": "Category",
+    "noResults": "No tours found for your search"
+  },
+  "detail": {
+    "overview": "Overview",
+    "itinerary": "Day-by-Day Itinerary",
+    "includes": "What's Included",
+    "includesTitle": "What's included",
+    "excludes": "What's Excluded",
+    "excludesTitle": "Not included",
+    "reviews": "Reviews",
+    "noReviews": "No reviews yet. Be the first!",
+    "bookTour": "Book This Tour",
+    "selectDate": "Select Date",
+    "participants": "Participants",
+    "perPerson": "/ person",
+    "day": "Day {{num}}",
+    "maxParticipants": "Max {{count}} participants",
+    "duration": "{{days}} day(s)",
+    "notFound": "Tour not found",
+    "about": "About This Tour",
+    "highlights": "Highlights",
+    "freeCancellation48h": "Free cancellation up to 48h before",
+    "instantConfirmation": "Instant confirmation",
+    "liveViaViator": "Live via Viator",
+    "checkAvailability": "Check Availability",
+    "tourDate": "Tour Date",
+    "checkRates": "Check rates",
+    "checking": "Checking...",
+    "availableOn": "Available on {{date}}",
+    "notAvailableOnDate": "Not available on this date. Please try another date.",
+    "selectDateHint": "Select a date and click \"Check rates\" to see availability.",
+    "totalFor": "Total: {{price}} for {{count}} people",
+    "poweredByViator": "Powered by Viator",
+    "tourDateLabel": "Tour Date",
+    "participantsLabel": "Participants"
+  },
+  "errors": {
+    "selectDate": "Please select a tour date"
+  },
+  "page": {
+    "exploreTitle": "Explore Amazing Tours",
+    "exploreSubtitle": "Discover unforgettable experiences around the world",
+    "searchPlaceholder": "Search tours by name or destination...",
+    "allTours": "All Tours",
+    "toursFound": "{{count}} tours found",
+    "destination": "Destination",
+    "cityOrCountry": "City or country",
+    "priceRange": "Price Range",
+    "clearFilters": "Clear all filters",
+    "noResults": "No tours found",
+    "tryAdjusting": "Try adjusting your search or filters.",
+    "filters": "Filters"
+  }
+}

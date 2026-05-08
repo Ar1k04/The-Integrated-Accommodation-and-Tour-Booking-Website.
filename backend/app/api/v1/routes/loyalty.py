@@ -31,6 +31,7 @@ async def get_my_loyalty(
     return LoyaltyStatusResponse(
         user_id=data["user_id"],
         total_points=data["total_points"],
+        lifetime_points=data["lifetime_points"],
         current_tier=LoyaltyTierResponse.model_validate(data["current_tier"]) if data["current_tier"] else None,
         next_tier=LoyaltyTierResponse.model_validate(data["next_tier"]) if data["next_tier"] else None,
         points_to_next_tier=data["points_to_next_tier"],

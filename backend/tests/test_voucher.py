@@ -88,10 +88,6 @@ async def test_duplicate_voucher_use_blocked(
     booking = Booking(
         id=uuid.uuid4(),
         user_id=test_user.id,
-        room_id=test_room.id,
-        check_in=date.today() + timedelta(days=5),
-        check_out=date.today() + timedelta(days=7),
-        guests_count=1,
         total_price=Decimal("150"),
         status="pending",
     )

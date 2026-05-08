@@ -31,6 +31,7 @@ class LoyaltyTransactionResponse(BaseModel):
 class LoyaltyStatusResponse(BaseModel):
     user_id: uuid.UUID
     total_points: int
+    lifetime_points: int = 0
     current_tier: LoyaltyTierResponse | None = None
     next_tier: LoyaltyTierResponse | None = None
     points_to_next_tier: int = 0

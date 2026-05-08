@@ -1,6 +1,8 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
 import { hotelsApi } from '@/api/hotelsApi'
 import { roomsApi } from '@/api/roomsApi'
 import { reviewsApi } from '@/api/reviewsApi'
@@ -13,16 +15,25 @@ import ReviewForm from '@/components/review/ReviewForm'
 import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
-import { formatCurrency } from '@/utils/formatters'
-import { MapPin, Wifi, Car, Dumbbell, UtensilsCrossed, Waves, Star } from 'lucide-react'
-
-const AMENITY_ICONS = { wifi: Wifi, parking: Car, gym: Dumbbell, restaurant: UtensilsCrossed, pool: Waves }
+import FacilitiesSection from '@/components/hotel/FacilitiesSection'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import { MapPin, Star } from 'lucide-react'
+import { format, addDays } from 'date-fns'
 
 export default function HotelDetailPage() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
+  const { t } = useTranslation(['hotels', 'common'])
   const setBookingData = useBookingStore((s) => s.setBookingData)
+
+  const today = format(new Date(), 'yyyy-MM-dd')
+
+  const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || '')
+  const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || '')
+  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '1'))
+  const [rooms, setRooms] = useState(parseInt(searchParams.get('rooms') || '1'))
 
   const { data: hotel, isLoading } = useQuery({
     queryKey: ['hotel', id],
@@ -30,9 +41,14 @@ export default function HotelDetailPage() {
     select: (res) => res.data,
   })
 
-  const { data: rooms } = useQuery({
-    queryKey: ['hotel-rooms', id],
-    queryFn: () => roomsApi.listByHotel(id),
+  const roomParams = {
+    ...(checkIn && checkOut ? { check_in: checkIn, check_out: checkOut } : {}),
+    guests,
+  }
+
+  const { data: allRooms } = useQuery({
+    queryKey: ['hotel-rooms', id, checkIn, checkOut, guests],
+    queryFn: () => roomsApi.listByHotel(id, roomParams),
     select: (res) => res.data?.items || [],
   })
 
@@ -42,8 +58,9 @@ export default function HotelDetailPage() {
     select: (res) => res.data,
   })
 
+  const fmt = useFormatCurrency()
   const handleReserve = (room) => {
-    setBookingData({ selectedRoom: room, hotel })
+    setBookingData({ selectedRoom: room, hotel, checkIn, checkOut, guests, rooms })
     navigate('/bookings/new')
   }
 
@@ -58,11 +75,11 @@ export default function HotelDetailPage() {
     )
   }
 
-  if (!hotel) return <div className="text-center py-20 text-gray-400">Hotel not found</div>
+  if (!hotel) return <div className="text-center py-20 text-gray-400">{t('hotels:detail.notFound')}</div>
 
   const reviews = reviewsData?.items || []
-  const cheapestRoom = rooms?.length
-    ? rooms.reduce((min, r) => (min === null || r.price_per_night < min.price_per_night ? r : min), null)
+  const cheapestRoom = allRooms?.length
+    ? allRooms.reduce((min, r) => (min === null || r.price_per_night < min.price_per_night ? r : min), null)
     : null
   const startingPrice = cheapestRoom?.price_per_night
 
@@ -75,8 +92,8 @@ export default function HotelDetailPage() {
       </Helmet>
       <div className="max-w-7xl mx-auto px-4 py-4">
         <Breadcrumb items={[
-          { label: 'Home', to: '/' },
-          { label: 'Hotels', to: '/hotels/search' },
+          { label: t('common:common.home'), to: '/' },
+          { label: t('common:nav.hotels'), to: '/hotels/search' },
           { label: hotel.name },
         ]} />
 
@@ -99,7 +116,7 @@ export default function HotelDetailPage() {
                 {hotel.avg_rating > 0 && (
                   <div className="text-right shrink-0">
                     <div className="bg-primary text-white font-bold text-lg px-3 py-1.5 rounded-lg">{hotel.avg_rating.toFixed(1)}</div>
-                    <p className="text-xs text-gray-500 mt-1">{hotel.total_reviews} reviews</p>
+                    <p className="text-xs text-gray-500 mt-1">{t('hotels:detail.reviewsCount', { count: hotel.total_reviews })}</p>
                   </div>
                 )}
               </div>
@@ -107,55 +124,72 @@ export default function HotelDetailPage() {
                 <MapPin className="w-4 h-4" />{hotel.address || `${hotel.city}, ${hotel.country}`}
               </div>
               {hotel.owner_name && (
-                <p className="mt-1 text-sm text-gray-500">Managed by <span className="font-medium text-gray-700">{hotel.owner_name}</span></p>
+                <p className="mt-1 text-sm text-gray-500">{t('hotels:detail.managedBy')} <span className="font-medium text-gray-700">{hotel.owner_name}</span></p>
               )}
             </div>
-
-            {/* Amenities */}
-            {hotel.amenities?.length > 0 && (
-              <div>
-                <h2 className="font-heading font-bold text-lg mb-4">Amenities</h2>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {hotel.amenities.map((a) => {
-                    const Icon = AMENITY_ICONS[a] || Star
-                    return (
-                      <div key={a} className="flex items-center gap-2 text-sm text-gray-700 capitalize">
-                        <Icon className="w-4 h-4 text-primary" />{a.replace('_', ' ')}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
 
             {/* Description */}
             {hotel.description && (
               <div>
-                <h2 className="font-heading font-bold text-lg mb-3">About this hotel</h2>
+                <h2 className="font-heading font-bold text-lg mb-3">{t('hotels:detail.about')}</h2>
                 <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{hotel.description}</p>
               </div>
             )}
 
+            {/* Facilities */}
+            <FacilitiesSection amenities={hotel.amenities} />
+
             {/* Rooms */}
             <div>
-              <h2 className="font-heading font-bold text-lg mb-4">Available Rooms</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.rooms')}</h2>
+
+              {/* Date + guest selector */}
+              <div className="bg-gray-50 rounded-xl p-4 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.checkIn')}</label>
+                  <input type="date" value={checkIn} min={today}
+                    onChange={(e) => setCheckIn(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.checkOut')}</label>
+                  <input type="date" value={checkOut} min={checkIn || today}
+                    onChange={(e) => setCheckOut(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.guests')}</label>
+                  <input type="number" value={guests} min={1} max={20}
+                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.roomsLabel')}</label>
+                  <input type="number" value={rooms} min={1} max={10}
+                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+              </div>
+
               <div className="space-y-4">
-                {rooms?.map((room) => (
+                {allRooms?.map((room) => (
                   <RoomCard key={room.id} room={room} onReserve={handleReserve} />
                 ))}
-                {rooms?.length === 0 && <p className="text-gray-400 text-sm">No rooms available for selected dates.</p>}
+                {allRooms?.length === 0 && (
+                  <p className="text-gray-400 text-sm">{t('hotels:detail.noRoomsAvailable')}</p>
+                )}
               </div>
             </div>
 
             {/* Reviews */}
             <div>
-              <h2 className="font-heading font-bold text-lg mb-4">Guest Reviews</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.guestReviews')}</h2>
               {reviews.length > 0 ? (
                 <div className="space-y-5">
                   {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
                 </div>
               ) : (
-                <p className="text-gray-400 text-sm">No reviews yet. Be the first!</p>
+                <p className="text-gray-400 text-sm">{t('hotels:detail.noReviews')}</p>
               )}
               {isAuthenticated && <div className="mt-6"><ReviewForm hotelId={id} /></div>}
             </div>
@@ -166,20 +200,20 @@ export default function HotelDetailPage() {
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-900">
-                  {startingPrice ? formatCurrency(startingPrice, hotel.currency) : '—'}
+                  {startingPrice ? fmt(startingPrice) : '—'}
                 </p>
-                <p className="text-sm text-gray-500">starting per night</p>
+                <p className="text-sm text-gray-500">{t('hotels:detail.startingPerNight')}</p>
               </div>
               <button
                 onClick={() => cheapestRoom && handleReserve(cheapestRoom)}
                 disabled={!cheapestRoom}
                 className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Reserve Now
+                {t('hotels:detail.reserveNow')}
               </button>
               <ul className="text-xs text-gray-500 space-y-1">
-                <li className="flex items-center gap-1"><Star className="w-3 h-3 text-success" /> Free cancellation</li>
-                <li className="flex items-center gap-1"><Star className="w-3 h-3 text-success" /> No prepayment needed</li>
+                <li className="flex items-center gap-1"><Star className="w-3 h-3 text-success" /> {t('hotels:detail.freeCancellation')}</li>
+                <li className="flex items-center gap-1"><Star className="w-3 h-3 text-success" /> {t('hotels:detail.noPrepayment')}</li>
               </ul>
             </div>
           </div>

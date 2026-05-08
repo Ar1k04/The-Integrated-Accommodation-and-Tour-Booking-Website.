@@ -32,7 +32,6 @@ class Tour(Base):
     viator_product_code: Mapped[str | None] = mapped_column(String(100), index=True)
 
     owner = relationship("User", back_populates="tours", lazy="selectin")
-    tour_bookings = relationship("TourBooking", back_populates="tour", lazy="selectin")
     reviews = relationship("Review", back_populates="tour", lazy="selectin")
     schedules = relationship(
         "TourSchedule", back_populates="tour", cascade="all, delete-orphan", lazy="selectin"

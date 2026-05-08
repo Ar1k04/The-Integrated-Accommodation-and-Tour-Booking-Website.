@@ -9,15 +9,17 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=1024)
     full_name: str = Field(min_length=1, max_length=255)
     phone: str | None = None
-    role: str = Field(default="user", pattern=r"^(user|admin|superadmin)$")
+    role: str = Field(default="user", pattern=r"^(user|partner|admin)$")
 
 
 class UserUpdate(BaseModel):
     full_name: str | None = Field(None, min_length=1, max_length=255)
     phone: str | None = None
     avatar_url: str | None = None
-    role: str | None = None
+    role: str | None = Field(None, pattern=r"^(user|partner|admin)$")
     is_active: bool | None = None
+    preferred_locale: str | None = Field(None, pattern=r"^(en|vi)$")
+    preferred_currency: str | None = Field(None, pattern=r"^(USD|VND)$")
 
 
 class UserResponse(BaseModel):
@@ -29,6 +31,8 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     loyalty_points: int
+    preferred_locale: str = "en"
+    preferred_currency: str = "USD"
     created_at: datetime
     updated_at: datetime
 

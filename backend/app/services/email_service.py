@@ -71,6 +71,27 @@ def _items_html(items) -> str:
     return "\n".join(rows)
 
 
+async def send_password_reset(to: str, reset_link: str) -> bool:
+    html = f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:0">
+<div style="background:#1a1a2e;color:white;padding:24px;border-radius:8px 8px 0 0">
+  <h1 style="margin:0;font-size:22px">Reset Your Password</h1>
+  <p style="margin:4px 0 0;opacity:0.7;font-size:13px">TravelBooking</p>
+</div>
+<div style="padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+  <p>You requested a password reset. Click the button below to set a new password:</p>
+  <p style="text-align:center;margin:24px 0">
+    <a href="{reset_link}" style="background:#3b82f6;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">Reset Password</a>
+  </p>
+  <p style="color:#666;font-size:13px">This link expires in 1 hour. If you did not request a password reset, you can safely ignore this email.</p>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
+  <p style="font-size:12px;color:#9ca3af">This is an automated email. Please do not reply to this message.</p>
+</div>
+</body></html>
+"""
+    return await send_email(to, "TravelBooking — Reset Your Password", html)
+
+
 async def send_booking_confirmation(booking, user_email: str) -> bool:
     items_rows = _items_html(booking.items)
     discount_row = ""

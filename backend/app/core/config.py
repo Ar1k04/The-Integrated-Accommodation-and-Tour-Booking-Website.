@@ -56,5 +56,8 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Currency conversion (display only — bookings stored in USD)
+    USD_TO_VND_RATE: int = 25_000
+
 
 settings = Settings()

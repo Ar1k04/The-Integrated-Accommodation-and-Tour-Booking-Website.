@@ -3,11 +3,11 @@ import { useAuth } from '@/hooks/useAuth'
 
 export default function ProtectedRoute({
   children,
-  requireAdmin = false,
-  requireSuperAdmin = false,
+  requireStaff = false,    // any staff (partner OR admin)
+  requireAdmin = false,    // admin only (formerly requireSuperAdmin)
   userOnly = false,
 }) {
-  const { isAuthenticated, isLoading, isAdmin, isSuperAdmin } = useAuth()
+  const { isAuthenticated, isLoading, isStaff, isAdmin } = useAuth()
   const location = useLocation()
 
   if (isLoading) {
@@ -22,15 +22,15 @@ export default function ProtectedRoute({
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  if (requireSuperAdmin && !isSuperAdmin) {
+  if (requireAdmin && !isAdmin) {
     return <Navigate to="/admin" replace />
   }
 
-  if (requireAdmin && !isAdmin) {
+  if (requireStaff && !isStaff) {
     return <Navigate to="/" replace />
   }
 
-  if (userOnly && isAdmin) {
+  if (userOnly && isStaff) {
     return <Navigate to="/admin" replace />
   }
 

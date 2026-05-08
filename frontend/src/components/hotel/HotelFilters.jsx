@@ -1,18 +1,34 @@
 import { useState } from 'react'
-import { AMENITIES } from '@/utils/constants'
+import { useTranslation } from 'react-i18next'
 import { Star, ChevronDown, ChevronUp } from 'lucide-react'
+import { useFacilities } from '@/hooks/useFacilities'
+import { AMENITIES, LITEAPI_ID_TO_SLUG } from '@/utils/constants'
 
 export default function HotelFilters({ filters, onChange }) {
+  const { t } = useTranslation('hotels')
   const [expanded, setExpanded] = useState({ price: true, stars: true, rating: true, amenities: false })
+  const { facilities, isLoading: facilitiesLoading } = useFacilities()
 
   const toggle = (key) => setExpanded((p) => ({ ...p, [key]: !p[key] }))
-
   const update = (key, value) => onChange({ ...filters, [key]: value })
+
+  // When API data is ready use it; otherwise fall back to the static slug list
+  const displayList = facilities.length > 0
+    ? facilities.map((f) => {
+        const slug = LITEAPI_ID_TO_SLUG[f.id]
+        return { slug, label: t(`amenities.${slug}`, f.name) }
+      })
+    : AMENITIES.map((slug) => ({
+        slug,
+        label: t(`amenities.${slug}`, slug.replace(/_/g, ' ')),
+      }))
+
+  const selectedCount = (filters.amenities || []).length
 
   return (
     <div className="space-y-4">
       {/* Price Range */}
-      <FilterSection title="Price per night" expanded={expanded.price} onToggle={() => toggle('price')}>
+      <FilterSection title={t('search.priceRange', 'Price per night')} expanded={expanded.price} onToggle={() => toggle('price')}>
         <div className="flex items-center gap-2">
           <input type="number" placeholder="Min" value={filters.min_price || ''}
             onChange={(e) => update('min_price', e.target.value || null)}
@@ -25,7 +41,7 @@ export default function HotelFilters({ filters, onChange }) {
       </FilterSection>
 
       {/* Star Rating */}
-      <FilterSection title="Star Rating" expanded={expanded.stars} onToggle={() => toggle('stars')}>
+      <FilterSection title={t('search.starRating', 'Star Rating')} expanded={expanded.stars} onToggle={() => toggle('stars')}>
         <div className="space-y-2">
           {[5, 4, 3, 2, 1].map((s) => (
             <label key={s} className="flex items-center gap-2 cursor-pointer">
@@ -60,22 +76,34 @@ export default function HotelFilters({ filters, onChange }) {
         </div>
       </FilterSection>
 
-      {/* Amenities */}
-      <FilterSection title="Amenities" expanded={expanded.amenities} onToggle={() => toggle('amenities')}>
-        <div className="space-y-2 max-h-48 overflow-y-auto">
-          {AMENITIES.map((a) => (
-            <label key={a} className="flex items-center gap-2 cursor-pointer capitalize">
-              <input type="checkbox"
-                checked={(filters.amenities || []).includes(a)}
-                onChange={() => {
-                  const curr = filters.amenities || []
-                  update('amenities', curr.includes(a) ? curr.filter((x) => x !== a) : [...curr, a])
-                }}
-                className="rounded border-gray-300" />
-              <span className="text-sm">{a.replace('_', ' ')}</span>
-            </label>
-          ))}
+      {/* Facilities */}
+      <FilterSection title={t('search.amenities', 'Facilities')} expanded={expanded.amenities} onToggle={() => toggle('amenities')}>
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {facilitiesLoading && facilities.length === 0
+            ? Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="h-5 bg-gray-100 rounded animate-pulse" />
+              ))
+            : displayList.map(({ slug, label }) => (
+                <label key={slug} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(filters.amenities || []).includes(slug)}
+                    onChange={() => {
+                      const curr = filters.amenities || []
+                      update('amenities', curr.includes(slug) ? curr.filter((x) => x !== slug) : [...curr, slug])
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm">{label}</span>
+                </label>
+              ))
+          }
         </div>
+        {selectedCount >= 2 && (
+          <p className="text-xs text-primary mt-2 font-medium">
+            {t('amenities.matchAll', 'Showing hotels with all selected facilities')}
+          </p>
+        )}
       </FilterSection>
     </div>
   )

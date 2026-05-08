@@ -1,28 +1,31 @@
 import { Link } from 'react-router-dom'
 import { Briefcase } from 'lucide-react'
-
-const footerLinks = {
-  Company: [
-    { label: 'About Us', to: '#' },
-    { label: 'Careers', to: '#' },
-    { label: 'Press', to: '#' },
-    { label: 'Blog', to: '#' },
-  ],
-  Support: [
-    { label: 'Help Center', to: '#' },
-    { label: 'Safety', to: '#' },
-    { label: 'Cancellation', to: '#' },
-    { label: 'Contact Us', to: '#' },
-  ],
-  Explore: [
-    { label: 'Hotels', to: '/hotels/search' },
-    { label: 'Tours', to: '/tours' },
-    { label: 'Destinations', to: '#' },
-    { label: 'Deals', to: '#' },
-  ],
-}
+import { useTranslation } from 'react-i18next'
 
 export default function Footer() {
+  const { t } = useTranslation('common')
+
+  const footerLinks = {
+    [t('footer.company')]: [
+      { label: t('footer.aboutUs'), to: '#' },
+      { label: t('footer.careers'), to: '#' },
+      { label: t('footer.press'), to: '#' },
+      { label: t('footer.blog'), to: '#' },
+    ],
+    [t('footer.support')]: [
+      { label: t('footer.helpCenter'), to: '#' },
+      { label: t('footer.safety'), to: '#' },
+      { label: t('footer.cancellation'), to: '#' },
+      { label: t('footer.contactUs'), to: '#' },
+    ],
+    [t('footer.explore')]: [
+      { label: t('footer.hotels'), to: '/hotels/search' },
+      { label: t('footer.tours'), to: '/tours' },
+      { label: t('footer.destinations'), to: '#' },
+      { label: t('footer.deals'), to: '#' },
+    ],
+  }
+
   return (
     <footer className="bg-gray-900 text-gray-300">
       <div className="max-w-7xl mx-auto px-4 py-12">
@@ -33,8 +36,7 @@ export default function Footer() {
               TravelBooking
             </Link>
             <p className="text-sm text-gray-400 leading-relaxed">
-              Your trusted companion for finding the best hotels and tours worldwide.
-              Best price guaranteed.
+              {t('footer.tagline')}
             </p>
           </div>
 
@@ -56,11 +58,11 @@ export default function Footer() {
 
         <hr className="border-gray-700 my-8" />
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500">
-          <p>&copy; {new Date().getFullYear()} TravelBooking. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} TravelBooking. {t('footer.allRightsReserved')}</p>
           <div className="flex gap-6">
-            <a href="#" className="hover:text-white">Privacy Policy</a>
-            <a href="#" className="hover:text-white">Terms of Service</a>
-            <a href="#" className="hover:text-white">Cookie Policy</a>
+            <a href="#" className="hover:text-white">{t('footer.privacyPolicy')}</a>
+            <a href="#" className="hover:text-white">{t('footer.termsOfService')}</a>
+            <a href="#" className="hover:text-white">{t('footer.cookiePolicy')}</a>
           </div>
         </div>
       </div>

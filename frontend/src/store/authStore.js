@@ -1,5 +1,16 @@
 import { create } from 'zustand'
 import { authApi } from '@/api/authApi'
+import { useUiStore } from '@/store/uiStore'
+
+function hydrateUiPrefs(user) {
+  if (!user) return
+  const { setCurrency, setLocale } = useUiStore.getState()
+  if (user.preferred_currency) setCurrency(user.preferred_currency)
+  if (user.preferred_locale) {
+    setLocale(user.preferred_locale)
+    import('@/i18n').then(({ default: i18n }) => i18n.changeLanguage(user.preferred_locale)).catch(() => {})
+  }
+}
 
 export const useAuthStore = create((set, get) => ({
   user: null,
@@ -15,6 +26,7 @@ export const useAuthStore = create((set, get) => ({
     set({ accessToken: access_token, isAuthenticated: true })
     const me = await authApi.getMe(access_token)
     set({ user: me.data, isLoading: false })
+    hydrateUiPrefs(me.data)
     return me.data
   },
 
@@ -24,6 +36,7 @@ export const useAuthStore = create((set, get) => ({
     set({ accessToken: access_token, isAuthenticated: true })
     const me = await authApi.getMe(access_token)
     set({ user: me.data, isLoading: false })
+    hydrateUiPrefs(me.data)
     return me.data
   },
 
@@ -43,6 +56,7 @@ export const useAuthStore = create((set, get) => ({
       set({ accessToken: access_token, isAuthenticated: true })
       const me = await authApi.getMe(access_token)
       set({ user: me.data, isLoading: false })
+      hydrateUiPrefs(me.data)
       return access_token
     } catch {
       set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false })

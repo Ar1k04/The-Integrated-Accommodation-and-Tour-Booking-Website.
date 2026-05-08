@@ -5,6 +5,7 @@ export const paymentsApi = {
   get: (id) => api.get(`/payments/${id}`),
   refund: (id) => api.delete(`/payments/${id}`),
 
+  confirmStripe: (paymentId) => api.post(`/payments/${paymentId}/confirm-stripe`),
   createVnpayUrl: (data) => api.post('/payments/vnpay/create', data),
   verifyVnpayReturn: (params) =>
     api.get('/payments/vnpay/return', { params }),

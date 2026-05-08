@@ -6,12 +6,15 @@ import { toast } from 'sonner'
 import { toursApi } from '@/api/toursApi'
 import { reviewsApi } from '@/api/reviewsApi'
 import { useAuth } from '@/hooks/useAuth'
+import { useBookingStore } from '@/store/bookingStore'
 import ImageGallery from '@/components/hotel/ImageGallery'
 import ReviewCard from '@/components/review/ReviewCard'
 import ReviewForm from '@/components/review/ReviewForm'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
-import { formatCurrency, formatDate } from '@/utils/formatters'
+import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import { useTranslation } from 'react-i18next'
+import { formatDate } from '@/utils/formatters'
 import { format } from 'date-fns'
 import {
   MapPin, Clock, Users, Star, Calendar, ChevronDown, ChevronUp,
@@ -22,6 +25,9 @@ export default function TourDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
+  const { setBookingData } = useBookingStore()
+  const { t } = useTranslation(['common', 'tours'])
+  const fmt = useFormatCurrency()
   const [participants, setParticipants] = useState(1)
   const [tourDate, setTourDate] = useState('')
   const [expandedDay, setExpandedDay] = useState(0)
@@ -39,23 +45,15 @@ export default function TourDetailPage() {
     select: (res) => res.data,
   })
 
-  const handleBook = async () => {
+  const handleBook = () => {
     if (!isAuthenticated) { navigate('/login'); return }
-    if (!tourDate) { toast.error('Please select a tour date'); return }
-    setBooking(true)
-    try {
-      const res = await toursApi.createBooking({
-        tour_id: id,
-        tour_date: tourDate,
-        participants_count: participants,
-      })
-      toast.success('Tour booked successfully!')
-      navigate(`/bookings/${res.data.id}/confirmation`)
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Booking failed')
-    } finally {
-      setBooking(false)
-    }
+    if (!tourDate) { toast.error(t('tours:errors.selectDate')); return }
+    setBookingData({
+      selectedTour: tour,
+      tourDate,
+      guests: participants,
+    })
+    navigate('/bookings/new?type=tour')
   }
 
   if (isLoading) {
@@ -69,7 +67,7 @@ export default function TourDetailPage() {
     )
   }
 
-  if (!tour) return <div className="text-center py-20 text-gray-400">Tour not found</div>
+  if (!tour) return <div className="text-center py-20 text-gray-400">{t('tours:detail.notFound')}</div>
 
   const reviews = reviewsData?.items || []
   const itinerary = tour.itinerary || []
@@ -123,14 +121,14 @@ export default function TourDetailPage() {
 
             {tour.description && (
               <div>
-                <h2 className="font-heading font-bold text-lg mb-3">About This Tour</h2>
+                <h2 className="font-heading font-bold text-lg mb-3">{t('tours:detail.about')}</h2>
                 <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{tour.description}</p>
               </div>
             )}
 
             {highlights.length > 0 && (
               <div>
-                <h2 className="font-heading font-bold text-lg mb-4">Highlights</h2>
+                <h2 className="font-heading font-bold text-lg mb-4">{t('tours:detail.highlights')}</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {highlights.map((h, i) => (
                     <div key={i} className="flex items-start gap-2 text-sm text-gray-700">
@@ -144,7 +142,7 @@ export default function TourDetailPage() {
 
             {itinerary.length > 0 && (
               <div>
-                <h2 className="font-heading font-bold text-lg mb-4">Day-by-Day Itinerary</h2>
+                <h2 className="font-heading font-bold text-lg mb-4">{t('tours:detail.itinerary')}</h2>
                 <div className="space-y-3">
                   {itinerary.map((day, i) => (
                     <div key={i} className="border rounded-xl overflow-hidden">
@@ -174,7 +172,7 @@ export default function TourDetailPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {includes.length > 0 && (
                 <div>
-                  <h2 className="font-heading font-bold text-lg mb-3">What's Included</h2>
+                  <h2 className="font-heading font-bold text-lg mb-3">{t('tours:detail.includes')}</h2>
                   <ul className="space-y-2">
                     {includes.map((item, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
@@ -187,7 +185,7 @@ export default function TourDetailPage() {
               )}
               {excludes.length > 0 && (
                 <div>
-                  <h2 className="font-heading font-bold text-lg mb-3">What's Not Included</h2>
+                  <h2 className="font-heading font-bold text-lg mb-3">{t('tours:detail.excludes')}</h2>
                   <ul className="space-y-2">
                     {excludes.map((item, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
@@ -201,13 +199,13 @@ export default function TourDetailPage() {
             </div>
 
             <div>
-              <h2 className="font-heading font-bold text-lg mb-4">Reviews</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('tours:detail.reviews')}</h2>
               {reviews.length > 0 ? (
                 <div className="space-y-5">
                   {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
                 </div>
               ) : (
-                <p className="text-gray-400 text-sm">No reviews yet. Be the first!</p>
+                <p className="text-gray-400 text-sm">{t('tours:detail.noReviews')}</p>
               )}
               {isAuthenticated && <div className="mt-6"><ReviewForm tourId={id} /></div>}
             </div>
@@ -216,12 +214,12 @@ export default function TourDetailPage() {
           <div className="lg:col-span-1">
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-5">
               <div className="text-center">
-                <p className="text-3xl font-bold text-gray-900">{formatCurrency(tour.price_per_person)}</p>
+                <p className="text-3xl font-bold text-gray-900">{fmt(tour.price_per_person)}</p>
                 <p className="text-sm text-gray-500">per person</p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tour Date</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('tours:detail.tourDate')}</label>
                 <input
                   type="date"
                   value={tourDate}
@@ -232,12 +230,12 @@ export default function TourDetailPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Participants</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('tours:detail.participants')}</label>
                 <div className="flex items-center border rounded-lg">
                   <button
                     onClick={() => setParticipants(Math.max(1, participants - 1))}
                     className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                    aria-label="Decrease participants"
+                    aria-label={t('tours:detail.participants')}
                   >
                     <Minus className="w-4 h-4" />
                   </button>
@@ -245,7 +243,7 @@ export default function TourDetailPage() {
                   <button
                     onClick={() => setParticipants(Math.min(tour.max_participants, participants + 1))}
                     className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                    aria-label="Increase participants"
+                    aria-label={t('tours:detail.participants')}
                   >
                     <Plus className="w-4 h-4" />
                   </button>
@@ -256,12 +254,12 @@ export default function TourDetailPage() {
 
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-500">{formatCurrency(tour.price_per_person)} x {participants}</span>
-                  <span className="font-semibold">{formatCurrency(totalPrice)}</span>
+                  <span className="text-gray-500">{fmt(tour.price_per_person)} x {participants}</span>
+                  <span className="font-semibold">{fmt(totalPrice)}</span>
                 </div>
                 <div className="flex justify-between text-base font-bold pt-2 border-t">
                   <span>Total</span>
-                  <span className="text-primary">{formatCurrency(totalPrice)}</span>
+                  <span className="text-primary">{fmt(totalPrice)}</span>
                 </div>
               </div>
 
@@ -270,12 +268,11 @@ export default function TourDetailPage() {
                 disabled={booking}
                 className="w-full bg-accent hover:bg-accent-dark disabled:bg-gray-300 text-white font-bold py-3 rounded-lg transition-colors"
               >
-                {booking ? 'Booking...' : 'Book Now'}
+                {booking ? t('common:common.loading') : t('tours:detail.bookTour')}
               </button>
-
               <ul className="text-xs text-gray-500 space-y-1">
-                <li className="flex items-center gap-1"><Check className="w-3 h-3 text-success" /> Free cancellation up to 48h before</li>
-                <li className="flex items-center gap-1"><Check className="w-3 h-3 text-success" /> Instant confirmation</li>
+                <li className="flex items-center gap-1"><Check className="w-3 h-3 text-success" /> {t('tours:detail.freeCancellation48h')}</li>
+                <li className="flex items-center gap-1"><Check className="w-3 h-3 text-success" /> {t('tours:detail.instantConfirmation')}</li>
               </ul>
             </div>
           </div>

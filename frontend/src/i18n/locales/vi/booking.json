@@ -1,0 +1,52 @@
+{
+  "page": {
+    "title": "Hoàn tất đặt phòng",
+    "stepDetails": "Chi tiết",
+    "stepPayment": "Thanh toán",
+    "noSelection": "Chưa chọn đặt chỗ",
+    "noSelectionDesc": "Vui lòng chọn phòng, tour hoặc chuyến bay trước.",
+    "browseHotels": "Tìm khách sạn"
+  },
+  "form": {
+    "fullName": "Họ và tên",
+    "email": "Địa chỉ email",
+    "phone": "Số điện thoại",
+    "specialRequests": "Yêu cầu đặc biệt",
+    "specialRequestsPlaceholder": "Yêu cầu ăn kiêng, hỗ trợ đặc biệt, v.v."
+  },
+  "voucher": {
+    "label": "Mã voucher",
+    "placeholder": "Nhập mã voucher",
+    "apply": "Áp dụng",
+    "applied": "Đã áp dụng voucher",
+    "invalid": "Mã voucher không hợp lệ"
+  },
+  "loyalty": {
+    "label": "Dùng điểm thưởng",
+    "available": "{{count}} điểm khả dụng",
+    "apply": "Dùng điểm",
+    "applied": "điểm đã sử dụng"
+  },
+  "payment": {
+    "title": "Phương thức thanh toán",
+    "stripe": "Thẻ tín dụng / thẻ ghi nợ",
+    "vnpay": "VNPay (Việt Nam)",
+    "payNow": "Thanh toán ngay",
+    "payVnpay": "Thanh toán qua VNPay",
+    "processing": "Đang xử lý..."
+  },
+  "summary": {
+    "orderSummary": "Tóm tắt đơn đặt",
+    "checkIn": "Ngày nhận phòng",
+    "checkOut": "Ngày trả phòng",
+    "guests": "{{count}} khách"
+  },
+  "confirmation": {
+    "title": "Đặt chỗ thành công!",
+    "subtitle": "Đặt chỗ của bạn đã được xác nhận và thanh toán thành công.",
+    "bookingRef": "Mã đặt chỗ",
+    "downloadPdf": "Tải PDF",
+    "returnHome": "Về trang chủ",
+    "viewBookings": "Xem đặt phòng của tôi"
+  }
+}

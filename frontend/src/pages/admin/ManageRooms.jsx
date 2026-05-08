@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
+import { useTranslation } from 'react-i18next'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { roomsApi } from '@/api/roomsApi'
 import { hotelsApi } from '@/api/hotelsApi'
 import { useAuth } from '@/hooks/useAuth'
@@ -16,7 +18,8 @@ import {
 export default function ManageRooms() {
   const qc = useQueryClient()
   const { user } = useAuth()
-  const ownerId = user?.role === 'superadmin' ? undefined : user?.id
+  const { t } = useTranslation('admin')
+  const ownerId = user?.role === 'admin' ? undefined : user?.id
   const [selectedHotel, setSelectedHotel] = useState('')
   const [page, setPage] = useState(1)
   const [modal, setModal] = useState(null)
@@ -70,32 +73,33 @@ export default function ManageRooms() {
 
   return (
     <>
-      <Helmet><title>Manage Rooms — Admin</title></Helmet>
+      <Helmet><title>{t('dashboard.manageRooms')} — Admin</title></Helmet>
       <div className="bg-surface min-h-screen">
         <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
             <div>
-              <Link to="/admin" className="text-sm text-primary hover:underline">&larr; Dashboard</Link>
-              <h1 className="font-heading text-2xl font-bold text-gray-900">Manage Rooms</h1>
+              <Link to="/admin" className="text-sm text-primary hover:underline">{t('actions.backToDashboard')}</Link>
+              <h1 className="font-heading text-2xl font-bold text-gray-900">{t('dashboard.manageRooms')}</h1>
             </div>
-            <button onClick={() => { if (!selectedHotel) { toast.error('Select a hotel first'); return }; setModal({ name: '', room_type: 'double', price_per_night: 1, total_quantity: 1, max_guests: 2 }) }}
+            <button onClick={() => { if (!selectedHotel) { toast.error(t('empty.selectHotelFirst')); return }; setModal({ name: '', room_type: 'double', price_per_night: 1, total_quantity: 1, max_guests: 2 }) }}
               className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Add Room
+              <Plus className="w-4 h-4" aria-hidden="true" /> {t('actions.addRoom')}
             </button>
           </div>
 
           <div className="bg-white rounded-xl border p-5">
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Select Hotel</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.selectHotel')}</label>
               <select value={selectedHotel} onChange={(e) => { setSelectedHotel(e.target.value); setPage(1) }}
+                aria-label={t('form.selectHotel')}
                 className="w-full max-w-md border rounded-lg px-4 py-2.5 text-sm">
-                <option value="">— Choose a hotel —</option>
+                <option value="">{t('form.selectHotelPrompt')}</option>
                 {hotelsData?.map((h) => <option key={h.id} value={h.id}>{h.name} ({h.city})</option>)}
               </select>
             </div>
 
             {!selectedHotel ? (
-              <div className="py-16 text-center text-gray-400">Select a hotel to view its rooms</div>
+              <div className="py-16 text-center text-gray-400">{t('empty.selectHotelFirst')}</div>
             ) : isLoading ? (
               <div className="space-y-3">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
             ) : (
@@ -103,12 +107,12 @@ export default function ManageRooms() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 border-b">
-                      <th className="pb-3 font-medium">Room</th>
-                      <th className="pb-3 font-medium">Type</th>
-                      <th className="pb-3 font-medium">Price/Night</th>
-                      <th className="pb-3 font-medium">Qty</th>
-                      <th className="pb-3 font-medium">Max Guests</th>
-                      <th className="pb-3 font-medium text-right">Actions</th>
+                      <th className="pb-3 font-medium">{t('table.roomName')}</th>
+                      <th className="pb-3 font-medium">{t('table.type')}</th>
+                      <th className="pb-3 font-medium">{t('table.pricePerNight')}</th>
+                      <th className="pb-3 font-medium">{t('table.quantity')}</th>
+                      <th className="pb-3 font-medium">{t('table.maxGuests')}</th>
+                      <th className="pb-3 font-medium text-right">{t('table.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -133,7 +137,7 @@ export default function ManageRooms() {
                       </tr>
                     ))}
                     {rooms.length === 0 && (
-                      <tr><td colSpan={6} className="py-12 text-center text-gray-400">No rooms found</td></tr>
+                      <tr><td colSpan={6} className="py-12 text-center text-gray-400">{t('empty.noRoomsGeneral')}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -163,6 +167,8 @@ export default function ManageRooms() {
 }
 
 function RoomModal({ room, onClose, onSave, saving }) {
+  const { t } = useTranslation('admin')
+  useEscapeKey(onClose)
   const [form, setForm] = useState({
     name: room.name || '',
     room_type: room.room_type || 'double',
@@ -172,55 +178,58 @@ function RoomModal({ room, onClose, onSave, saving }) {
     description: room.description || '',
   })
 
+  const modalTitle = room.id ? t('actions.editRoom') : t('actions.newRoom')
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="room-modal-title"
+        className="bg-white rounded-xl w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-heading font-bold text-lg">{room.id ? 'Edit Room' : 'New Room'}</h2>
-          <button onClick={onClose}><X className="w-5 h-5" /></button>
+          <h2 id="room-modal-title" className="font-heading font-bold text-lg">{modalTitle}</h2>
+          <button onClick={onClose} aria-label={t('actions.cancel')}><X className="w-5 h-5" aria-hidden="true" /></button>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); onSave(form) }} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.name')}</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
               className="w-full border rounded-lg px-4 py-2.5 text-sm" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.roomType')}</label>
               <select value={form.room_type} onChange={(e) => setForm({ ...form, room_type: e.target.value })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm">
-                {ROOM_TYPES.map((t) => <option key={t} value={t} className="capitalize">{t}</option>)}
+                {ROOM_TYPES.map((rt) => <option key={rt} value={rt} className="capitalize">{rt}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Price/Night</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.pricePerNight')}</label>
               <input type="number" value={form.price_per_night} onChange={(e) => setForm({ ...form, price_per_night: Number(e.target.value) })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.totalQuantity')}</label>
               <input type="number" value={form.total_quantity} onChange={(e) => setForm({ ...form, total_quantity: Number(e.target.value) })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Max Guests</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.maxGuests')}</label>
               <input type="number" value={form.max_guests} onChange={(e) => setForm({ ...form, max_guests: Number(e.target.value) })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm" />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.description')}</label>
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full border rounded-lg px-4 py-2.5 text-sm resize-none h-20" />
           </div>
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 border py-2.5 rounded-lg text-sm font-medium">Cancel</button>
+            <button type="button" onClick={onClose} className="flex-1 border py-2.5 rounded-lg text-sm font-medium">{t('actions.cancel')}</button>
             <button type="submit" disabled={saving}
               className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50">
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? t('actions.saving') : t('actions.save')}
             </button>
           </div>
         </form>
