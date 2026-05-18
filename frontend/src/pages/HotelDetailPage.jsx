@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
@@ -9,7 +9,9 @@ import { reviewsApi } from '@/api/reviewsApi'
 import { useBookingStore } from '@/store/bookingStore'
 import { useAuth } from '@/hooks/useAuth'
 import ImageGallery from '@/components/hotel/ImageGallery'
-import RoomCard from '@/components/room/RoomCard'
+import AvailabilityTable from '@/components/room/AvailabilityTable'
+import RoomRecommendation from '@/components/room/RoomRecommendation'
+import { recommendCombination } from '@/utils/roomRecommender'
 import ReviewCard from '@/components/review/ReviewCard'
 import ReviewForm from '@/components/review/ReviewForm'
 import StarRating from '@/components/common/StarRating'
@@ -17,8 +19,8 @@ import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import FacilitiesSection from '@/components/hotel/FacilitiesSection'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
-import { MapPin, Star } from 'lucide-react'
-import { format, addDays } from 'date-fns'
+import { MapPin, Star, CalendarDays, Users, Search } from 'lucide-react'
+import { format, addDays, differenceInDays } from 'date-fns'
 
 export default function HotelDetailPage() {
   const { id } = useParams()
@@ -27,13 +29,18 @@ export default function HotelDetailPage() {
   const { isAuthenticated } = useAuth()
   const { t } = useTranslation(['hotels', 'common'])
   const setBookingData = useBookingStore((s) => s.setBookingData)
+  const datePickerRef = useRef(null)
 
   const today = format(new Date(), 'yyyy-MM-dd')
 
   const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || '')
   const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || '')
-  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '1'))
+  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '2'))
   const [rooms, setRooms] = useState(parseInt(searchParams.get('rooms') || '1'))
+  const [reviewPage, setReviewPage] = useState(1)
+  const REVIEWS_PER_PAGE = 5
+
+  const datesSelected = !!(checkIn && checkOut)
 
   const { data: hotel, isLoading } = useQuery({
     queryKey: ['hotel', id],
@@ -41,16 +48,101 @@ export default function HotelDetailPage() {
     select: (res) => res.data,
   })
 
+  const liteapiHotelId = hotel?.liteapi_hotel_id || null
+  const useLiteapi = !!liteapiHotelId
+
   const roomParams = {
     ...(checkIn && checkOut ? { check_in: checkIn, check_out: checkOut } : {}),
     guests,
   }
 
-  const { data: allRooms } = useQuery({
+  // DB-hotel rooms (used when the hotel has no liteapi_hotel_id).
+  const { data: dbRooms } = useQuery({
     queryKey: ['hotel-rooms', id, checkIn, checkOut, guests],
     queryFn: () => roomsApi.listByHotel(id, roomParams),
     select: (res) => res.data?.items || [],
+    enabled: !!hotel && !useLiteapi,
   })
+
+  // LiteAPI live rates (when dates picked).
+  const { data: liteapiRates } = useQuery({
+    queryKey: ['liteapi-rates', liteapiHotelId, checkIn, checkOut, guests, rooms],
+    queryFn: () =>
+      hotelsApi.getRates(liteapiHotelId, {
+        check_in: checkIn,
+        check_out: checkOut,
+        guests,
+        rooms,
+      }),
+    select: (res) => res.data || [],
+    enabled: useLiteapi && datesSelected,
+  })
+
+  // LiteAPI catalog (no prices) — used when no dates are picked yet.
+  const { data: liteapiCatalog } = useQuery({
+    queryKey: ['liteapi-room-types', liteapiHotelId],
+    queryFn: () => hotelsApi.getLiteapiRoomTypes(liteapiHotelId),
+    select: (res) => res.data || [],
+    enabled: useLiteapi && !datesSelected,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  // Build the unified roomGroups[] shape the AvailabilityTable expects.
+  const roomGroups = (() => {
+    if (useLiteapi) {
+      const source = datesSelected ? liteapiRates : liteapiCatalog
+      if (!source) return []
+      return source.map((rt) => ({
+        id: rt.room_type_id,
+        name: rt.room_name,
+        room_type: rt.room_name,
+        max_guests: rt.max_guests,
+        total_quantity: null,
+        amenities: rt.amenities || [],
+        images: rt.images || [],
+        rates: (rt.rates || []).map((r) => ({
+          rate_id: r.rate_id,
+          board_name: r.board_name,
+          refundable: r.refundable,
+          cancellation_deadline: r.cancellation_deadline,
+          price: r.price,
+          price_excl_taxes: r.price_excl_taxes,
+          taxes: r.taxes,
+          original_price: r.original_price,
+          discount_percent: r.discount_percent,
+          currency: r.currency,
+          max_occupancy: r.max_occupancy,
+        })),
+      }))
+    }
+    // Local DB hotel: each Room becomes a group with one synthesized rate.
+    return (dbRooms || []).map((room) => ({
+      id: room.id,
+      name: room.name,
+      room_type: room.room_type,
+      max_guests: room.max_guests,
+      total_quantity: room.total_quantity,
+      amenities: room.amenities || [],
+      images: room.images || [],
+      rates: datesSelected
+        ? [
+            {
+              rate_id: `db:${room.id}`,
+              board_name: '',
+              refundable: true,
+              cancellation_deadline: null,
+              price: room.price_per_night,
+              price_excl_taxes: null,
+              taxes: null,
+              original_price: null,
+              discount_percent: null,
+              currency: hotel?.currency || 'USD',
+              max_occupancy: room.max_guests,
+            },
+          ]
+        : [],
+    }))
+  })()
 
   const { data: reviewsData } = useQuery({
     queryKey: ['reviews', 'hotel', id],
@@ -59,8 +151,159 @@ export default function HotelDetailPage() {
   })
 
   const fmt = useFormatCurrency()
-  const handleReserve = (room) => {
-    setBookingData({ selectedRoom: room, hotel, checkIn, checkOut, guests, rooms })
+
+  /**
+   * Reserve a room group. `quantities` maps rate_id → count.
+   * For LiteAPI: rate_id is the LiteAPI offerId (passed downstream to prebook).
+   * For DB hotels: rate_id is "db:<room.id>" — strip the prefix when downstream needs the room id.
+   */
+  const handleReserve = (group, quantities) => {
+    const items = Object.entries(quantities)
+      .filter(([, n]) => n > 0)
+      .map(([rate_id, n]) => {
+        const rate = group.rates.find((r) => r.rate_id === rate_id)
+        return {
+          rate_id,
+          quantity: n,
+          price: rate?.price,
+          board_name: rate?.board_name,
+          refundable: rate?.refundable,
+          liteapi_rate_id: useLiteapi ? rate_id : null,
+          db_room_id: useLiteapi ? null : rate_id.replace(/^db:/, ''),
+        }
+      })
+    if (items.length === 0) return
+
+    setBookingData({
+      hotel,
+      selectedRoomGroup: { id: group.id, name: group.name, max_guests: group.max_guests },
+      selectedItems: items,
+      // Legacy single-room fields for backward compat with the existing booking page:
+      selectedRoom: useLiteapi
+        ? {
+            id: items[0].rate_id,
+            name: group.name,
+            price_per_night: items[0].price,
+            currency: group.rates[0]?.currency || 'USD',
+            max_guests: group.max_guests,
+            images: group.images || [],
+            liteapi_rate_id: items[0].rate_id,
+            liteapi_price: items[0].price,
+            liteapi_hotel_id: liteapiHotelId,
+          }
+        : (dbRooms || []).find((r) => r.id === items[0].db_room_id) || null,
+      checkIn,
+      checkOut,
+      guests,
+      rooms,
+    })
+    navigate('/bookings/new')
+  }
+
+  const handleShowPrices = () => {
+    if (datePickerRef.current) {
+      datePickerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Briefly pulse the search bar to draw attention
+      datePickerRef.current.classList.add('ring-4', 'ring-amber-400')
+      setTimeout(() => {
+        datePickerRef.current?.classList.remove('ring-4', 'ring-amber-400')
+      }, 1500)
+    }
+  }
+
+  const nights = datesSelected ? differenceInDays(new Date(checkOut), new Date(checkIn)) : 0
+  const recommendation = useMemo(
+    () =>
+      datesSelected
+        ? recommendCombination(roomGroups, { guests, rooms, nights })
+        : null,
+    [roomGroups, guests, rooms, nights, datesSelected]
+  )
+
+  // Track room selections from AvailabilityTable for dynamic right-panel pricing.
+  const [tableSelections, setTableSelections] = useState({})
+  useEffect(() => { setTableSelections({}) }, [checkIn, checkOut, guests, rooms])
+
+  const selectedTotal = useMemo(() => {
+    let total = 0
+    for (const [groupId, rateQtys] of Object.entries(tableSelections)) {
+      const group = roomGroups.find((g) => String(g.id) === String(groupId))
+      if (!group) continue
+      for (const [rateId, q] of Object.entries(rateQtys)) {
+        if (!q) continue
+        const rate = group.rates.find((r) => r.rate_id === rateId)
+        if (rate?.price) total += rate.price * q * Math.max(nights, 1)
+      }
+    }
+    return total > 0 ? total : null
+  }, [tableSelections, roomGroups, nights])
+
+  const selectedRoomsCount = useMemo(
+    () =>
+      Object.values(tableSelections).reduce(
+        (sum, rateQtys) => sum + Object.values(rateQtys).reduce((s, n) => s + (n || 0), 0),
+        0
+      ),
+    [tableSelections]
+  )
+
+  const handleReserveSelected = () => {
+    const allItems = []
+    for (const [groupId, rateQtys] of Object.entries(tableSelections)) {
+      const group = roomGroups.find((g) => String(g.id) === String(groupId))
+      if (!group) continue
+      for (const [rateId, q] of Object.entries(rateQtys)) {
+        if (!q) continue
+        const rate = group.rates.find((r) => r.rate_id === rateId)
+        if (rate) allItems.push({ group, rate, quantity: q, perUnitGuests: [] })
+      }
+    }
+    if (allItems.length === 0) return
+    if (allItems.length === 1) {
+      handleReserve(allItems[0].group, { [allItems[0].rate.rate_id]: allItems[0].quantity })
+    } else {
+      handleReserveCombination(allItems)
+    }
+  }
+
+  const handleReserveCombination = (items) => {
+    const storeItems = items.map((it) => ({
+      rate_id: it.rate.rate_id,
+      quantity: it.quantity,
+      price: it.rate.price,
+      board_name: it.rate.board_name,
+      refundable: it.rate.refundable,
+      room_name: it.group.name,
+      max_guests: it.group.max_guests,
+      per_unit_guests: it.perUnitGuests,
+      liteapi_rate_id: useLiteapi ? it.rate.rate_id : null,
+      db_room_id: useLiteapi ? null : String(it.rate.rate_id).replace(/^db:/, ''),
+    }))
+
+    setBookingData({
+      hotel,
+      selectedRoomGroup: null,
+      selectedItems: storeItems,
+      // Legacy single-room fields populated from the first item, for the existing
+      // single-room booking page to render until multi-room checkout ships.
+      selectedRoom: useLiteapi
+        ? {
+            id: storeItems[0].rate_id,
+            name: storeItems[0].room_name,
+            price_per_night: storeItems[0].price,
+            currency: items[0].rate.currency || 'USD',
+            max_guests: storeItems[0].max_guests,
+            images: items[0].group.images || [],
+            liteapi_rate_id: storeItems[0].rate_id,
+            liteapi_price: storeItems[0].price,
+            liteapi_hotel_id: liteapiHotelId,
+          }
+        : (dbRooms || []).find((r) => r.id === storeItems[0].db_room_id) || null,
+      checkIn,
+      checkOut,
+      guests,
+      rooms,
+    })
     navigate('/bookings/new')
   }
 
@@ -78,10 +321,9 @@ export default function HotelDetailPage() {
   if (!hotel) return <div className="text-center py-20 text-gray-400">{t('hotels:detail.notFound')}</div>
 
   const reviews = reviewsData?.items || []
-  const cheapestRoom = allRooms?.length
-    ? allRooms.reduce((min, r) => (min === null || r.price_per_night < min.price_per_night ? r : min), null)
-    : null
-  const startingPrice = cheapestRoom?.price_per_night
+  const allRatePrices = roomGroups.flatMap((g) => (g.rates || []).map((r) => r.price)).filter((p) => p > 0)
+  const startingPrice = allRatePrices.length ? Math.min(...allRatePrices) : hotel?.min_room_price || null
+  const cheapestGroup = roomGroups.find((g) => (g.rates || []).some((r) => r.price === startingPrice)) || null
 
   return (
     <>
@@ -139,60 +381,162 @@ export default function HotelDetailPage() {
             {/* Facilities */}
             <FacilitiesSection amenities={hotel.amenities} />
 
-            {/* Rooms */}
-            <div>
-              <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.rooms')}</h2>
-
-              {/* Date + guest selector */}
-              <div className="bg-gray-50 rounded-xl p-4 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.checkIn')}</label>
-                  <input type="date" value={checkIn} min={today}
-                    onChange={(e) => setCheckIn(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.checkOut')}</label>
-                  <input type="date" value={checkOut} min={checkIn || today}
-                    onChange={(e) => setCheckOut(e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.guests')}</label>
-                  <input type="number" value={guests} min={1} max={20}
-                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.roomsLabel')}</label>
-                  <input type="number" value={rooms} min={1} max={10}
-                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {allRooms?.map((room) => (
-                  <RoomCard key={room.id} room={room} onReserve={handleReserve} />
-                ))}
-                {allRooms?.length === 0 && (
-                  <p className="text-gray-400 text-sm">{t('hotels:detail.noRoomsAvailable')}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Reviews */}
+            {/* Reviews — paginated 5 per page. Authenticated guests with a
+                completed stay can post a review at the bottom of the list. */}
             <div>
               <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.guestReviews')}</h2>
               {reviews.length > 0 ? (
-                <div className="space-y-5">
-                  {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
-                </div>
+                <>
+                  <div className="space-y-5">
+                    {reviews
+                      .slice((reviewPage - 1) * REVIEWS_PER_PAGE, reviewPage * REVIEWS_PER_PAGE)
+                      .map((r) => <ReviewCard key={r.id} review={r} />)}
+                  </div>
+                  {reviews.length > REVIEWS_PER_PAGE && (
+                    <div className="flex items-center justify-center gap-3 mt-6">
+                      <button
+                        type="button"
+                        onClick={() => setReviewPage((p) => Math.max(1, p - 1))}
+                        disabled={reviewPage === 1}
+                        className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {t('common:common.back')}
+                      </button>
+                      <span className="text-sm text-gray-600">
+                        {reviewPage} / {Math.ceil(reviews.length / REVIEWS_PER_PAGE)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReviewPage((p) =>
+                            Math.min(Math.ceil(reviews.length / REVIEWS_PER_PAGE), p + 1)
+                          )
+                        }
+                        disabled={reviewPage >= Math.ceil(reviews.length / REVIEWS_PER_PAGE)}
+                        className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {t('common:common.next')}
+                      </button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <p className="text-gray-400 text-sm">{t('hotels:detail.noReviews')}</p>
               )}
               {isAuthenticated && <div className="mt-6"><ReviewForm hotelId={id} /></div>}
             </div>
+
+            {/* Availability section */}
+            <div>
+              <h2 className="font-heading font-bold text-xl mb-4">{t('hotels:detail.rooms')}</h2>
+
+              {/* Booking.com-style date search bar */}
+              <div
+                ref={datePickerRef}
+                className="rounded-xl p-3 mb-5 flex flex-col sm:flex-row items-stretch sm:items-end gap-3 transition-all duration-300"
+                style={{
+                  border: '2px solid #febb02',
+                  backgroundColor: '#febb0208',
+                }}
+              >
+                {/* Check-in */}
+                <div className="flex-1 min-w-0">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-gray-500" />
+                    {t('hotels:detail.checkIn')}
+                  </label>
+                  <input
+                    type="date"
+                    value={checkIn}
+                    min={today}
+                    onChange={(e) => setCheckIn(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  />
+                </div>
+
+                {/* Check-out */}
+                <div className="flex-1 min-w-0">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-gray-500" />
+                    {t('hotels:detail.checkOut')}
+                  </label>
+                  <input
+                    type="date"
+                    value={checkOut}
+                    min={checkIn || today}
+                    onChange={(e) => setCheckOut(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  />
+                </div>
+
+                {/* Guests */}
+                <div className="sm:w-32">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    <Users className="w-3.5 h-3.5 text-gray-500" />
+                    {t('hotels:detail.guests')}
+                  </label>
+                  <input
+                    type="number"
+                    value={guests}
+                    min={1}
+                    max={20}
+                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  />
+                </div>
+
+                {/* Rooms */}
+                <div className="sm:w-28">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    {t('hotels:detail.roomsLabel')}
+                  </label>
+                  <input
+                    type="number"
+                    value={rooms}
+                    min={1}
+                    max={10}
+                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  />
+                </div>
+
+                {/* Search / Change search button */}
+                <div className="sm:w-auto">
+                  <label className="block text-xs font-semibold text-transparent mb-1 select-none sm:block hidden">&nbsp;</label>
+                  <button
+                    type="button"
+                    className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white font-bold px-6 py-2 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
+                  >
+                    <Search className="w-4 h-4" />
+                    {datesSelected ? t('hotels:detail.changeSearch') : t('hotels:detail.searchBtn')}
+                  </button>
+                </div>
+              </div>
+
+              {/* Recommended combination — shown when the search asks for more than 1 room or > 2 guests */}
+              {datesSelected && (rooms > 1 || guests > 2) && recommendation && (
+                <RoomRecommendation
+                  recommendation={recommendation}
+                  nights={nights}
+                  guests={guests}
+                  fmt={fmt}
+                  onReserve={handleReserveCombination}
+                />
+              )}
+
+              {/* Availability table */}
+              <AvailabilityTable
+                key={`${checkIn}:${checkOut}:${guests}:${rooms}`}
+                roomGroups={roomGroups}
+                checkIn={checkIn}
+                checkOut={checkOut}
+                onReserve={handleReserve}
+                onShowPrices={handleShowPrices}
+                onSelectionChange={setTableSelections}
+                fmt={fmt}
+              />
+            </div>
+
           </div>
 
           {/* Right sticky booking panel */}
@@ -200,16 +544,31 @@ export default function HotelDetailPage() {
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-900">
-                  {startingPrice ? fmt(startingPrice) : '—'}
+                  {selectedTotal ? fmt(selectedTotal) : (startingPrice ? fmt(startingPrice) : '—')}
                 </p>
-                <p className="text-sm text-gray-500">{t('hotels:detail.startingPerNight')}</p>
+                <p className="text-sm text-gray-500">
+                  {selectedTotal
+                    ? t('hotels:detail.selectedSummary', { count: selectedRoomsCount, nights })
+                    : t('hotels:detail.startingPerNight')}
+                </p>
               </div>
               <button
-                onClick={() => cheapestRoom && handleReserve(cheapestRoom)}
-                disabled={!cheapestRoom}
+                onClick={() => {
+                  if (selectedTotal) {
+                    handleReserveSelected()
+                  } else {
+                    if (!cheapestGroup) return
+                    const cheapestRate = cheapestGroup.rates.reduce(
+                      (min, r) => (min == null || r.price < min.price ? r : min),
+                      null
+                    )
+                    if (cheapestRate) handleReserve(cheapestGroup, { [cheapestRate.rate_id]: 1 })
+                  }
+                }}
+                disabled={!datesSelected || (!selectedTotal && !cheapestGroup)}
                 className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {t('hotels:detail.reserveNow')}
+                {selectedTotal ? t('hotels:detail.reserveSelected') : t('hotels:detail.reserveNow')}
               </button>
               <ul className="text-xs text-gray-500 space-y-1">
                 <li className="flex items-center gap-1"><Star className="w-3 h-3 text-success" /> {t('hotels:detail.freeCancellation')}</li>

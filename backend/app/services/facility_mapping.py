@@ -16,3 +16,17 @@ SLUG_TO_LITEAPI_ID: dict[str, int] = {
     "pet_friendly": 4,      # Pets allowed
     "business_center": 20,  # Business centre
 }
+
+# Maps our local hotel-type slugs to LiteAPI hotel-type IDs from GET /data/hotelTypes.
+# Niche types (209–277: ryokan, riad, capsule, treehouse, etc.) are intentionally
+# omitted — see frontend/src/utils/constants.js HOTEL_TYPES for the matching list.
+HOTEL_TYPE_SLUG_TO_ID: dict[str, int] = {
+    "apartments": 201,
+    "hostels": 203,
+    "hotels": 204,
+    "motels": 205,
+    "resorts": 206,
+    "residences": 207,
+    "bed_and_breakfasts": 208,
+    "palace": 278,
+}

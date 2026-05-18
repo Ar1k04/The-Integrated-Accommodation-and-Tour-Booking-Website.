@@ -9,6 +9,7 @@ from app.schemas.user import UserResponse
 class ReviewCreate(BaseModel):
     hotel_id: uuid.UUID | None = None
     tour_id: uuid.UUID | None = None
+    viator_product_code: str | None = None
     rating: int = Field(ge=1, le=5)
     comment: str | None = None
 
@@ -23,6 +24,7 @@ class ReviewResponse(BaseModel):
     user_id: uuid.UUID
     hotel_id: uuid.UUID | None = None
     tour_id: uuid.UUID | None = None
+    viator_product_code: str | None = None
     rating: int
     comment: str | None = None
     created_at: datetime
@@ -34,4 +36,21 @@ class ReviewResponse(BaseModel):
 
 class ReviewListResponse(BaseModel):
     items: list[ReviewResponse]
+    meta: dict
+
+
+class ViatorReviewUser(BaseModel):
+    full_name: str
+
+
+class ViatorReviewItem(BaseModel):
+    id: str
+    rating: int
+    comment: str | None = None
+    created_at: datetime
+    user: ViatorReviewUser | None = None
+
+
+class ViatorReviewListResponse(BaseModel):
+    items: list[ViatorReviewItem]
     meta: dict

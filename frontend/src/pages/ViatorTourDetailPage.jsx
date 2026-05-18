@@ -4,10 +4,14 @@ import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
 import { toursApi } from '@/api/toursApi'
+import { reviewsApi } from '@/api/reviewsApi'
 import { useBookingStore } from '@/store/bookingStore'
 import { useAuth } from '@/hooks/useAuth'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import ImageGallery from '@/components/hotel/ImageGallery'
+import ReviewCard from '@/components/review/ReviewCard'
+import ReviewForm from '@/components/review/ReviewForm'
+import Pagination from '@/components/common/Pagination'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import { format, addDays } from 'date-fns'
@@ -30,6 +34,8 @@ export default function ViatorTourDetailPage() {
   const [tourDate, setTourDate] = useState(searchParams.get('tour_date') || format(addDays(new Date(), 7), 'yyyy-MM-dd'))
   const [participants, setParticipants] = useState(parseInt(searchParams.get('guests') || '1'))
   const [showAvailability, setShowAvailability] = useState(false)
+  const [reviewPage, setReviewPage] = useState(1)
+  const REVIEWS_PER_PAGE = 5
 
   const { data: tour, isLoading } = useQuery({
     queryKey: ['viator-tour', code],
@@ -46,6 +52,13 @@ export default function ViatorTourDetailPage() {
     queryFn: () => toursApi.getViatorAvailability(code, { tour_date: tourDate, guests: participants }),
     select: (res) => res.data,
     enabled: showAvailability,
+  })
+
+  const { data: reviewsData } = useQuery({
+    queryKey: ['reviews', 'viator-tour', code, reviewPage],
+    queryFn: () => reviewsApi.listViatorTourReviews(code, { page: reviewPage, per_page: REVIEWS_PER_PAGE }),
+    select: (res) => res.data,
+    enabled: !!code,
   })
 
   const handleCheckAvailability = () => {
@@ -205,6 +218,63 @@ export default function ViatorTourDetailPage() {
                 )}
               </div>
             )}
+
+            {/* Reviews */}
+            {(() => {
+              const reviews = reviewsData?.items || []
+              const totalPages = reviewsData?.meta?.total_pages || 1
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="font-heading font-bold text-lg">{t('tours:detail.reviews')}</h2>
+                    {tour.avg_rating > 0 && (
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 bg-primary text-white px-2.5 py-1 rounded-lg">
+                          <Star className="w-4 h-4 fill-current" />
+                          <span className="font-bold">{tour.avg_rating.toFixed(1)}</span>
+                        </div>
+                        <span className="text-sm text-gray-500">
+                          {tour.total_reviews} {t('tours:detail.viatorReviewsLabel')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {reviews.length > 0 ? (
+                    <>
+                      <div className="space-y-5">
+                        {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
+                      </div>
+                      <Pagination
+                        currentPage={reviewPage}
+                        totalPages={totalPages}
+                        onPageChange={(p) => { setReviewPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                      />
+                    </>
+                  ) : (
+                    <div className="text-center py-8 bg-gray-50 rounded-xl">
+                      <Star className="w-8 h-8 mx-auto mb-2 text-warning opacity-50" />
+                      {tour.avg_rating > 0 ? (
+                        <>
+                          <p className="text-gray-600 font-medium">
+                            {t('tours:detail.viatorRatingNote', { rating: tour.avg_rating.toFixed(1), count: tour.total_reviews })}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-1">{t('tours:detail.viatorReviewsSource')}</p>
+                        </>
+                      ) : (
+                        <p className="text-gray-400 text-sm">{t('tours:detail.noReviews')}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {isAuthenticated && (
+                    <div className="mt-6">
+                      <ReviewForm viatorProductCode={code} />
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Availability checker */}
             <div>

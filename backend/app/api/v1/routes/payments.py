@@ -129,7 +129,12 @@ async def confirm_stripe_payment(
             fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
             ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
             email = user.email if user else "guest@example.com"
-            await confirm_booking(db, booking, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
+            phone = user.phone if user and user.phone else None
+            await confirm_booking(
+                db, booking,
+                guest_first_name=fn, guest_last_name=ln,
+                guest_email=email, guest_phone=phone, redis=redis,
+            )
 
     await db.flush()
     return {"success": True, "data": {"booking_id": str(payment.booking_id), "status": "confirmed"}}
@@ -281,8 +286,13 @@ async def vnpay_return(
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
         email = user.email if user else "guest@example.com"
+        phone = user.phone if user and user.phone else None
         redis = getattr(request.app.state, "redis", None)
-        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
+        await confirm_booking(
+            db, booking_with_items,
+            guest_first_name=fn, guest_last_name=ln,
+            guest_email=email, guest_phone=phone, redis=redis,
+        )
         await db.flush()
         return {
             "success": True,
@@ -362,8 +372,13 @@ async def vnpay_ipn(
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
         email = user.email if user else "guest@example.com"
+        phone = user.phone if user and user.phone else None
         redis = getattr(request.app.state, "redis", None)
-        await confirm_booking(db, booking_with_items, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
+        await confirm_booking(
+            db, booking_with_items,
+            guest_first_name=fn, guest_last_name=ln,
+            guest_email=email, guest_phone=phone, redis=redis,
+        )
         await db.flush()
         return {"RspCode": "00", "Message": "Success"}
     else:

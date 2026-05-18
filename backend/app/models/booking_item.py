@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 import sqlalchemy as sa
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, Numeric, String
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +68,8 @@ class BookingItem(Base):
     liteapi_booking_id: Mapped[str | None] = mapped_column(sa.Text, unique=True)
     viator_product_code: Mapped[str | None] = mapped_column(String(100))
     viator_booking_ref: Mapped[str | None] = mapped_column(String(255), unique=True)
+    supplier_status: Mapped[str | None] = mapped_column(String(40))
+    supplier_status_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     booking = relationship("Booking", back_populates="items")
     room = relationship("Room", back_populates="booking_items")

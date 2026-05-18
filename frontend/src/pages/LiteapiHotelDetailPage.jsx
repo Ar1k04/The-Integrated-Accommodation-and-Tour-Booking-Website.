@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
@@ -7,14 +7,17 @@ import { hotelsApi } from '@/api/hotelsApi'
 import { useBookingStore } from '@/store/bookingStore'
 import { useAuth } from '@/hooks/useAuth'
 import ImageGallery from '@/components/hotel/ImageGallery'
+import AvailabilityTable from '@/components/room/AvailabilityTable'
+import RoomRecommendation from '@/components/room/RoomRecommendation'
+import { recommendCombination } from '@/utils/roomRecommender'
+import ReviewCard from '@/components/review/ReviewCard'
 import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import FacilitiesSection from '@/components/hotel/FacilitiesSection'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
-import { MapPin, Calendar, Users, CheckCircle, X } from 'lucide-react'
-import { format, addDays } from 'date-fns'
-import { toast } from 'sonner'
+import { MapPin, CalendarDays, Users, CheckCircle, Search, Star } from 'lucide-react'
+import { format, differenceInDays } from 'date-fns'
 
 export default function LiteapiHotelDetailPage() {
   const { liteapiId } = useParams()
@@ -23,21 +26,18 @@ export default function LiteapiHotelDetailPage() {
   const { isAuthenticated } = useAuth()
   const { t } = useTranslation(['hotels', 'common'])
   const setBookingData = useBookingStore((s) => s.setBookingData)
+  const datePickerRef = useRef(null)
 
   const today = format(new Date(), 'yyyy-MM-dd')
-  const tomorrow = format(addDays(new Date(), 1), 'yyyy-MM-dd')
 
-  const urlCheckIn = searchParams.get('check_in')
-  const urlCheckOut = searchParams.get('check_out')
-  const urlGuests = searchParams.get('guests')
-  const urlRooms = searchParams.get('rooms')
+  const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || '')
+  const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || '')
+  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '2'))
+  const [rooms, setRooms] = useState(parseInt(searchParams.get('rooms') || '1'))
+  const [reviewPage, setReviewPage] = useState(1)
+  const REVIEWS_PER_PAGE = 5
 
-  const [checkIn, setCheckIn] = useState(urlCheckIn || today)
-  const [checkOut, setCheckOut] = useState(urlCheckOut || tomorrow)
-  const [guests, setGuests] = useState(parseInt(urlGuests || '1'))
-  const [rooms, setRooms] = useState(parseInt(urlRooms || '1'))
-  // Auto-show rates if dates were passed from search
-  const [showRates, setShowRates] = useState(!!(urlCheckIn && urlCheckOut))
+  const datesSelected = !!(checkIn && checkOut)
 
   const { data: hotel, isLoading } = useQuery({
     queryKey: ['liteapi-hotel', liteapiId],
@@ -45,52 +45,90 @@ export default function LiteapiHotelDetailPage() {
     select: (res) => res.data,
   })
 
-  const {
-    data: rates,
-    isLoading: ratesLoading,
-    refetch: fetchRates,
-  } = useQuery({
-    queryKey: ['liteapi-rates', liteapiId, checkIn, checkOut, guests],
-    queryFn: () => hotelsApi.getRates(liteapiId, { check_in: checkIn, check_out: checkOut, guests }),
-    select: (res) => res.data,
-    enabled: showRates,
+  // Live rates with multi-rate-plan grouping (when dates picked).
+  const { data: liteapiRates } = useQuery({
+    queryKey: ['liteapi-rates', liteapiId, checkIn, checkOut, guests, rooms],
+    queryFn: () =>
+      hotelsApi.getRates(liteapiId, { check_in: checkIn, check_out: checkOut, guests, rooms }),
+    select: (res) => res.data || [],
+    enabled: datesSelected,
   })
 
-  const handleSearchRates = () => {
-    if (!checkIn || !checkOut || checkIn >= checkOut) {
-      toast.error('Please select valid check-in and check-out dates')
-      return
-    }
-    setShowRates(true)
-    fetchRates()
-  }
+  // Room-type catalog (no prices) — used for the no-dates state.
+  const { data: liteapiCatalog } = useQuery({
+    queryKey: ['liteapi-room-types', liteapiId],
+    queryFn: () => hotelsApi.getLiteapiRoomTypes(liteapiId),
+    select: (res) => res.data || [],
+    enabled: !datesSelected,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  // Guest reviews proxied from LiteAPI.
+  const { data: liteapiReviews } = useQuery({
+    queryKey: ['liteapi-reviews', liteapiId],
+    queryFn: () => hotelsApi.getLiteapiReviews(liteapiId, { limit: 20 }),
+    select: (res) => res.data?.items || [],
+    staleTime: 60 * 60 * 1000,
+  })
 
   const fmt = useFormatCurrency()
 
-  const handleBookRate = (rate) => {
+  const handleShowPrices = () => {
+    if (datePickerRef.current) {
+      datePickerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      datePickerRef.current.classList.add('ring-4', 'ring-amber-400')
+      setTimeout(() => {
+        datePickerRef.current?.classList.remove('ring-4', 'ring-amber-400')
+      }, 1500)
+    }
+  }
+
+  const handleReserve = (group, quantities) => {
     if (!isAuthenticated) {
       navigate('/login?redirect=/hotels/liteapi/' + liteapiId)
       return
     }
+    const items = Object.entries(quantities)
+      .filter(([, n]) => n > 0)
+      .map(([rate_id, n]) => {
+        const rate = group.rates.find((r) => r.rate_id === rate_id)
+        return {
+          rate_id,
+          quantity: n,
+          price: rate?.price,
+          board_name: rate?.board_name,
+          refundable: rate?.refundable,
+          liteapi_rate_id: rate_id,
+        }
+      })
+    if (items.length === 0) return
+
     setBookingData({
       hotel: { ...hotel, source: 'liteapi', liteapi_hotel_id: liteapiId },
+      selectedRoomGroup: { id: group.id, name: group.name, max_guests: group.max_guests },
+      selectedItems: items,
       selectedRoom: {
-        id: rate.rate_id,
-        name: rate.room_name,
-        price_per_night: rate.price,
-        currency: rate.currency,
-        max_guests: rate.max_guests,
-        images: rate.images || [],
-        liteapi_rate_id: rate.rate_id,
-        liteapi_price: rate.price,
+        id: items[0].rate_id,
+        name: group.name,
+        price_per_night: items[0].price,
+        currency: group.rates[0]?.currency || 'USD',
+        max_guests: group.max_guests,
+        images: group.images || [],
+        liteapi_rate_id: items[0].rate_id,
+        liteapi_price: items[0].price,
         liteapi_hotel_id: liteapiId,
       },
       checkIn,
       checkOut,
       guests,
+      rooms,
     })
     navigate('/bookings/new')
   }
+
+  // Must be declared before any early returns to satisfy Rules of Hooks.
+  const [tableSelections, setTableSelections] = useState({})
+  useEffect(() => { setTableSelections({}) }, [checkIn, checkOut, guests, rooms])
 
   if (isLoading) {
     return (
@@ -104,6 +142,117 @@ export default function LiteapiHotelDetailPage() {
   }
 
   if (!hotel) return <div className="text-center py-20 text-gray-400">{t('hotels:detail.notFound')}</div>
+
+  const sourceList = datesSelected ? liteapiRates : liteapiCatalog
+  const roomGroups = (sourceList || []).map((rt) => ({
+    id: rt.room_type_id,
+    name: rt.room_name,
+    room_type: rt.room_name,
+    max_guests: rt.max_guests,
+    total_quantity: null,
+    amenities: rt.amenities || [],
+    images: rt.images || [],
+    rates: (rt.rates || []).map((r) => ({
+      rate_id: r.rate_id,
+      board_name: r.board_name,
+      refundable: r.refundable,
+      cancellation_deadline: r.cancellation_deadline,
+      price: r.price,
+      price_excl_taxes: r.price_excl_taxes,
+      taxes: r.taxes,
+      original_price: r.original_price,
+      discount_percent: r.discount_percent,
+      currency: r.currency,
+      max_occupancy: r.max_occupancy,
+    })),
+  }))
+
+  const nights = datesSelected ? differenceInDays(new Date(checkOut), new Date(checkIn)) : 0
+  const recommendation = datesSelected
+    ? recommendCombination(roomGroups, { guests, rooms, nights })
+    : null
+
+  let _selTotal = 0
+  for (const [groupId, rateQtys] of Object.entries(tableSelections)) {
+    const group = roomGroups.find((g) => String(g.id) === String(groupId))
+    if (!group) continue
+    for (const [rateId, q] of Object.entries(rateQtys)) {
+      if (!q) continue
+      const rate = group.rates.find((r) => r.rate_id === rateId)
+      if (rate?.price) _selTotal += rate.price * q * Math.max(nights, 1)
+    }
+  }
+  const selectedTotal = _selTotal > 0 ? _selTotal : null
+
+  const selectedRoomsCount = Object.values(tableSelections).reduce(
+    (sum, rateQtys) => sum + Object.values(rateQtys).reduce((s, n) => s + (n || 0), 0),
+    0
+  )
+
+  const handleReserveSelected = () => {
+    if (!isAuthenticated) {
+      navigate('/login?redirect=/hotels/liteapi/' + liteapiId)
+      return
+    }
+    const allItems = []
+    for (const [groupId, rateQtys] of Object.entries(tableSelections)) {
+      const group = roomGroups.find((g) => String(g.id) === String(groupId))
+      if (!group) continue
+      for (const [rateId, q] of Object.entries(rateQtys)) {
+        if (!q) continue
+        const rate = group.rates.find((r) => r.rate_id === rateId)
+        if (rate) allItems.push({ group, rate, quantity: q, perUnitGuests: [] })
+      }
+    }
+    if (allItems.length === 0) return
+    if (allItems.length === 1) {
+      handleReserve(allItems[0].group, { [allItems[0].rate.rate_id]: allItems[0].quantity })
+    } else {
+      handleReserveCombination(allItems)
+    }
+  }
+
+  const handleReserveCombination = (items) => {
+    if (!isAuthenticated) {
+      navigate('/login?redirect=/hotels/liteapi/' + liteapiId)
+      return
+    }
+    const storeItems = items.map((it) => ({
+      rate_id: it.rate.rate_id,
+      quantity: it.quantity,
+      price: it.rate.price,
+      board_name: it.rate.board_name,
+      refundable: it.rate.refundable,
+      room_name: it.group.name,
+      max_guests: it.group.max_guests,
+      per_unit_guests: it.perUnitGuests,
+      liteapi_rate_id: it.rate.rate_id,
+    }))
+    setBookingData({
+      hotel: { ...hotel, source: 'liteapi', liteapi_hotel_id: liteapiId },
+      selectedRoomGroup: null,
+      selectedItems: storeItems,
+      selectedRoom: {
+        id: storeItems[0].rate_id,
+        name: storeItems[0].room_name,
+        price_per_night: storeItems[0].price,
+        currency: items[0].rate.currency || 'USD',
+        max_guests: storeItems[0].max_guests,
+        images: items[0].group.images || [],
+        liteapi_rate_id: storeItems[0].rate_id,
+        liteapi_price: storeItems[0].price,
+        liteapi_hotel_id: liteapiId,
+      },
+      checkIn,
+      checkOut,
+      guests,
+      rooms,
+    })
+    navigate('/bookings/new')
+  }
+
+  const allPrices = roomGroups.flatMap((g) => (g.rates || []).map((r) => r.price)).filter((p) => p > 0)
+  const startingPrice = allPrices.length ? Math.min(...allPrices) : hotel.min_room_price || null
 
   return (
     <>
@@ -150,7 +299,6 @@ export default function LiteapiHotelDetailPage() {
               </div>
             </div>
 
-            {/* Description */}
             {hotel.description && (
               <div>
                 <h2 className="font-heading font-bold text-lg mb-3">{t('hotels:detail.about')}</h2>
@@ -158,119 +306,148 @@ export default function LiteapiHotelDetailPage() {
               </div>
             )}
 
-            {/* Facilities */}
             <FacilitiesSection amenities={hotel.amenities} />
 
-            {/* Rates */}
+            {/* Reviews — sourced from LiteAPI. Read-only: only guests who completed
+                a stay through our platform can post a local review, so this
+                section just lists what LiteAPI returns. Paginated 5 per page. */}
             <div>
-              <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.roomsAndRates')}</h2>
+              <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.guestReviews')}</h2>
+              {liteapiReviews && liteapiReviews.length > 0 ? (
+                <>
+                  <div className="space-y-5">
+                    {liteapiReviews
+                      .slice((reviewPage - 1) * REVIEWS_PER_PAGE, reviewPage * REVIEWS_PER_PAGE)
+                      .map((r) => <ReviewCard key={r.id} review={r} />)}
+                  </div>
+                  {liteapiReviews.length > REVIEWS_PER_PAGE && (
+                    <div className="flex items-center justify-center gap-3 mt-6">
+                      <button
+                        type="button"
+                        onClick={() => setReviewPage((p) => Math.max(1, p - 1))}
+                        disabled={reviewPage === 1}
+                        className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {t('common:common.back')}
+                      </button>
+                      <span className="text-sm text-gray-600">
+                        {reviewPage} / {Math.ceil(liteapiReviews.length / REVIEWS_PER_PAGE)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReviewPage((p) =>
+                            Math.min(Math.ceil(liteapiReviews.length / REVIEWS_PER_PAGE), p + 1)
+                          )
+                        }
+                        disabled={reviewPage >= Math.ceil(liteapiReviews.length / REVIEWS_PER_PAGE)}
+                        className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {t('common:common.next')}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-gray-400 text-sm">{t('hotels:detail.noReviews')}</p>
+              )}
+            </div>
 
-              {/* Date + Guest selector */}
-              <div className="bg-gray-50 rounded-xl p-4 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.checkIn')}</label>
+            {/* Availability section */}
+            <div>
+              <h2 className="font-heading font-bold text-xl mb-4">{t('hotels:detail.rooms')}</h2>
+
+              {/* Booking.com-style date search bar */}
+              <div
+                ref={datePickerRef}
+                className="rounded-xl p-3 mb-5 flex flex-col sm:flex-row items-stretch sm:items-end gap-3 transition-all duration-300"
+                style={{ border: '2px solid #febb02', backgroundColor: '#febb0208' }}
+              >
+                <div className="flex-1 min-w-0">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-gray-500" />
+                    {t('hotels:detail.checkIn')}
+                  </label>
                   <input
                     type="date"
                     value={checkIn}
                     min={today}
-                    onChange={(e) => { setCheckIn(e.target.value); setShowRates(false) }}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    onChange={(e) => setCheckIn(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.checkOut')}</label>
+                <div className="flex-1 min-w-0">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-gray-500" />
+                    {t('hotels:detail.checkOut')}
+                  </label>
                   <input
                     type="date"
                     value={checkOut}
                     min={checkIn || today}
-                    onChange={(e) => { setCheckOut(e.target.value); setShowRates(false) }}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    onChange={(e) => setCheckOut(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.guests')}</label>
+                <div className="sm:w-32">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    <Users className="w-3.5 h-3.5 text-gray-500" />
+                    {t('hotels:detail.guests')}
+                  </label>
                   <input
                     type="number"
                     value={guests}
                     min={1}
-                    max={10}
-                    onChange={(e) => { setGuests(parseInt(e.target.value) || 1); setShowRates(false) }}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    max={20}
+                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('hotels:detail.roomsLabel')}</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={rooms}
-                      min={1}
-                      max={10}
-                      onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
-                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSearchRates}
-                      className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors whitespace-nowrap"
-                    >
-                      {t('hotels:detail.searchBtn')}
-                    </button>
-                  </div>
+                <div className="sm:w-28">
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
+                    {t('hotels:detail.roomsLabel')}
+                  </label>
+                  <input
+                    type="number"
+                    value={rooms}
+                    min={1}
+                    max={10}
+                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  />
+                </div>
+                <div className="sm:w-auto">
+                  <label className="block text-xs font-semibold text-transparent mb-1 select-none sm:block hidden">&nbsp;</label>
+                  <button
+                    type="button"
+                    className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white font-bold px-6 py-2 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
+                  >
+                    <Search className="w-4 h-4" />
+                    {datesSelected ? t('hotels:detail.changeSearch') : t('hotels:detail.searchBtn')}
+                  </button>
                 </div>
               </div>
 
-              {ratesLoading && (
-                <div className="space-y-3">
-                  {[1,2,3].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
-                </div>
+              {datesSelected && (rooms > 1 || guests > 2) && recommendation && (
+                <RoomRecommendation
+                  recommendation={recommendation}
+                  nights={nights}
+                  guests={guests}
+                  fmt={fmt}
+                  onReserve={handleReserveCombination}
+                />
               )}
 
-              {!ratesLoading && showRates && rates?.length === 0 && (
-                <p className="text-gray-400 text-sm">{t('hotels:detail.noRatesAvailable')}</p>
-              )}
-
-              {!ratesLoading && rates?.map((rate, i) => (
-                <div key={i} className="border rounded-xl p-4 mb-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-gray-900">{rate.room_name}</h3>
-                    <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
-                      {rate.meal_type && <span>{rate.meal_type}</span>}
-                      {rate.cancellation_policy && <span>{rate.cancellation_policy}</span>}
-                      {rate.refundable && (
-                        <span className="flex items-center gap-1 text-green-600">
-                          <CheckCircle className="w-3 h-3" /> {t('hotels:detail.refundable')}
-                        </span>
-                      )}
-                      {!rate.refundable && (
-                        <span className="flex items-center gap-1 text-orange-500">
-                          <X className="w-3 h-3" /> {t('hotels:detail.nonRefundable')}
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <Users className="w-3 h-3" /> {t('hotels:detail.upToGuests', { count: rate.max_guests })}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xl font-bold text-gray-900">{fmt(rate.price)}</p>
-                    <p className="text-xs text-gray-400 mb-2">{t('hotels:detail.totalStay')}</p>
-                    <button
-                      onClick={() => handleBookRate(rate)}
-                      className="bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors"
-                    >
-                      {t('common:common.bookNow')}
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {!showRates && (
-                <div className="text-center py-8 text-gray-400">
-                  <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">{t('hotels:detail.selectDates')}</p>
-                </div>
-              )}
+              <AvailabilityTable
+                key={`${checkIn}:${checkOut}:${guests}:${rooms}`}
+                roomGroups={roomGroups}
+                checkIn={checkIn}
+                checkOut={checkOut}
+                onReserve={handleReserve}
+                onShowPrices={handleShowPrices}
+                onSelectionChange={setTableSelections}
+                fmt={fmt}
+              />
             </div>
           </div>
 
@@ -279,19 +456,29 @@ export default function LiteapiHotelDetailPage() {
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-900">
-                  {hotel.min_room_price ? fmt(hotel.min_room_price) : '—'}
+                  {selectedTotal ? fmt(selectedTotal) : (startingPrice ? fmt(startingPrice) : '—')}
                 </p>
-                <p className="text-sm text-gray-500">{t('hotels:detail.startingPerNight')}</p>
+                <p className="text-sm text-gray-500">
+                  {selectedTotal
+                    ? t('hotels:detail.selectedSummary', { count: selectedRoomsCount, nights })
+                    : t('hotels:detail.startingPerNight')}
+                </p>
               </div>
               <button
-                onClick={handleSearchRates}
+                onClick={() => {
+                  if (selectedTotal) {
+                    handleReserveSelected()
+                  } else {
+                    handleShowPrices()
+                  }
+                }}
                 className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-3 rounded-lg transition-colors"
               >
-                {t('hotels:detail.checkAvailability')}
+                {selectedTotal ? t('hotels:detail.reserveSelected') : t('hotels:detail.checkAvailability')}
               </button>
               <ul className="text-xs text-gray-500 space-y-1">
                 <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t('hotels:detail.bestPriceGuarantee')}</li>
-                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t('hotels:detail.poweredBy')}</li>
+                <li className="flex items-center gap-1"><Star className="w-3 h-3 text-success" /> {t('hotels:detail.poweredBy')}</li>
               </ul>
             </div>
           </div>

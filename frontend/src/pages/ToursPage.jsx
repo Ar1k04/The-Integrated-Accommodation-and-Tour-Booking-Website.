@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
 import { toursApi } from '@/api/toursApi'
+import { searchCities } from '@/api/nominatimApi'
 import TourCard from '@/components/tour/TourCard'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
@@ -34,6 +35,54 @@ export default function ToursPage() {
 
   const [sortBy, sortOrder] = sort.includes(':') ? sort.split(':') : [sort, 'desc']
 
+  // Hero search bar Nominatim
+  const [debouncedHero, setDebouncedHero] = useState('')
+  const [showHeroSuggestions, setShowHeroSuggestions] = useState(false)
+  const heroInputRef = useRef(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedHero(searchText), 300)
+    return () => clearTimeout(timer)
+  }, [searchText])
+
+  const { data: heroSuggestions = [], isFetching: isFetchingHero } = useQuery({
+    queryKey: ['tour-hero-suggestions', debouncedHero],
+    queryFn: () => searchCities(debouncedHero),
+    enabled: debouncedHero.length >= 2,
+    staleTime: 60_000,
+  })
+
+  // Sidebar city filter Nominatim
+  const [cityInputValue, setCityInputValue] = useState(params.get('city') || '')
+  const [debouncedCity, setDebouncedCity] = useState(params.get('city') || '')
+  const [showCitySuggestions, setShowCitySuggestions] = useState(false)
+  const cityInputRef = useRef(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedCity(cityInputValue), 300)
+    return () => clearTimeout(timer)
+  }, [cityInputValue])
+
+  const { data: citySuggestions = [], isFetching: isFetchingCities } = useQuery({
+    queryKey: ['tour-city-suggestions', debouncedCity],
+    queryFn: () => searchCities(debouncedCity),
+    enabled: debouncedCity.length >= 2,
+    staleTime: 60_000,
+  })
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (heroInputRef.current && !heroInputRef.current.contains(e.target)) {
+        setShowHeroSuggestions(false)
+      }
+      if (cityInputRef.current && !cityInputRef.current.contains(e.target)) {
+        setShowCitySuggestions(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const isFirstRender = useRef(true)
   const queryParams = useMemo(() => ({
     q: submittedSearch || undefined,
@@ -54,12 +103,14 @@ export default function ToursPage() {
   const handleSearch = () => {
     if (searchText) {
       setFilters(f => ({ ...f, city: '' }))
+      setCityInputValue('')
     }
     setSubmittedSearch(searchText)
   }
 
   const handleCityFilterChange = (city) => {
     setFilters(f => ({ ...f, city }))
+    setCityInputValue(city)
     setSearchText('')
     setSubmittedSearch('')
   }
@@ -97,18 +148,43 @@ export default function ToursPage() {
           <h1 className="font-heading text-3xl md:text-4xl font-bold mb-3">{t('tours:page.exploreTitle')}</h1>
           <p className="text-white/80 max-w-xl mx-auto mb-8">{t('tours:page.exploreSubtitle')}</p>
           <div className="max-w-xl mx-auto flex gap-2">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" />
+            <div className="flex-1 relative" ref={heroInputRef}>
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60 z-10" />
               <input
                 value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                onChange={(e) => { setSearchText(e.target.value); setShowHeroSuggestions(true) }}
+                onFocus={() => searchText.length >= 2 && setShowHeroSuggestions(true)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { setShowHeroSuggestions(false); handleSearch() } }}
                 placeholder={t('tours:page.searchPlaceholder')}
                 className="w-full pl-10 pr-4 py-3 rounded-lg bg-white/15 text-white placeholder-white/60 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
               />
+              {showHeroSuggestions && (isFetchingHero || heroSuggestions.length > 0) && (
+                <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-xl border overflow-hidden max-h-60 overflow-y-auto text-left">
+                  {isFetchingHero && heroSuggestions.length === 0 && (
+                    <li className="px-4 py-2.5 text-sm text-gray-400">{t('common:common.loading')}</li>
+                  )}
+                  {heroSuggestions.map((s, i) => (
+                    <li
+                      key={i}
+                      onMouseDown={() => {
+                        handleCityFilterChange(s.city)
+                        setShowHeroSuggestions(false)
+                      }}
+                      className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-800 cursor-pointer hover:bg-primary/5"
+                    >
+                      <MapPin className="w-4 h-4 text-primary shrink-0" />
+                      <span className="font-medium">{s.city}</span>
+                      {s.state
+                        ? <span className="text-gray-400 truncate">{s.state}, {s.country}</span>
+                        : s.country && <span className="text-gray-400 truncate">{s.country}</span>
+                      }
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <button
-              onClick={handleSearch}
+              onClick={() => { setShowHeroSuggestions(false); handleSearch() }}
               className="bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-3 rounded-lg text-sm transition-colors flex items-center gap-2 shrink-0"
             >
               <Search className="w-4 h-4" />
@@ -161,15 +237,42 @@ export default function ToursPage() {
               <div className="bg-white rounded-xl border p-5 space-y-5">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">{t('tours:page.destination')}</label>
-                  <div className="relative">
+                  <div className="relative" ref={cityInputRef}>
                     <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <input
-                      value={filters.city}
-                      onChange={(e) => handleCityFilterChange(e.target.value)}
+                      value={cityInputValue}
+                      onChange={(e) => {
+                        setCityInputValue(e.target.value)
+                        setShowCitySuggestions(true)
+                        if (!e.target.value) handleCityFilterChange('')
+                      }}
+                      onFocus={() => cityInputValue.length >= 2 && setShowCitySuggestions(true)}
                       onKeyDown={(e) => e.key === 'Enter' && window.scrollTo({ top: 0, behavior: 'smooth' })}
                       placeholder={t('tours:page.cityOrCountry')}
                       className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     />
+                    {showCitySuggestions && (isFetchingCities || citySuggestions.length > 0) && (
+                      <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg overflow-hidden max-h-56 overflow-y-auto">
+                        {isFetchingCities && citySuggestions.length === 0 && (
+                          <li className="px-3 py-2 text-sm text-gray-400">{t('common:common.loading')}</li>
+                        )}
+                        {citySuggestions.map((s, i) => (
+                          <li
+                            key={i}
+                            onMouseDown={() => {
+                              handleCityFilterChange(s.city)
+                              setShowCitySuggestions(false)
+                            }}
+                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-primary/5"
+                          >
+                            <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
+                            <span className="font-medium">{s.city}</span>
+                            {s.state && <span className="text-gray-400 truncate">{s.state}, {s.country}</span>}
+                            {!s.state && s.country && <span className="text-gray-400 truncate">{s.country}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -194,6 +297,7 @@ export default function ToursPage() {
                 <button
                   onClick={() => {
                     setFilters({ min_price: null, max_price: null, city: '' })
+                    setCityInputValue('')
                     setCategory('')
                     setSearchText('')
                     setSubmittedSearch('')

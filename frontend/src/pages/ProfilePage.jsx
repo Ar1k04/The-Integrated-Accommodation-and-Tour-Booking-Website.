@@ -18,7 +18,7 @@ import { formatDate } from '@/utils/formatters'
 import {
   User, Briefcase, Star, Heart, Award, Shield,
   Camera, Trash2, MapPin, Clock, Calendar, Eye, TrendingUp, TrendingDown,
-  PlaneTakeoff,
+  PlaneTakeoff, AlertTriangle, X,
 } from 'lucide-react'
 
 export default function ProfilePage() {
@@ -153,6 +153,7 @@ function BookingsTab() {
   const fmt = useFormatCurrency()
   const [subTab, setSubTab] = useState('hotels')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [pendingCancel, setPendingCancel] = useState(null) // booking object pending confirmation
   const qc = useQueryClient()
 
   const { data: allBookings, isLoading: loadingAll } = useQuery({
@@ -170,9 +171,33 @@ function BookingsTab() {
 
   const cancelBooking = useMutation({
     mutationFn: (id) => bookingsApi.cancel(id),
-    onSuccess: () => { toast.success(t('bookings.cancelled')); qc.invalidateQueries({ queryKey: ['my-bookings'] }) },
-    onError: () => toast.error(t('bookings.failedCancel')),
+    onSuccess: (res) => {
+      // Surface the supplier's refund info from the response body. For a multi-item
+      // booking we aggregate, but in practice today's bookings have a single item.
+      const items = res.data?.items || []
+      const liteapiItem = items.find((it) => it.supplier === 'liteapi')
+      if (liteapiItem) {
+        if (liteapiItem.status === 'CANCELLED_WITH_CHARGES') {
+          const fee = liteapiItem.cancellation_fee || 0
+          toast.warning(t('bookings.cancelledWithCharges', { fee: fmt(fee, liteapiItem.currency) }))
+        } else if (liteapiItem.refund_amount != null) {
+          toast.success(t('bookings.cancelledWithRefund', { amount: fmt(liteapiItem.refund_amount, liteapiItem.currency) }))
+        } else {
+          toast.success(t('bookings.cancelled'))
+        }
+      } else {
+        toast.success(t('bookings.cancelled'))
+      }
+      qc.invalidateQueries({ queryKey: ['my-bookings'] })
+      setPendingCancel(null)
+    },
+    onError: () => {
+      toast.error(t('bookings.failedCancel'))
+      setPendingCancel(null)
+    },
   })
+
+  const canCancel = (status) => status !== 'cancelled' && status !== 'completed'
 
   const SUBTABS = [
     { key: 'hotels', label: t('bookings.hotels'), count: hotelBookings.length },
@@ -237,8 +262,8 @@ function BookingsTab() {
                       </div>
                       <div className="flex items-center gap-3">
                         <p className="font-bold text-primary">{fmt(b.total_price)}</p>
-                        {b.status === 'pending' && (
-                          <button onClick={() => cancelBooking.mutate(b.id)}
+                        {canCancel(b.status) && (
+                          <button onClick={() => setPendingCancel(b)}
                             className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
                         )}
                       </div>
@@ -274,8 +299,8 @@ function BookingsTab() {
                       </div>
                       <div className="flex items-center gap-3">
                         <p className="font-bold text-primary">{fmt(b.total_price)}</p>
-                        {b.status === 'pending' && (
-                          <button onClick={() => cancelBooking.mutate(b.id)}
+                        {canCancel(b.status) && (
+                          <button onClick={() => setPendingCancel(b)}
                             className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
                         )}
                       </div>
@@ -329,8 +354,8 @@ function BookingsTab() {
                       </div>
                       <div className="flex items-center gap-3">
                         <p className="font-bold text-primary">{fmt(b.total_price)}</p>
-                        {b.status === 'pending' && (
-                          <button onClick={() => cancelBooking.mutate(b.id)}
+                        {canCancel(b.status) && (
+                          <button onClick={() => setPendingCancel(b)}
                             className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
                         )}
                       </div>
@@ -344,6 +369,73 @@ function BookingsTab() {
           )}
         </>
       )}
+
+      {pendingCancel && (
+        <CancelConfirmDialog
+          booking={pendingCancel}
+          fmt={fmt}
+          submitting={cancelBooking.isPending}
+          onClose={() => setPendingCancel(null)}
+          onConfirm={() => cancelBooking.mutate(pendingCancel.id)}
+        />
+      )}
+    </div>
+  )
+}
+
+function CancelConfirmDialog({ booking, fmt, submitting, onClose, onConfirm }) {
+  const { t } = useTranslation('profile')
+  const hasLiteapi = booking.items?.some((i) => i.liteapi_booking_id || i.liteapi_prebook_id)
+  const isConfirmed = booking.status === 'confirmed'
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 p-5 border-b">
+          <div className="w-10 h-10 rounded-full bg-error/10 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5 text-error" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-heading font-bold text-base">{t('bookings.cancelConfirmTitle')}</h3>
+            <p className="text-sm text-gray-500 mt-0.5">{fmt(booking.total_price)}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3 text-sm">
+          <p className="text-gray-700">{t('bookings.cancelConfirmDesc')}</p>
+          {isConfirmed && hasLiteapi && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+              {t('bookings.cancelLiteapiWarning')}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 justify-end p-4 bg-gray-50 border-t">
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="px-4 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+          >
+            {t('bookings.keepBooking')}
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={submitting}
+            className="px-4 py-2 text-sm font-semibold text-white bg-error rounded-lg hover:bg-error/90 disabled:opacity-50"
+          >
+            {submitting ? t('bookings.cancelling') : t('bookings.confirmCancel')}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

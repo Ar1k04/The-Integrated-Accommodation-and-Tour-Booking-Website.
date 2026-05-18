@@ -162,6 +162,11 @@
     "viaViator": "via Viator",
     "viaDuffel": "via Duffel",
     "flight": "Flight booking",
-    "pax": "pax"
+    "pax": "pax",
+    "syncLiteapi": "Sync from LiteAPI",
+    "syncSuccess": "LiteAPI status refreshed",
+    "syncFailed": "Could not refresh LiteAPI status",
+    "liteapiManaged": "Managed by LiteAPI — manual changes disabled",
+    "syncedAt": "Synced {{when}}"
   }
 }

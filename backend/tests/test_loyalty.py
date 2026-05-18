@@ -6,11 +6,20 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.booking import Booking
 from app.models.loyalty_tier import LoyaltyTier
 from app.models.loyalty_transaction import LoyaltyTransaction, LoyaltyTransactionType
 from app.models.user import User
 from app.services import loyalty_service
 from app.services.loyalty_service import LoyaltyError
+
+
+async def _make_booking(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
+    """Insert a minimal Booking row so loyalty_transaction FK is satisfied."""
+    booking = Booking(id=uuid.uuid4(), user_id=user_id, total_price=0)
+    db.add(booking)
+    await db.flush()
+    return booking.id
 
 
 async def _seed_tiers(db: AsyncSession) -> dict[str, LoyaltyTier]:
@@ -151,7 +160,7 @@ async def test_get_status_reports_progress(db_session, test_user):
 async def test_reverse_booking_points_deducts_earned(db_session, test_user):
     """Cancelling a confirmed booking reverses earned points from balance and lifetime."""
     await _seed_tiers(db_session)
-    booking_id = uuid.uuid4()
+    booking_id = await _make_booking(db_session, test_user.id)
     await loyalty_service.award_points(db_session, test_user.id, booking_id, 100)
 
     await loyalty_service.reverse_booking_points(db_session, booking_id)
@@ -174,7 +183,7 @@ async def test_reverse_booking_points_deducts_earned(db_session, test_user):
 async def test_reverse_booking_points_caps_at_zero(db_session, test_user):
     """If user already spent some earned points, reversal caps deduction at 0."""
     await _seed_tiers(db_session)
-    booking_id = uuid.uuid4()
+    booking_id = await _make_booking(db_session, test_user.id)
     # Earn 100 from this booking
     await loyalty_service.award_points(db_session, test_user.id, booking_id, 100)
     # Spend 80 on a different booking (balance = 20, lifetime = 100)
@@ -191,7 +200,7 @@ async def test_reverse_booking_points_caps_at_zero(db_session, test_user):
 async def test_reverse_booking_points_restores_redeemed(db_session, test_user):
     """Cancelling restores points that were redeemed at booking time."""
     await _seed_tiers(db_session)
-    booking_id = uuid.uuid4()
+    booking_id = await _make_booking(db_session, test_user.id)
     # Earn 500, then redeem 200 for this booking
     await loyalty_service.award_points(db_session, test_user.id, None, 500)
     await loyalty_service.redeem_points(db_session, test_user.id, booking_id, 200)

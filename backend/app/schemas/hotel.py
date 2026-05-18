@@ -77,16 +77,28 @@ class HotelResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class HotelRateResponse(BaseModel):
+class HotelRatePlanResponse(BaseModel):
     rate_id: str
-    room_name: str
-    price: float
-    currency: str
-    cancellation_policy: str | None = None
-    max_guests: int
-    images: list | None = None
-    meal_type: str | None = None
+    board_name: str | None = None
     refundable: bool = True
+    cancellation_policy: str | None = None
+    cancellation_deadline: str | None = None
+    price: float
+    price_excl_taxes: float | None = None
+    taxes: float | None = None
+    original_price: float | None = None
+    discount_percent: int | None = None
+    currency: str = "USD"
+    max_occupancy: int = 2
+
+
+class HotelRoomTypeResponse(BaseModel):
+    room_type_id: str
+    room_name: str
+    max_guests: int = 2
+    images: list[str] = []
+    amenities: list[str] = []
+    rates: list[HotelRatePlanResponse] = []
 
 
 class HotelListResponse(BaseModel):

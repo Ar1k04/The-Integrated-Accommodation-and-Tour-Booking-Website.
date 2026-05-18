@@ -8,6 +8,7 @@ export const adminApi = {
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   listBookings: (params) => api.get('/admin/bookings', { params }),
   updateBooking: (id, status) => api.patch(`/admin/bookings/${id}?status=${status}`),
+  syncLiteapiBooking: (id) => api.post(`/admin/bookings/${id}/sync-liteapi`),
   listWishlists: (params) => api.get('/wishlists', { params }),
   addToWishlist: (data) => api.post('/wishlists', data),
   removeFromWishlist: (id) => api.delete(`/wishlists/${id}`),

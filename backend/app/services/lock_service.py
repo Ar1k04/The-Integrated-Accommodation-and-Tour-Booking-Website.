@@ -1,20 +1,30 @@
 """Redis soft-lock for checkout inventory slots. TTL 900s = 15 min (proposal §1).
 
 Prevents two users from simultaneously booking the same room/tour slot.
-Falls back to no-op (logs warning) when Redis is unavailable, so DB-level
-SELECT FOR UPDATE remains the last line of defence.
+
+Internal rooms use per-day keys (one key per night in [check_in, check_out)) so
+overlapping-but-not-identical date ranges collide. LiteAPI rooms use a single
+key scoped to (hotel_id, room_name, check_in, check_out).
+
+When Redis is unavailable, behaviour depends on `settings.REDIS_LOCK_STRICT`:
+  - False (default): emit ERROR log + metric line, return True so the booking
+    proceeds; the Postgres SELECT FOR UPDATE remains the safety floor.
+  - True: raise RedisUnavailableError so the route returns 503.
 
 Key namespaces (never clash with existing prefixes):
-  checkout:lock:room:{room_id}:{check_in}:{check_out}
+  checkout:lock:room:{room_id}:{YYYY-MM-DD}                 ← per-night
   checkout:lock:tour:{tour_id}:{tour_date}
-  booking:locks:{booking_id}  ← stores the keys held by a booking
+  checkout:lock:liteapi:{hotel_id}:{room_name}:{ci}:{co}
+  booking:locks:{booking_id}                                ← keys held per booking
 """
 from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +46,62 @@ class LockCollisionError(Exception):
     """Another user's checkout session is holding this slot."""
 
 
+class RedisUnavailableError(Exception):
+    """Raised in strict mode when Redis is unreachable — caller returns 503."""
+
+
+def _emit_redis_down(key: str, exc: Exception | None = None) -> bool:
+    """Log + metric for redis-down events. Returns True in lax mode, raises in strict mode."""
+    logger.error(
+        "metric=lock_service.redis_unavailable_total key=%s strict=%s err=%s",
+        key,
+        settings.REDIS_LOCK_STRICT,
+        exc,
+    )
+    if settings.REDIS_LOCK_STRICT:
+        raise RedisUnavailableError(
+            "Booking system temporarily unavailable — please try again shortly."
+        )
+    return True
+
+
 # ── key builders ──────────────────────────────────────────────────────────────
 
-def room_key(room_id, check_in: date, check_out: date) -> str:
-    return f"{KEY_PREFIX}:room:{room_id}:{check_in.isoformat()}:{check_out.isoformat()}"
+def room_day_key(room_id, day: date) -> str:
+    """Per-night key. Two overlapping ranges share at least one such key."""
+    return f"{KEY_PREFIX}:room:{room_id}:{day.isoformat()}"
+
+
+def room_day_keys(room_id, check_in: date, check_out: date) -> list[str]:
+    """All per-night keys for [check_in, check_out), sorted ascending by date.
+
+    Sorted-order acquire prevents deadlock: two sessions touching overlapping
+    ranges hit the first shared day in the same order, so one wins cleanly.
+    """
+    if check_out <= check_in:
+        return []
+    keys: list[str] = []
+    cur = check_in
+    while cur < check_out:
+        keys.append(room_day_key(room_id, cur))
+        cur += timedelta(days=1)
+    return keys
 
 
 def tour_key(tour_id, tour_date: date) -> str:
     return f"{KEY_PREFIX}:tour:{tour_id}:{tour_date.isoformat()}"
+
+
+def liteapi_key(hotel_id: str, room_name: str, check_in: date, check_out: date) -> str:
+    """Lock key for a LiteAPI room slot.
+
+    room_name is normalised (strip + lower) to absorb cosmetic differences.
+    Known limitation: LiteAPI does not expose a stable room_type_id, so two
+    listings of the same room with materially different names will not collide
+    here — see test_liteapi_lock_misses_when_room_name_varies.
+    """
+    normalised = (room_name or "").strip().lower()
+    return f"{KEY_PREFIX}:liteapi:{hotel_id}:{normalised}:{check_in.isoformat()}:{check_out.isoformat()}"
 
 
 def _booking_locks_key(booking_id) -> str:
@@ -57,11 +115,10 @@ async def acquire(redis, key: str, owner: str, ttl: int = CHECKOUT_LOCK_TTL) -> 
 
     Returns True on success (first acquire OR same-owner re-acquire).
     Raises LockCollisionError when a *different* owner holds the key.
-    Returns True without locking when redis is None (graceful degradation).
+    Raises RedisUnavailableError when Redis is unreachable AND strict mode is on.
     """
     if redis is None:
-        logger.debug("Redis unavailable — soft-lock skipped for %s", key)
-        return True
+        return _emit_redis_down(key)
     try:
         ok = await redis.set(key, owner, nx=True, ex=ttl)
         if ok:
@@ -76,8 +133,7 @@ async def acquire(redis, key: str, owner: str, ttl: int = CHECKOUT_LOCK_TTL) -> 
     except LockCollisionError:
         raise
     except Exception as exc:
-        logger.warning("Lock acquire failed for %s: %s — proceeding without lock", key, exc)
-        return True
+        return _emit_redis_down(key, exc)
 
 
 async def release(redis, key: str, owner: str) -> bool:
@@ -95,6 +151,51 @@ async def release(redis, key: str, owner: str) -> bool:
 async def release_many(redis, keys: Iterable[str], owner: str) -> None:
     for k in keys:
         await release(redis, k, owner)
+
+
+# ── partner-write guards ──────────────────────────────────────────────────────
+
+async def _scan_first_match(redis, pattern: str) -> bool:
+    """Return True if any key matching `pattern` exists in Redis. Uses SCAN, not KEYS."""
+    cursor = 0
+    while True:
+        cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=100)
+        if keys:
+            return True
+        if cursor == 0:
+            return False
+
+
+async def has_active_room_lock(redis, room_id) -> bool:
+    """True if any checkout currently holds a per-day lock on this room.
+
+    Used by partner write endpoints (DELETE / capacity-reducing PATCH) to refuse
+    mutations that would strand a guest mid-checkout. Returns False when Redis
+    is unreachable in lax mode; raises RedisUnavailableError in strict mode so
+    the route returns 503.
+    """
+    pattern = f"{KEY_PREFIX}:room:{room_id}:*"
+    if redis is None:
+        _emit_redis_down(pattern)
+        return False
+    try:
+        return await _scan_first_match(redis, pattern)
+    except Exception as exc:
+        _emit_redis_down(pattern, exc)
+        return False
+
+
+async def has_active_tour_lock(redis, tour_id) -> bool:
+    """True if any checkout currently holds a lock on this tour. See `has_active_room_lock`."""
+    pattern = f"{KEY_PREFIX}:tour:{tour_id}:*"
+    if redis is None:
+        _emit_redis_down(pattern)
+        return False
+    try:
+        return await _scan_first_match(redis, pattern)
+    except Exception as exc:
+        _emit_redis_down(pattern, exc)
+        return False
 
 
 # ── booking-scoped helpers ────────────────────────────────────────────────────

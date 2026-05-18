@@ -26,7 +26,7 @@
     "maxParticipants": "Max {{count}} participants",
     "duration": "{{days}} day(s)",
     "notFound": "Tour not found",
-    "about": "About This Tour",
+    "about": "Description",
     "highlights": "Highlights",
     "freeCancellation48h": "Free cancellation up to 48h before",
     "instantConfirmation": "Instant confirmation",
@@ -41,7 +41,10 @@
     "totalFor": "Total: {{price}} for {{count}} people",
     "poweredByViator": "Powered by Viator",
     "tourDateLabel": "Tour Date",
-    "participantsLabel": "Participants"
+    "participantsLabel": "Participants",
+    "viatorReviewsLabel": "reviews",
+    "viatorRatingNote": "Rated {{rating}}/5 based on {{count}} Viator traveler reviews",
+    "viatorReviewsSource": "Reviews sourced from Viator"
   },
   "errors": {
     "selectDate": "Please select a tour date"

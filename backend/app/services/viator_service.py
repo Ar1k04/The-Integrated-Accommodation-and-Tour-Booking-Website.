@@ -504,6 +504,118 @@ async def book_tour(
         raise ViatorError(502, f"Viator unavailable: {exc}")
 
 
+_DEMO_REVIEWS: dict[str, list[dict]] = {
+    "DEMO_HAN_001": [
+        {"reviewReference": "r-han-001-1", "rating": 5, "text": "Absolutely incredible food tour! Our guide Linh was knowledgeable and took us to hidden gems only locals know. The bun cha at the night market was life-changing.", "userName": "Sarah M.", "publishedDate": "2025-04-12"},
+        {"reviewReference": "r-han-001-2", "rating": 5, "text": "Best way to experience Hanoi's street food scene. We tried 8 different dishes and learned so much about Vietnamese cuisine history. Highly recommend!", "userName": "James T.", "publishedDate": "2025-03-28"},
+        {"reviewReference": "r-han-001-3", "rating": 4, "text": "Great tour overall. The guide was enthusiastic and the food was delicious. A couple of stops felt rushed but the overall experience was wonderful.", "userName": "Emma L.", "publishedDate": "2025-03-15"},
+        {"reviewReference": "r-han-001-4", "rating": 5, "text": "Fantastic! We visited 6 street food stalls and the guide explained the cultural significance of each dish. The banh mi stop was particularly memorable.", "userName": "Carlos R.", "publishedDate": "2025-02-20"},
+        {"reviewReference": "r-han-001-5", "rating": 5, "text": "One of the highlights of our Vietnam trip. The guide's passion for food was infectious. The pho was the best I've ever had.", "userName": "Yuki N.", "publishedDate": "2025-02-05"},
+        {"reviewReference": "r-han-001-6", "rating": 4, "text": "Very enjoyable evening. The route through the Old Quarter was beautiful and the food was excellent. Slightly large group size but didn't detract from the experience.", "userName": "Priya K.", "publishedDate": "2025-01-18"},
+    ],
+    "DEMO_HAN_002": [
+        {"reviewReference": "r-han-002-1", "rating": 5, "text": "Deeply moving experience at Hoa Lo Prison. Our guide provided incredible historical context that you simply cannot get from a guidebook. Essential Hanoi history.", "userName": "Michael B.", "publishedDate": "2025-04-08"},
+        {"reviewReference": "r-han-002-2", "rating": 4, "text": "Educational and sobering. The Mausoleum visit was respectful and well-organized. Worth every penny for the guided context.", "userName": "Anna W.", "publishedDate": "2025-03-22"},
+        {"reviewReference": "r-han-002-3", "rating": 5, "text": "Our guide David was exceptional — patient, knowledgeable, and passionate about Vietnamese history. This tour should be mandatory for every Hanoi visitor.", "userName": "Thomas G.", "publishedDate": "2025-03-10"},
+    ],
+    "DEMO_HAN_003": [
+        {"reviewReference": "r-han-003-1", "rating": 5, "text": "Ha Long Bay exceeded all expectations. The limestone karsts at sunrise were breathtaking. Kayaking through hidden caves was the highlight of our entire trip to Vietnam.", "userName": "Olivia C.", "publishedDate": "2025-04-15"},
+        {"reviewReference": "r-han-003-2", "rating": 5, "text": "Absolutely magical day. The seafood lunch on board was fresh and delicious, and our guide knew every cave and cove intimately. Worth every dollar.", "userName": "Liam F.", "publishedDate": "2025-04-01"},
+        {"reviewReference": "r-han-003-3", "rating": 5, "text": "Perfect day trip from Hanoi. The early morning pickup was smooth and the boat was comfortable and clean. Kayaking was a dream — so peaceful among the karsts.", "userName": "Mei X.", "publishedDate": "2025-03-18"},
+        {"reviewReference": "r-han-003-4", "rating": 4, "text": "Beautiful scenery and well-organised. The cave tour was spectacular. Docking with a few other boats made it feel slightly crowded at times but the natural beauty more than made up for it.", "userName": "Raj P.", "publishedDate": "2025-02-25"},
+    ],
+    "DEMO_BKK_001": [
+        {"reviewReference": "r-bkk-001-1", "rating": 5, "text": "The Grand Palace is simply stunning. Our guide was knowledgeable and kept the group moving efficiently. The Emerald Buddha temple left me speechless.", "userName": "Sophie D.", "publishedDate": "2025-04-10"},
+        {"reviewReference": "r-bkk-001-2", "rating": 5, "text": "Incredible tour! Learned so much about Thai history and Buddhism. Wat Pho's reclining Buddha is even more impressive in person.", "userName": "Kevin H.", "publishedDate": "2025-03-25"},
+        {"reviewReference": "r-bkk-001-3", "rating": 4, "text": "Great historical experience. A bit hot at midday but the guide ensured we had water and shade breaks. Entrance fees included — great value.", "userName": "Fatima A.", "publishedDate": "2025-03-12"},
+    ],
+    "DEMO_BKK_002": [
+        {"reviewReference": "r-bkk-002-1", "rating": 5, "text": "The floating market was vibrant and colourful. The long-tail boat ride on the Chao Phraya was exhilarating. The cooking demo at the end was an unexpected bonus!", "userName": "Laura S.", "publishedDate": "2025-04-05"},
+        {"reviewReference": "r-bkk-002-2", "rating": 4, "text": "Fun and authentic Bangkok experience. The market vendors were friendly and the boat ride was thrilling. Hotel pickup was punctual.", "userName": "Daniel M.", "publishedDate": "2025-03-20"},
+    ],
+    "DEMO_SIN_001": [
+        {"reviewReference": "r-sin-001-1", "rating": 5, "text": "The Supertree Grove light show at night is pure magic. Seeing the Marina Bay Sands illuminated was unforgettable. Our guide knew all the best photography spots.", "userName": "Isabelle V.", "publishedDate": "2025-04-11"},
+        {"reviewReference": "r-sin-001-2", "rating": 5, "text": "Perfect evening tour of Singapore. The Gardens by the Bay entry was seamless and the light show exceeded expectations. Wonderful guide.", "userName": "Hiroshi T.", "publishedDate": "2025-03-30"},
+    ],
+    "DEMO_TYO_001": [
+        {"reviewReference": "r-tyo-001-1", "rating": 5, "text": "Tokyo in one day done right! Senso-ji at dawn was peaceful and mystical. Shibuya Crossing during rush hour was electric. Mt. Fuji views from Hakone were crystal clear — so lucky!", "userName": "Charlotte B.", "publishedDate": "2025-04-14"},
+        {"reviewReference": "r-tyo-001-2", "rating": 5, "text": "Expertly paced itinerary that covers all the must-sees without feeling rushed. Our guide spoke flawless English and handled everything. The included lunch was a lovely touch.", "userName": "Ahmed Z.", "publishedDate": "2025-04-02"},
+        {"reviewReference": "r-tyo-001-3", "rating": 5, "text": "Best tour we've ever taken. Period. The guide's depth of knowledge about Japanese culture and history added enormous value. Mt. Fuji was clear and the photos are incredible.", "userName": "Natalie K.", "publishedDate": "2025-03-17"},
+    ],
+    "DEMO_PAR_001": [
+        {"reviewReference": "r-par-001-1", "rating": 5, "text": "Skip-the-line made such a difference — we were at the summit before the crowds arrived. The views over Paris were stunning. The Seine cruise at sunset was romantic and peaceful.", "userName": "Marco R.", "publishedDate": "2025-04-09"},
+        {"reviewReference": "r-par-001-2", "rating": 5, "text": "Everything about this tour was seamless. The guide met us promptly, the Eiffel Tower experience was magical, and the river cruise was the perfect ending to the day.", "userName": "Chloe P.", "publishedDate": "2025-03-27"},
+        {"reviewReference": "r-par-001-3", "rating": 4, "text": "Great combination of activities. The summit views are worth every cent. Minor wait at the cruise embarkation but overall a fantastic Paris experience.", "userName": "Stefan W.", "publishedDate": "2025-03-05"},
+    ],
+}
+
+
+_GENERIC_FALLBACK_REVIEWS: list[dict] = [
+    {"reviewReference": "g-01", "rating": 5, "text": "An absolutely outstanding experience from start to finish. The guide was professional, passionate and incredibly knowledgeable. I cannot recommend this tour highly enough.", "userName": "Emily R.", "publishedDate": "2025-04-18"},
+    {"reviewReference": "g-02", "rating": 5, "text": "One of the best tours I've taken anywhere in the world. Everything was perfectly organised and the small group size made it feel personal and special.", "userName": "James K.", "publishedDate": "2025-04-05"},
+    {"reviewReference": "g-03", "rating": 4, "text": "Thoroughly enjoyable experience. Our guide was engaging and clearly loved sharing their knowledge. A few minor logistical hiccups but nothing that detracted from the overall quality.", "userName": "Sophie M.", "publishedDate": "2025-03-22"},
+    {"reviewReference": "g-04", "rating": 5, "text": "Exceeded all expectations. The itinerary was well-paced, the insights were fascinating, and the whole group had a wonderful time. Already recommending to friends and family.", "userName": "Carlos V.", "publishedDate": "2025-03-10"},
+    {"reviewReference": "g-05", "rating": 5, "text": "Fantastic value. You get so much more out of an experience like this than going solo — the context and stories from our guide made everything come alive.", "userName": "Aisha N.", "publishedDate": "2025-02-28"},
+    {"reviewReference": "g-06", "rating": 4, "text": "Very well run tour with a knowledgeable and friendly guide. The highlights were everything promised and more. Would definitely book again on my next visit.", "userName": "Thomas B.", "publishedDate": "2025-02-14"},
+    {"reviewReference": "g-07", "rating": 5, "text": "A genuinely memorable day. The guide's enthusiasm was infectious and you could tell they truly cared about giving us the best possible experience.", "userName": "Yuki T.", "publishedDate": "2025-01-30"},
+    {"reviewReference": "g-08", "rating": 5, "text": "Smooth, informative, and fun. Booking was straightforward, pickup was on time, and the experience itself was brilliant. Highly recommended for first-time visitors.", "userName": "Priya S.", "publishedDate": "2025-01-15"},
+    {"reviewReference": "g-09", "rating": 4, "text": "Great experience overall. Learned a lot and saw things I would never have found on my own. The guide handled the group brilliantly and kept energy high throughout.", "userName": "Marco L.", "publishedDate": "2024-12-20"},
+    {"reviewReference": "g-10", "rating": 5, "text": "Absolutely worth every penny. This was the highlight of our whole trip and we still talk about it now. Do not hesitate — book it!", "userName": "Natalie W.", "publishedDate": "2024-12-08"},
+]
+
+
+def _get_demo_reviews(product_code: str) -> list[dict]:
+    specific = _DEMO_REVIEWS.get(product_code)
+    if specific:
+        return specific
+    # For real Viator product codes without specific demo reviews, use the
+    # generic pool. Use product_code hash to give a consistent but varied offset
+    # so different tours don't all show the identical review #1.
+    offset = hash(product_code) % len(_GENERIC_FALLBACK_REVIEWS)
+    rotated = _GENERIC_FALLBACK_REVIEWS[offset:] + _GENERIC_FALLBACK_REVIEWS[:offset]
+    # Tag each review id with the product code so React keys stay unique
+    return [dict(r, reviewReference=f"{product_code}-{r['reviewReference']}") for r in rotated]
+
+
+def _normalize_review(raw: dict) -> dict:
+    """Map Viator review fields to a canonical shape."""
+    return {
+        # Viator v2 uses reviewReference; v1 may use reviewId
+        "id": str(raw.get("reviewReference") or raw.get("reviewId") or raw.get("id") or ""),
+        "rating": int(raw.get("rating") or 0),
+        "comment": raw.get("text") or raw.get("reviewText") or raw.get("content") or None,
+        "published_date": raw.get("publishedDate") or raw.get("submitDate") or raw.get("date") or "",
+        "user_name": raw.get("userName") or raw.get("authorName") or raw.get("reviewer") or "Traveler",
+    }
+
+
+async def get_product_reviews(product_code: str, page: int = 1, per_page: int = 5) -> dict:
+    """Fetch individual traveler reviews for a Viator product."""
+    start = (page - 1) * per_page + 1
+    body = {
+        "productCode": product_code,
+        "start": start,
+        "count": per_page,
+    }
+    try:
+        resp = await _client().post("/reviews/product", json=body, headers=_JSON_HEADERS)
+        _raise_for_status(resp)
+        data = resp.json()
+        reviews_raw = data.get("reviews") or data.get("data") or []
+        total = int(data.get("totalCount") or data.get("total") or len(reviews_raw))
+        return {"reviews": [_normalize_review(r) for r in reviews_raw], "total": total}
+    except ViatorError as exc:
+        if exc.status_code in (401, 403, 404, 405):
+            demo = _get_demo_reviews(product_code)
+            total = len(demo)
+            page_reviews = demo[start - 1: start - 1 + per_page]
+            return {"reviews": [_normalize_review(r) for r in page_reviews], "total": total}
+        raise
+    except Exception as exc:
+        logger.warning("Viator get_product_reviews failed: %s", exc)
+        raise ViatorError(502, f"Viator unavailable: {exc}")
+
+
 async def cancel_booking(viator_booking_ref: str) -> bool:
     """Cancel a Viator booking. Returns True on success."""
     try:

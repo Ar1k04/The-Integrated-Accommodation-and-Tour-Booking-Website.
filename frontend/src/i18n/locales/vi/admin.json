@@ -162,6 +162,11 @@
     "viaViator": "qua Viator",
     "viaDuffel": "qua Duffel",
     "flight": "Đặt vé máy bay",
-    "pax": "hành khách"
+    "pax": "hành khách",
+    "syncLiteapi": "Đồng bộ từ LiteAPI",
+    "syncSuccess": "Đã cập nhật trạng thái LiteAPI",
+    "syncFailed": "Không thể cập nhật trạng thái LiteAPI",
+    "liteapiManaged": "Do LiteAPI quản lý — không thể chỉnh thủ công",
+    "syncedAt": "Đồng bộ {{when}}"
   }
 }

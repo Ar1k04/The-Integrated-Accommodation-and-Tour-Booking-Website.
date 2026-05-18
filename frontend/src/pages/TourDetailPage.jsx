@@ -16,6 +16,7 @@ import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { useTranslation } from 'react-i18next'
 import { formatDate } from '@/utils/formatters'
 import { format } from 'date-fns'
+import Pagination from '@/components/common/Pagination'
 import {
   MapPin, Clock, Users, Star, Calendar, ChevronDown, ChevronUp,
   Check, X as XIcon, Minus, Plus,
@@ -32,6 +33,8 @@ export default function TourDetailPage() {
   const [tourDate, setTourDate] = useState('')
   const [expandedDay, setExpandedDay] = useState(0)
   const [booking, setBooking] = useState(false)
+  const [reviewPage, setReviewPage] = useState(1)
+  const REVIEWS_PER_PAGE = 5
 
   const { data: tour, isLoading } = useQuery({
     queryKey: ['tour', id],
@@ -40,8 +43,8 @@ export default function TourDetailPage() {
   })
 
   const { data: reviewsData } = useQuery({
-    queryKey: ['reviews', 'tour', id],
-    queryFn: () => reviewsApi.listTourReviews(id, { per_page: 10 }),
+    queryKey: ['reviews', 'tour', id, reviewPage],
+    queryFn: () => reviewsApi.listTourReviews(id, { page: reviewPage, per_page: REVIEWS_PER_PAGE }),
     select: (res) => res.data,
   })
 
@@ -70,6 +73,7 @@ export default function TourDetailPage() {
   if (!tour) return <div className="text-center py-20 text-gray-400">{t('tours:detail.notFound')}</div>
 
   const reviews = reviewsData?.items || []
+  const totalReviewPages = reviewsData?.meta?.total_pages || 1
   const itinerary = tour.itinerary || []
   const highlights = tour.highlights || []
   const includes = tour.includes || []
@@ -201,9 +205,16 @@ export default function TourDetailPage() {
             <div>
               <h2 className="font-heading font-bold text-lg mb-4">{t('tours:detail.reviews')}</h2>
               {reviews.length > 0 ? (
-                <div className="space-y-5">
-                  {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
-                </div>
+                <>
+                  <div className="space-y-5">
+                    {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
+                  </div>
+                  <Pagination
+                    currentPage={reviewPage}
+                    totalPages={totalReviewPages}
+                    onPageChange={(p) => { setReviewPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                  />
+                </>
               ) : (
                 <p className="text-gray-400 text-sm">{t('tours:detail.noReviews')}</p>
               )}

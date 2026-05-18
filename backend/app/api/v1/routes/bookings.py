@@ -18,10 +18,11 @@ from app.schemas.booking import (
     BookingListResponse,
     BookingResponse,
     BookingUpdate,
+    CancellationResponse,
 )
 from app.services import booking_service
 from app.services.booking_service import BookingServiceError
-from app.services.lock_service import LockCollisionError
+from app.services.lock_service import LockCollisionError, RedisUnavailableError
 from app.services.loyalty_service import LoyaltyError
 from app.services.voucher_service import VoucherError
 
@@ -49,6 +50,10 @@ async def create_booking(
         )
     except LockCollisionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except RedisUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except (BookingServiceError, VoucherError, LoyaltyError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -147,13 +152,19 @@ async def update_booking(
     return booking
 
 
-@router.delete("/{booking_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{booking_id}", response_model=CancellationResponse)
 async def cancel_booking(
     booking_id: uuid.UUID,
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
+    """
+    Cancel a booking. For LiteAPI-sourced room items, this also cancels the
+    booking upstream via LiteAPI's PUT /bookings/{id}, and the response
+    includes the supplier's refund_amount / cancellation_fee so the frontend
+    can show the user what (if anything) they'll get back.
+    """
     result = await db.execute(
         select(Booking)
         .options(selectinload(Booking.items))
@@ -167,4 +178,9 @@ async def cancel_booking(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already cancelled")
 
     redis = getattr(request.app.state, "redis", None)
-    await booking_service.cancel_booking(db, booking, redis=redis)
+    booking, supplier_results = await booking_service.cancel_booking(db, booking, redis=redis)
+    return CancellationResponse(
+        booking_id=booking.id,
+        status=booking.status,
+        items=supplier_results,
+    )

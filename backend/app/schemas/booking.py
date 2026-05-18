@@ -45,3 +45,22 @@ class BookingDetailResponse(BookingResponse):
 class BookingListResponse(BaseModel):
     items: list[BookingResponse]
     meta: dict
+
+
+class SupplierCancellationInfo(BaseModel):
+    """Per-item cancellation result returned by an upstream supplier (LiteAPI, etc.)."""
+
+    item_id: uuid.UUID
+    supplier: str  # "liteapi" | "viator" | "duffel" | "local"
+    status: str | None = None  # CANCELLED | CANCELLED_WITH_CHARGES | …
+    refund_amount: float | None = None
+    cancellation_fee: float | None = None
+    currency: str | None = None
+
+
+class CancellationResponse(BaseModel):
+    """Body returned by DELETE /bookings/{id} — includes refund info from suppliers."""
+
+    booking_id: uuid.UUID
+    status: str
+    items: list[SupplierCancellationInfo] = []

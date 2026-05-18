@@ -23,6 +23,7 @@ function HotelResults({ city, checkIn, checkOut, guests }) {
     star_rating: null,
     min_rating: null,
     amenities: [],
+    hotel_types: [],
   })
 
   const SORT_OPTIONS = [
@@ -44,6 +45,7 @@ function HotelResults({ city, checkIn, checkOut, guests }) {
     max_price: filters.max_price || undefined,
     star_rating: filters.star_rating || undefined,
     amenities: filters.amenities?.length ? filters.amenities.join(',') : undefined,
+    hotel_types: filters.hotel_types?.length ? filters.hotel_types.join(',') : undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
     per_page: 10,

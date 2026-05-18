@@ -2,10 +2,13 @@ import { create } from 'zustand'
 
 export const useBookingStore = create((set) => ({
   selectedRoom: null,
+  selectedRoomGroup: null,
+  selectedItems: null,
   hotel: null,
   checkIn: null,
   checkOut: null,
   guests: 1,
+  rooms: 1,
   selectedTour: null,
   tourDate: null,
   selectedFlight: null,
@@ -14,10 +17,13 @@ export const useBookingStore = create((set) => ({
   clearBooking: () =>
     set({
       selectedRoom: null,
+      selectedRoomGroup: null,
+      selectedItems: null,
       hotel: null,
       checkIn: null,
       checkOut: null,
       guests: 1,
+      rooms: 1,
       selectedTour: null,
       tourDate: null,
       selectedFlight: null,

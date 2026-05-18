@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Star, ChevronDown, ChevronUp } from 'lucide-react'
 import { useFacilities } from '@/hooks/useFacilities'
-import { AMENITIES, LITEAPI_ID_TO_SLUG } from '@/utils/constants'
+import { AMENITIES, HOTEL_TYPES, LITEAPI_ID_TO_SLUG } from '@/utils/constants'
 
 export default function HotelFilters({ filters, onChange }) {
   const { t } = useTranslation('hotels')
-  const [expanded, setExpanded] = useState({ price: true, stars: true, rating: true, amenities: false })
+  const [expanded, setExpanded] = useState({ price: true, stars: true, rating: true, types: true, amenities: false })
   const { facilities, isLoading: facilitiesLoading } = useFacilities()
 
   const toggle = (key) => setExpanded((p) => ({ ...p, [key]: !p[key] }))
@@ -73,6 +73,26 @@ export default function HotelFilters({ filters, onChange }) {
               </button>
             )
           )}
+        </div>
+      </FilterSection>
+
+      {/* Property Type */}
+      <FilterSection title={t('search.propertyType', 'Property type')} expanded={expanded.types} onToggle={() => toggle('types')}>
+        <div className="space-y-2">
+          {HOTEL_TYPES.map(({ slug }) => (
+            <label key={slug} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={(filters.hotel_types || []).includes(slug)}
+                onChange={() => {
+                  const curr = filters.hotel_types || []
+                  update('hotel_types', curr.includes(slug) ? curr.filter((x) => x !== slug) : [...curr, slug])
+                }}
+                className="rounded border-gray-300"
+              />
+              <span className="text-sm">{t(`hotelTypes.${slug}`, slug.replace(/_/g, ' '))}</span>
+            </label>
+          ))}
         </div>
       </FilterSection>
 

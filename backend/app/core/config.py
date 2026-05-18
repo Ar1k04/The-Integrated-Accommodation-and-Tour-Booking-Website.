@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
+    # When True, Redis outages fail booking requests with HTTP 503 instead of
+    # silently degrading to DB-only locking. Keep False in dev/staging.
+    REDIS_LOCK_STRICT: bool = False
 
     # Auth / JWT
     SECRET_KEY: str = ""

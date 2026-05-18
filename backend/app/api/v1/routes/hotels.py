@@ -18,13 +18,14 @@ from app.models.room import Room
 from app.schemas.hotel import (
     HotelCreate,
     HotelListResponse,
-    HotelRateResponse,
     HotelResponse,
+    HotelRoomTypeResponse,
     HotelUpdate,
 )
-from app.services import liteapi_service
+from app.services import liteapi_service, lock_service
 from app.services.liteapi_service import LiteAPIError, get_min_rates_batch
-from app.services.facility_mapping import SLUG_TO_LITEAPI_ID
+from app.services.facility_mapping import HOTEL_TYPE_SLUG_TO_ID, SLUG_TO_LITEAPI_ID
+from app.services.lock_service import RedisUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ async def list_hotels(
     star_rating: int | None = None,
     amenities: str | None = Query(None, description="Comma-separated amenity list"),
     property_type: str | None = None,
+    hotel_types: str | None = Query(None, description="Comma-separated hotel-type slugs (apartments,hotels,resorts,...)"),
     search: str | None = Query(None, description="Text search on name/description"),
     owner_id: uuid.UUID | None = Query(None, description="Filter by owner admin"),
     sort_by: str = Query("created_at", regex="^(created_at|base_price|avg_rating|star_rating|name)$"),
@@ -156,6 +158,16 @@ async def list_hotels(
         query = query.where(room_price_subq.c.min_room_price <= max_price)
     if property_type:
         query = query.where(Hotel.property_type == property_type)
+
+    # Hotel-type filter: a comma-separated slug list shared by frontend + LiteAPI.
+    # Local rows match on Hotel.property_type slug; LiteAPI translates slugs to
+    # supplier IDs further down (see `hotel_type_ids` below).
+    selected_type_slugs = [
+        s.strip() for s in (hotel_types or "").split(",") if s.strip()
+    ]
+    if selected_type_slugs:
+        query = query.where(Hotel.property_type.in_(selected_type_slugs))
+
     if search:
         pattern = f"%{search}%"
         query = query.where(or_(Hotel.name.ilike(pattern), Hotel.description.ilike(pattern)))
@@ -197,8 +209,13 @@ async def list_hotels(
         selected_slugs = [s.strip() for s in (amenities or "").split(",") if s.strip()]
         facility_ids = [SLUG_TO_LITEAPI_ID[s] for s in selected_slugs if s in SLUG_TO_LITEAPI_ID]
         strict = len(facility_ids) >= 2
+        # Translate hotel-type slugs → LiteAPI hotel-type IDs
+        hotel_type_ids = [
+            HOTEL_TYPE_SLUG_TO_ID[s] for s in selected_type_slugs if s in HOTEL_TYPE_SLUG_TO_ID
+        ]
         slugs_key = ",".join(sorted(selected_slugs)) if selected_slugs else ""
-        cache_key = f"liteapi:hotels:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}"
+        types_key = ",".join(sorted(selected_type_slugs)) if selected_type_slugs else ""
+        cache_key = f"liteapi:hotels:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}"
         cached = await _get_cached_liteapi_hotels(redis, cache_key)
 
         if cached is not None:
@@ -214,6 +231,7 @@ async def list_hotels(
                     limit=20,
                     facility_ids=facility_ids or None,
                     strict_facilities_filtering=strict,
+                    hotel_type_ids=hotel_type_ids or None,
                 )
                 await _set_cached_liteapi_hotels(redis, cache_key, raw_hotels)
             except LiteAPIError as exc:
@@ -324,27 +342,104 @@ async def get_liteapi_hotel(
     return _liteapi_hotel_to_response(raw)
 
 
-@router.get("/liteapi/{liteapi_hotel_id}/rates", response_model=list[HotelRateResponse])
+@router.get("/liteapi/{liteapi_hotel_id}/rates", response_model=list[HotelRoomTypeResponse])
 async def get_liteapi_rates(
     liteapi_hotel_id: str,
     check_in: date = Query(...),
     check_out: date = Query(...),
     guests: int = Query(default=1, ge=1),
+    rooms: int = Query(default=1, ge=1, le=20),
 ):
-    """Fetch live room rates for a LiteAPI hotel."""
+    """Fetch live room-type groups (each with multiple rate plans) for a LiteAPI hotel.
+
+    ``rooms`` is forwarded to LiteAPI as the number of occupancy slots so the search
+    natively supports multi-room queries used by the recommendation widget.
+    """
     try:
-        rates = await liteapi_service.get_rates(
+        room_types = await liteapi_service.get_rates(
             liteapi_hotel_id=liteapi_hotel_id,
             check_in=check_in,
             check_out=check_out,
             guests=guests,
+            rooms=rooms,
         )
     except LiteAPIError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,
             detail=exc.message,
         )
-    return [HotelRateResponse(**r) for r in rates]
+    return [HotelRoomTypeResponse(**rt) for rt in room_types]
+
+
+@router.get("/liteapi/{liteapi_hotel_id}/reviews")
+async def get_liteapi_hotel_reviews(
+    liteapi_hotel_id: str,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    """Return normalized guest reviews for a LiteAPI hotel.
+
+    Cached in Redis for 1 h per hotel — review feeds change slowly.
+    The shape matches the local ReviewCard component (id, user.full_name,
+    rating on a 0–5 scale, comment, created_at) so the same UI can render both.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    cache_key = f"liteapi:reviews:{liteapi_hotel_id}:{limit}"
+
+    if redis:
+        try:
+            cached = await redis.get(cache_key)
+            if cached:
+                return {"items": json.loads(cached)}
+        except Exception:
+            pass
+
+    try:
+        reviews = await liteapi_service.get_hotel_reviews(liteapi_hotel_id, limit=limit)
+    except LiteAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,
+            detail=exc.message,
+        )
+
+    if reviews and redis:
+        try:
+            await redis.set(cache_key, json.dumps(reviews), ex=3600)
+        except Exception:
+            pass
+
+    return {"items": reviews}
+
+
+@router.get("/liteapi/{liteapi_hotel_id}/room-types", response_model=list[HotelRoomTypeResponse])
+async def get_liteapi_room_types(
+    liteapi_hotel_id: str,
+    request: Request,
+):
+    """Return the room-type catalog (no prices) for the no-dates state.
+
+    Cached in Redis for 1 h per hotel — the catalog rarely changes day-to-day.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    cache_key = f"liteapi:roomtypes:{liteapi_hotel_id}"
+
+    if redis:
+        try:
+            cached = await redis.get(cache_key)
+            if cached:
+                return [HotelRoomTypeResponse(**rt) for rt in json.loads(cached)]
+        except Exception:
+            pass
+
+    room_types = await liteapi_service.get_room_types_catalog(liteapi_hotel_id)
+
+    if room_types and redis:
+        try:
+            await redis.set(cache_key, json.dumps(room_types), ex=3600)
+        except Exception:
+            pass
+
+    return [HotelRoomTypeResponse(**rt) for rt in room_types]
 
 
 # ── Facilities proxy ─────────────────────────────────────────────────────────
@@ -472,6 +567,7 @@ async def update_hotel(
 @router.delete("/{hotel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_hotel(
     hotel_id: uuid.UUID,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
@@ -480,6 +576,25 @@ async def delete_hotel(
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
     _assert_owner_or_admin(hotel, current_user)
+
+    # Cascade DELETE would drop every Room (and its RoomAvailability) under this
+    # hotel — refuse if any of those rooms has an active checkout.
+    room_ids = (
+        await db.execute(select(Room.id).where(Room.hotel_id == hotel_id))
+    ).scalars().all()
+    redis = getattr(request.app.state, "redis", None)
+    try:
+        for rid in room_ids:
+            if await lock_service.has_active_room_lock(redis, rid):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Hotel has rooms with active checkouts; please retry in a few minutes.",
+                )
+    except RedisUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
     await db.delete(hotel)
     await db.flush()
 

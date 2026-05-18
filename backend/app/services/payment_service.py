@@ -83,7 +83,12 @@ async def handle_webhook_event(db: AsyncSession, event: dict, redis=None) -> Non
                 fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
                 ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
                 email = user.email if user else "guest@example.com"
-                await confirm_booking(db, booking, guest_first_name=fn, guest_last_name=ln, guest_email=email, redis=redis)
+                phone = user.phone if user and user.phone else None
+                await confirm_booking(
+                    db, booking,
+                    guest_first_name=fn, guest_last_name=ln,
+                    guest_email=email, guest_phone=phone, redis=redis,
+                )
 
     elif event_type == "payment_intent.payment_failed":
         payment.status = PaymentStatus.failed.value

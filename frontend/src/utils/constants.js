@@ -27,6 +27,26 @@ export const LITEAPI_ID_TO_SLUG = {
   20:  'business_center',
 }
 
+// LiteAPI hotel-type catalogue (GET /data/hotelTypes).
+// Trimmed to the most universally-recognised property categories — the niche
+// types (IDs 209–277: ryokan, riad, capsule, treehouse, etc.) are excluded so
+// the filter stays usable. Slugs are sent to the backend; LiteAPI IDs are
+// forwarded as `hotelTypeIds` for the supplier search.
+export const HOTEL_TYPES = [
+  { id: 201, slug: 'apartments' },
+  { id: 203, slug: 'hostels' },
+  { id: 204, slug: 'hotels' },
+  { id: 205, slug: 'motels' },
+  { id: 206, slug: 'resorts' },
+  { id: 207, slug: 'residences' },
+  { id: 208, slug: 'bed_and_breakfasts' },
+  { id: 278, slug: 'palace' },
+]
+
+export const HOTEL_TYPE_SLUG_TO_ID = Object.fromEntries(
+  HOTEL_TYPES.map((t) => [t.slug, t.id]),
+)
+
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled', 'completed']
 
 export const CURRENCIES = [

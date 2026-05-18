@@ -20,7 +20,15 @@
     },
     "cancel": "Hủy",
     "cancelled": "Đã hủy đặt phòng",
-    "failedCancel": "Hủy không thành công"
+    "failedCancel": "Hủy không thành công",
+    "cancelConfirmTitle": "Hủy đặt phòng này?",
+    "cancelConfirmDesc": "Hành động này không thể hoàn tác. Khả năng hoàn tiền phụ thuộc vào chính sách hủy của giá đã chọn.",
+    "cancelLiteapiWarning": "Đặt phòng này đã được xác nhận với khách sạn. Chúng tôi sẽ hủy qua LiteAPI — khoản hoàn tiền (nếu có) phụ thuộc vào chính sách giá: giá có thể hoàn tiền trong thời hạn sẽ được hoàn đầy đủ; giá không hoàn tiền có thể không được hoàn lại.",
+    "keepBooking": "Giữ đặt phòng",
+    "confirmCancel": "Có, hủy",
+    "cancelling": "Đang hủy…",
+    "cancelledWithRefund": "Đã hủy đặt phòng — sẽ hoàn {{amount}}",
+    "cancelledWithCharges": "Đã hủy đặt phòng — phí hủy {{fee}} được áp dụng"
   },
   "loyalty": {
     "title": "Điểm thưởng",

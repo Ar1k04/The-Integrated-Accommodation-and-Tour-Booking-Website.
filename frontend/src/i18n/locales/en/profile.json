@@ -20,7 +20,15 @@
     },
     "cancel": "Cancel",
     "cancelled": "Booking cancelled",
-    "failedCancel": "Failed to cancel"
+    "failedCancel": "Failed to cancel",
+    "cancelConfirmTitle": "Cancel this booking?",
+    "cancelConfirmDesc": "This action cannot be undone. Refundability depends on the rate's cancellation policy.",
+    "cancelLiteapiWarning": "This booking is already confirmed with the hotel. We'll cancel it via LiteAPI — any refund follows the rate plan's policy (refundable rates within the deadline get a full refund; non-refundable rates may not be refunded).",
+    "keepBooking": "Keep booking",
+    "confirmCancel": "Yes, cancel",
+    "cancelling": "Cancelling…",
+    "cancelledWithRefund": "Booking cancelled — refund of {{amount}} on its way",
+    "cancelledWithCharges": "Booking cancelled with charges — cancellation fee {{fee}} applied"
   },
   "loyalty": {
     "title": "Loyalty Points",

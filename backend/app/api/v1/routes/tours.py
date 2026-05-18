@@ -19,7 +19,8 @@ from app.schemas.tour import (
     TourResponse,
     TourUpdate,
 )
-from app.services import viator_service
+from app.services import lock_service, viator_service
+from app.services.lock_service import RedisUnavailableError
 from app.services.viator_service import ViatorError
 
 logger = logging.getLogger(__name__)
@@ -297,6 +298,7 @@ async def update_tour(
 @router.delete("/{tour_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tour(
     tour_id: uuid.UUID,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
@@ -305,6 +307,19 @@ async def delete_tour(
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
     _assert_tour_owner_or_admin(tour, current_user)
+
+    redis = getattr(request.app.state, "redis", None)
+    try:
+        if await lock_service.has_active_tour_lock(redis, tour_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Tour has an active checkout; please retry in a few minutes.",
+            )
+    except RedisUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
     await db.delete(tour)
     await db.flush()
 

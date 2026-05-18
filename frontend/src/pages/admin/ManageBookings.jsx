@@ -10,7 +10,7 @@ import BookingStatusBadge from '@/components/common/BookingStatusBadge'
 import { formatCurrency, formatDate } from '@/utils/formatters'
 import { Link } from 'react-router-dom'
 import { BOOKING_STATUSES } from '@/utils/constants'
-import { Search, ChevronLeft, ChevronRight, Info } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react'
 
 export default function ManageBookings() {
   const qc = useQueryClient()
@@ -28,7 +28,13 @@ export default function ManageBookings() {
   const updateMut = useMutation({
     mutationFn: ({ id, status }) => adminApi.updateBooking(id, status),
     onSuccess: () => { toast.success('Status updated'); qc.invalidateQueries({ queryKey: ['admin-bookings'] }) },
-    onError: () => toast.error('Failed to update'),
+    onError: (err) => toast.error(err?.response?.data?.detail || 'Failed to update'),
+  })
+
+  const syncMut = useMutation({
+    mutationFn: (id) => adminApi.syncLiteapiBooking(id),
+    onSuccess: () => { toast.success(t('booking.syncSuccess')); qc.invalidateQueries({ queryKey: ['admin-bookings'] }) },
+    onError: () => toast.error(t('booking.syncFailed')),
   })
 
   const bookings = data?.items || []
@@ -91,7 +97,10 @@ export default function ManageBookings() {
                     </tr>
                   </thead>
                   <tbody>
-                    {bookings.map((b) => (
+                    {bookings.map((b) => {
+                      const liteapiItem = b.items?.find(i => i.liteapi_booking_id || i.liteapi_prebook_id)
+                      const isLiteapi = !!liteapiItem
+                      return (
                       <tr key={b.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 font-mono text-xs">{b.id?.slice(0, 8)}</td>
                         <td className="py-3">
@@ -147,19 +156,45 @@ export default function ManageBookings() {
                             return formatDate(firstItem.check_in)
                           })()}
                         </td>
-                        <td className="py-3"><BookingStatusBadge status={b.status} /></td>
+                        <td className="py-3">
+                          {isLiteapi ? (
+                            <div className="flex flex-col gap-1">
+                              <BookingStatusBadge status={liteapiItem.supplier_status || b.status} />
+                              <span className="text-[10px] text-gray-400" title={t('booking.liteapiManaged')}>
+                                {liteapiItem.supplier_status_synced_at
+                                  ? t('booking.syncedAt', { when: formatDate(liteapiItem.supplier_status_synced_at, 'MMM dd, HH:mm') })
+                                  : t('booking.liteapiManaged')}
+                              </span>
+                            </div>
+                          ) : (
+                            <BookingStatusBadge status={b.status} />
+                          )}
+                        </td>
                         <td className="py-3 font-semibold">{formatCurrency(b.total_price)}</td>
                         <td className="py-3 text-right">
-                          <select
-                            value={b.status}
-                            onChange={(e) => updateMut.mutate({ id: b.id, status: e.target.value })}
-                            className="border rounded-lg px-2 py-1 text-xs"
-                          >
-                            {BOOKING_STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s}</option>)}
-                          </select>
+                          {isLiteapi ? (
+                            <button
+                              onClick={() => syncMut.mutate(b.id)}
+                              disabled={syncMut.isPending}
+                              className="inline-flex items-center gap-1 border rounded-lg px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+                              title={t('booking.liteapiManaged')}
+                            >
+                              <RefreshCw className={`w-3 h-3 ${syncMut.isPending ? 'animate-spin' : ''}`} aria-hidden="true" />
+                              {t('booking.syncLiteapi')}
+                            </button>
+                          ) : (
+                            <select
+                              value={b.status}
+                              onChange={(e) => updateMut.mutate({ id: b.id, status: e.target.value })}
+                              className="border rounded-lg px-2 py-1 text-xs"
+                            >
+                              {BOOKING_STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s}</option>)}
+                            </select>
+                          )}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                     {bookings.length === 0 && (
                       <tr><td colSpan={7} className="py-12 text-center text-gray-400">{t('empty.noBookings')}</td></tr>
                     )}

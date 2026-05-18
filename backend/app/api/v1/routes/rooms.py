@@ -3,7 +3,7 @@ import uuid
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,23 @@ from app.models.booking_item import BookingItem
 from app.models.hotel import Hotel
 from app.models.room import Room
 from app.schemas.room import RoomAvailabilityResponse, RoomCreate, RoomListResponse, RoomResponse, RoomUpdate
+from app.services import lock_service
+from app.services.lock_service import RedisUnavailableError
+
+
+_ROOM_LOCKED = "Room has an active checkout; please retry in a few minutes."
+
+
+async def _guard_room_active_lock(request: Request, room_id) -> None:
+    """409 if any checkout currently holds a lock on this room; 503 in strict mode if Redis is down."""
+    redis = getattr(request.app.state, "redis", None)
+    try:
+        if await lock_service.has_active_room_lock(redis, room_id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ROOM_LOCKED)
+    except RedisUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
 router = APIRouter(tags=["Rooms"])
 
@@ -126,10 +143,13 @@ async def get_room(room_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
 async def replace_room(
     room_id: uuid.UUID,
     data: RoomCreate,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
     room = await _load_room_and_check(db, room_id, current_user)
+    if data.total_quantity < room.total_quantity:
+        await _guard_room_active_lock(request, room_id)
     for field, value in data.model_dump().items():
         setattr(room, field, value)
     await db.flush()
@@ -141,11 +161,16 @@ async def replace_room(
 async def update_room(
     room_id: uuid.UUID,
     data: RoomUpdate,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
     room = await _load_room_and_check(db, room_id, current_user)
-    for field, value in data.model_dump(exclude_unset=True).items():
+    patch = data.model_dump(exclude_unset=True)
+    if "total_quantity" in patch and patch["total_quantity"] is not None \
+            and patch["total_quantity"] < room.total_quantity:
+        await _guard_room_active_lock(request, room_id)
+    for field, value in patch.items():
         setattr(room, field, value)
     await db.flush()
     await db.refresh(room)
@@ -155,10 +180,12 @@ async def update_room(
 @router.delete("/rooms/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_room(
     room_id: uuid.UUID,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
     room = await _load_room_and_check(db, room_id, current_user)
+    await _guard_room_active_lock(request, room_id)
     await db.delete(room)
     await db.flush()
 

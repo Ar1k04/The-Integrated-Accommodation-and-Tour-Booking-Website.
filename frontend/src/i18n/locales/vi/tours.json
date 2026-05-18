@@ -26,7 +26,7 @@
     "maxParticipants": "Tối đa {{count}} người",
     "duration": "{{days}} ngày",
     "notFound": "Không tìm thấy tour",
-    "about": "Giới thiệu về tour",
+    "about": "Mô tả",
     "highlights": "Điểm nổi bật",
     "freeCancellation48h": "Hủy miễn phí trước 48 giờ",
     "instantConfirmation": "Xác nhận ngay lập tức",
@@ -41,7 +41,10 @@
     "totalFor": "Tổng: {{price}} cho {{count}} người",
     "poweredByViator": "Được cung cấp bởi Viator",
     "tourDateLabel": "Ngày tour",
-    "participantsLabel": "Số người tham gia"
+    "participantsLabel": "Số người tham gia",
+    "viatorReviewsLabel": "đánh giá",
+    "viatorRatingNote": "Được đánh giá {{rating}}/5 dựa trên {{count}} đánh giá từ khách Viator",
+    "viatorReviewsSource": "Đánh giá được lấy từ Viator"
   },
   "errors": {
     "selectDate": "Vui lòng chọn ngày tour"

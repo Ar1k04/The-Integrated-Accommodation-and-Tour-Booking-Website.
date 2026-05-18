@@ -43,14 +43,25 @@ const CARD_ELEMENT_OPTIONS = {
 export default function BookingPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { selectedRoom, hotel, checkIn, checkOut, guests, selectedTour, tourDate, selectedFlight, clearBooking } =
-    useBookingStore()
+  const {
+    selectedRoom, hotel, checkIn, checkOut, guests,
+    selectedTour, tourDate, selectedFlight, clearBooking,
+    selectedItems,
+  } = useBookingStore()
 
   const { t } = useTranslation('booking')
+  const { t: tHotel } = useTranslation('hotels')
   const fmt = useFormatCurrency()
   const isViatorTour = Boolean(selectedTour?.viator_product_code)
   const isRegularTour = Boolean(selectedTour && !selectedTour.viator_product_code)
   const isFlightBooking = Boolean(selectedFlight?.duffel_offer_id)
+  const isMultiRoom = Array.isArray(selectedItems) && selectedItems.length > 1
+
+  // Multi-room reservations from the recommendation widget aren't supported yet.
+  // Show a placeholder + toast so the user can navigate back without a broken flow.
+  useEffect(() => {
+    if (isMultiRoom) toast.info(tHotel('detail.multiRoomCheckoutComingSoon'))
+  }, [isMultiRoom, tHotel])
 
   const [step, setStep] = useState('details') // 'details' | 'payment'
   const [bookingId, setBookingId] = useState(null)
@@ -98,11 +109,18 @@ export default function BookingPage() {
   const effectiveCheckOut =
     dateRange.checkOut || (checkOut ? format(new Date(checkOut), 'yyyy-MM-dd') : '')
   const nights = nightsBetween(effectiveCheckIn, effectiveCheckOut) || 1
+
+  // Sum price × quantity across all selected items (handles multi-room recommendations).
+  // Falls back to selectedRoom.price_per_night for legacy single-room bookings.
+  const roomRateTotal = selectedItems?.length > 0
+    ? selectedItems.reduce((sum, it) => sum + (it.price || 0) * (it.quantity || 1), 0)
+    : (selectedRoom?.price_per_night || 0)
+
   const subtotal = isFlightBooking
     ? (selectedFlight?.total_amount || 0)
     : (isViatorTour || isRegularTour)
     ? (selectedTour?.price_per_person || 0) * (guests || 1)
-    : (selectedRoom?.price_per_night || 0) * nights
+    : roomRateTotal * nights
   const taxes = Math.round(subtotal * 0.1 * 100) / 100
   const tierDiscountPct = loyaltyTier?.discount_percent || 0
   const tierDiscount = tierDiscountPct > 0 ? Math.round(subtotal * tierDiscountPct / 100 * 100) / 100 : 0
@@ -119,6 +137,31 @@ export default function BookingPage() {
           className="bg-primary text-white px-6 py-2 rounded-lg"
         >
           Browse Hotels
+        </button>
+      </div>
+    )
+  }
+
+  if (isMultiRoom) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-20 text-center">
+        <h2 className="text-xl font-bold text-gray-900 mb-3">{hotel?.name}</h2>
+        <p className="text-gray-600 mb-6">{tHotel('detail.multiRoomCheckoutComingSoon')}</p>
+        <ul className="text-left max-w-md mx-auto bg-gray-50 rounded-lg p-4 mb-6 text-sm">
+          {selectedItems.map((it, i) => (
+            <li key={i} className="flex justify-between border-b last:border-b-0 border-gray-200 py-1.5">
+              <span>
+                {it.quantity} × {it.room_name}
+              </span>
+              <span className="font-semibold">{fmt((it.price || 0) * it.quantity * nights)}</span>
+            </li>
+          ))}
+        </ul>
+        <button
+          onClick={() => navigate(-1)}
+          className="bg-primary text-white px-6 py-2 rounded-lg"
+        >
+          <ArrowLeft className="inline w-4 h-4 mr-1" /> Back
         </button>
       </div>
     )
@@ -427,7 +470,7 @@ export default function BookingPage() {
                   <hr />
 
                   <PriceBreakdown
-                    pricePerNight={(isViatorTour || isRegularTour) ? (selectedTour?.price_per_person || 0) : (selectedRoom?.price_per_night || 0)}
+                    pricePerNight={(isViatorTour || isRegularTour) ? (selectedTour?.price_per_person || 0) : roomRateTotal}
                     nights={(isViatorTour || isRegularTour) ? (guests || 1) : nights}
                     discount={totalDiscount}
                     tierDiscount={tierDiscount}

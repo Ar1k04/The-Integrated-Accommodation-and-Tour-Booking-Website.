@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,7 +11,9 @@ class Review(Base):
     __tablename__ = "reviews"
     __table_args__ = (
         CheckConstraint(
-            "(hotel_id IS NOT NULL AND tour_id IS NULL) OR (hotel_id IS NULL AND tour_id IS NOT NULL)",
+            "(hotel_id IS NOT NULL AND tour_id IS NULL AND viator_product_code IS NULL) "
+            "OR (hotel_id IS NULL AND tour_id IS NOT NULL AND viator_product_code IS NULL) "
+            "OR (hotel_id IS NULL AND tour_id IS NULL AND viator_product_code IS NOT NULL)",
             name="review_single_target",
         ),
     )
@@ -28,6 +30,7 @@ class Review(Base):
     booking_item_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("booking_item.id", ondelete="SET NULL"), index=True
     )
+    viator_product_code: Mapped[str | None] = mapped_column(String(100), index=True)
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text)
 

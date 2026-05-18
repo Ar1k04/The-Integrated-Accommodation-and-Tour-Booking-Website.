@@ -92,6 +92,8 @@ class BookingItemResponse(BaseModel):
     liteapi_booking_id: str | None = None
     viator_product_code: str | None = None
     viator_booking_ref: str | None = None
+    supplier_status: str | None = None
+    supplier_status_synced_at: datetime | None = None
     unit_price: float
     subtotal: float
     quantity: int

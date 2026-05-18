@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-export default function ReviewForm({ hotelId, tourId, onDone }) {
+export default function ReviewForm({ hotelId, tourId, viatorProductCode, onDone }) {
   const { t } = useTranslation('hotels')
   const [rating, setRating] = useState(0)
   const [hoverRating, setHoverRating] = useState(0)
@@ -27,7 +27,13 @@ export default function ReviewForm({ hotelId, tourId, onDone }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (rating === 0) { toast.error(t('detail.selectRating')); return }
-    mutation.mutate({ hotel_id: hotelId || undefined, tour_id: tourId || undefined, rating, comment })
+    mutation.mutate({
+      hotel_id: hotelId || undefined,
+      tour_id: tourId || undefined,
+      viator_product_code: viatorProductCode || undefined,
+      rating,
+      comment,
+    })
   }
 
   return (

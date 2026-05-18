@@ -24,19 +24,35 @@ def _client() -> httpx.AsyncClient:
 
 
 class LiteAPIError(Exception):
-    def __init__(self, status_code: int, message: str):
+    def __init__(self, status_code: int, message: str, code: int | None = None):
         self.status_code = status_code
         self.message = message
+        self.code = code  # LiteAPI's domain error code (e.g. 2001), distinct from HTTP status
         super().__init__(message)
+
+
+def _extract_error(resp: httpx.Response) -> tuple[int | None, str]:
+    """Pull (liteapi_code, message) out of a LiteAPI 4xx response.
+
+    LiteAPI nests its domain error inside `{"error": {"code", "description", "message"}}`.
+    Falls back to raw text when the response isn't JSON.
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        return None, resp.text
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        return err.get("code"), err.get("description") or err.get("message") or resp.text
+    if isinstance(body, dict):
+        return None, body.get("message") or resp.text
+    return None, resp.text
 
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if resp.status_code >= 400:
-        try:
-            detail = resp.json().get("message") or resp.text
-        except Exception:
-            detail = resp.text
-        raise LiteAPIError(resp.status_code, detail)
+        code, detail = _extract_error(resp)
+        raise LiteAPIError(resp.status_code, detail, code=code)
 
 
 # Keyword → ISO-3166-1 alpha-2 mapping for common travel destinations
@@ -180,44 +196,136 @@ def _normalize_hotel(raw: dict) -> dict:
     }
 
 
-def _normalize_rate(room_type: dict) -> dict:
+def _normalize_rate_plan(rate: dict, fallback_currency: str = "USD") -> dict:
+    """Normalize a single rate plan inside a LiteAPI roomType.rates[]."""
+    retail = rate.get("retailRate") or {}
+    total_arr = retail.get("total") or []
+    suggested_arr = retail.get("suggestedSellingPrice") or []
+    taxes_arr = retail.get("taxesAndFees") or []
+
+    price_raw = total_arr[0]["amount"] if total_arr else 0
+    currency = total_arr[0]["currency"] if total_arr else fallback_currency
+    original_price = suggested_arr[0]["amount"] if suggested_arr else None
+    taxes_raw = taxes_arr[0]["amount"] if taxes_arr else None
+
+    discount_percent = None
+    if original_price and price_raw and original_price > price_raw:
+        discount_percent = round((1 - price_raw / original_price) * 100)
+
+    cancel = rate.get("cancellationPolicies") or {}
+    refundable = cancel.get("refundableTag", "") != "NRFN"
+    deadline = None
+    policies = cancel.get("cancelPolicyInfos") or []
+    if policies and isinstance(policies, list):
+        deadline = policies[0].get("cancelTime") or policies[0].get("from")
+
+    board = rate.get("boardName") or rate.get("boardType") or ""
+
+    price = float(price_raw) if price_raw else 0.0
+    taxes = float(taxes_raw) if taxes_raw is not None else None
+    price_excl = (price - taxes) if (taxes is not None and price >= taxes) else None
+
+    # LiteAPI's /hotels/prebook expects offerId, so prefer it over rateId
+    # when the rate plan exposes both (newer v3.0 responses do).
+    return {
+        "rate_id": rate.get("offerId") or rate.get("rateId") or "",
+        "board_name": board,
+        "refundable": refundable,
+        "cancellation_policy": board,
+        "cancellation_deadline": deadline,
+        "price": price,
+        "price_excl_taxes": price_excl,
+        "taxes": taxes,
+        "original_price": float(original_price) if original_price else None,
+        "discount_percent": discount_percent,
+        "currency": currency or fallback_currency,
+        "max_occupancy": int(rate.get("maxOccupancy") or 2),
+    }
+
+
+def _normalize_room_type(room_type: dict) -> dict:
     """Normalize a LiteAPI roomType object from POST /hotels/rates response.
 
-    Structure: roomType = { offerId, rates: [{name, maxOccupancy, boardName, retailRate, cancellationPolicies}], offerRetailRate }
+    Structure: roomType = {
+        offerId, roomTypeId, rates: [...], offerRetailRate, roomImages, amenities
+    }
+    Returns a room-type group with a `rates[]` array preserving every rate plan
+    so the UI can render Booking.com-style multi-rate rows under one room.
     """
-    # offerId is used for prebook
-    offer_id = room_type.get("offerId") or room_type.get("rateId") or ""
-
-    # First rate contains room name, board, occupancy, and cancellation policy
     rates = room_type.get("rates") or []
     first_rate = rates[0] if rates else {}
 
-    room_name = first_rate.get("name") or room_type.get("roomName") or "Standard Room"
+    room_type_id = (
+        room_type.get("roomTypeId")
+        or room_type.get("offerId")
+        or first_rate.get("rateId")
+        or ""
+    )
+    room_name = (
+        first_rate.get("name")
+        or room_type.get("roomName")
+        or room_type.get("name")
+        or "Standard Room"
+    )
 
-    # Price from offerRetailRate (top-level) or retailRate.total in first_rate
-    offer_price = room_type.get("offerRetailRate", {})
-    retail_rate = first_rate.get("retailRate", {})
-    total_arr = retail_rate.get("total") or []
-    price_raw = offer_price.get("amount") or (total_arr[0]["amount"] if total_arr else 0)
-    currency_raw = offer_price.get("currency") or (total_arr[0]["currency"] if total_arr else "USD")
+    offer_price = room_type.get("offerRetailRate") or {}
+    fallback_currency = offer_price.get("currency") or "USD"
 
-    max_guests = int(first_rate.get("maxOccupancy") or 2)
-    board_name = first_rate.get("boardName") or first_rate.get("boardType") or ""
+    max_guests = int(
+        first_rate.get("maxOccupancy")
+        or room_type.get("maxOccupancy")
+        or 2
+    )
 
-    cancel_policies = first_rate.get("cancellationPolicies") or {}
-    refundable_tag = cancel_policies.get("refundableTag") or ""
-    refundable = refundable_tag != "NRFN"
+    images: list[str] = []
+    raw_images = room_type.get("roomImages") or first_rate.get("roomImages") or []
+    for img in raw_images:
+        if isinstance(img, dict):
+            url = img.get("url") or img.get("imageUrl")
+            if url:
+                images.append(url)
+        elif isinstance(img, str):
+            images.append(img)
+
+    raw_amenities = room_type.get("amenities") or first_rate.get("amenities") or []
+    amenities: list[str] = []
+    for a in raw_amenities:
+        if isinstance(a, dict):
+            name = a.get("name") or a.get("description")
+            if name:
+                amenities.append(name)
+        elif isinstance(a, str):
+            amenities.append(a)
+
+    # LiteAPI v3.0 exposes `offerId` only at the roomType level — the rate plan
+    # itself has only an internal `rateId`. /rates/prebook requires the parent
+    # offerId, so propagate it down to each rate plan so the frontend stores
+    # the right identifier for the booking flow.
+    parent_offer_id = room_type.get("offerId") or ""
+    rate_plans = [_normalize_rate_plan(r, fallback_currency) for r in rates]
+    if parent_offer_id:
+        for plan in rate_plans:
+            plan["rate_id"] = parent_offer_id
 
     return {
-        "rate_id": offer_id,
+        "room_type_id": room_type_id,
         "room_name": room_name,
-        "price": float(price_raw) if price_raw else 0.0,
-        "currency": currency_raw or "USD",
-        "cancellation_policy": board_name,
         "max_guests": max_guests,
-        "images": [],
-        "meal_type": board_name,
-        "refundable": refundable,
+        "images": images,
+        "amenities": amenities,
+        "rates": rate_plans,
+    }
+
+
+def _strip_room_type_prices(rt: dict) -> dict:
+    """Return a room-type group with prices/policies stripped — for the no-dates catalog."""
+    return {
+        "room_type_id": rt.get("room_type_id") or "",
+        "room_name": rt.get("room_name") or "",
+        "max_guests": rt.get("max_guests") or 2,
+        "images": rt.get("images") or [],
+        "amenities": rt.get("amenities") or [],
+        "rates": [],
     }
 
 
@@ -261,6 +369,7 @@ async def search_hotels(
     limit: int = 20,
     facility_ids: list[int] | None = None,
     strict_facilities_filtering: bool = False,
+    hotel_type_ids: list[int] | None = None,
 ) -> list[dict]:
     """Search hotels via LiteAPI /data/hotels. Returns normalized hotel dicts.
 
@@ -279,6 +388,8 @@ async def search_hotels(
         # LiteAPI expects a comma-separated string, e.g. "107,301"
         params["facilityIds"] = ",".join(str(fid) for fid in facility_ids)
         params["strictFacilitiesFiltering"] = strict_facilities_filtering
+    if hotel_type_ids:
+        params["hotelTypeIds"] = ",".join(str(tid) for tid in hotel_type_ids)
 
     try:
         resp = await _client().get("/data/hotels", params=params)
@@ -311,6 +422,72 @@ async def get_hotel(liteapi_hotel_id: str) -> dict:
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
 
 
+def _normalize_review(raw: dict) -> dict:
+    """Normalize a LiteAPI guest review to the same shape ReviewCard expects.
+
+    LiteAPI returns ratings on a 0–10 scale; the UI displays 0–5 stars,
+    so we halve the score and round to one decimal. Pros/cons are folded
+    into a single comment block alongside the headline.
+    """
+    name = raw.get("name") or raw.get("author") or "Guest"
+    country = raw.get("country") or ""
+    full_name = f"{name} ({country})" if country else name
+
+    raw_score = raw.get("averageScore") or raw.get("rating") or 0
+    try:
+        score10 = float(raw_score)
+    except (TypeError, ValueError):
+        score10 = 0.0
+    rating = round(score10 / 2, 1) if score10 > 5 else round(score10, 1)
+
+    headline = (raw.get("headline") or "").strip()
+    pros = (raw.get("pros") or "").strip()
+    cons = (raw.get("cons") or "").strip()
+    parts: list[str] = []
+    if headline:
+        parts.append(headline)
+    if pros:
+        parts.append(f"+ {pros}")
+    if cons:
+        parts.append(f"- {cons}")
+    comment = "\n\n".join(parts) if parts else None
+
+    review_id = raw.get("id") or raw.get("reviewId") or f"liteapi-{name}-{raw.get('date', '')}"
+
+    return {
+        "id": str(review_id),
+        "user": {"full_name": full_name},
+        "rating": rating,
+        "comment": comment,
+        "created_at": raw.get("date") or raw.get("createdAt"),
+    }
+
+
+async def get_hotel_reviews(liteapi_hotel_id: str, limit: int = 50) -> list[dict]:
+    """Fetch guest reviews for a LiteAPI hotel via GET /data/reviews.
+
+    Returns reviews normalized to the shape the ReviewCard component expects.
+    Quietly returns [] if LiteAPI has no reviews for the hotel.
+    """
+    try:
+        resp = await _client().get(
+            "/data/reviews",
+            params={"hotelId": liteapi_hotel_id, "limit": limit, "timeout": 5},
+        )
+        _raise_for_status(resp)
+        data = resp.json()
+        raw = data.get("data") if isinstance(data, dict) else data
+        reviews = raw if isinstance(raw, list) else []
+        return [_normalize_review(r) for r in reviews]
+    except LiteAPIError as exc:
+        if exc.status_code == 404:
+            return []
+        raise
+    except Exception as exc:
+        logger.warning("LiteAPI get_hotel_reviews failed: %s", exc)
+        return []
+
+
 async def get_min_rates_batch(
     hotel_ids: list[str],
     check_in: date,
@@ -340,11 +517,12 @@ async def get_min_rates_batch(
         for hotel_entry in hotels_data:
             hid = hotel_entry.get("hotelId") or hotel_entry.get("id") or ""
             room_types = hotel_entry.get("roomTypes") or hotel_entry.get("rooms") or []
-            prices = []
+            prices: list[float] = []
             for rt in room_types:
-                normalized = _normalize_rate(rt)
-                if normalized["price"] > 0:
-                    prices.append(normalized["price"])
+                normalized = _normalize_room_type(rt)
+                for plan in normalized["rates"]:
+                    if plan["price"] > 0:
+                        prices.append(plan["price"])
             if prices:
                 result[hid] = min(prices)
         return result
@@ -358,13 +536,26 @@ async def get_rates(
     check_in: date,
     check_out: date,
     guests: int = 1,
+    rooms: int = 1,
 ) -> list[dict]:
-    """Fetch live room rates for a hotel via POST /hotels/rates."""
+    """Fetch live room rates for a hotel via POST /hotels/rates.
+
+    Returns a list of room-type groups, each with a `rates[]` array of rate plans.
+    When ``rooms > 1``, the request is split into multiple occupancies of
+    roughly equal size so LiteAPI knows the search is for a multi-room booking.
+    """
+    rooms = max(1, rooms)
+    base = max(1, guests // rooms)
+    extras = max(0, guests - base * rooms)
+    occupancies = [
+        {"adults": base + (1 if i < extras else 0), "children": []}
+        for i in range(rooms)
+    ]
     body = {
         "hotelIds": [liteapi_hotel_id],
         "checkin": check_in.isoformat(),
         "checkout": check_out.isoformat(),
-        "occupancies": [{"adults": guests, "children": []}],
+        "occupancies": occupancies,
         "currency": "USD",
         "guestNationality": "US",
     }
@@ -378,7 +569,7 @@ async def get_rates(
             return []
         hotel_data = hotels_data[0] if isinstance(hotels_data, list) else hotels_data
         room_types = hotel_data.get("roomTypes") or hotel_data.get("rooms") or []
-        return [_normalize_rate(rt) for rt in room_types]
+        return [_normalize_room_type(rt) for rt in room_types]
     except LiteAPIError:
         raise
     except Exception as exc:
@@ -386,26 +577,89 @@ async def get_rates(
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
 
 
-async def prebook(rate_id: str, guests: int = 1) -> dict:
-    """Prebook a rate to lock the price. Returns prebook_id + confirmed price.
+async def get_room_types_catalog(liteapi_hotel_id: str) -> list[dict]:
+    """Fetch the room-type catalog for a hotel without exposing prices.
 
-    The sandbox may return an empty 200 body — treat that as success and use
-    the offerId as the prebookId (standard sandbox behaviour).
+    Used for the no-dates state of the availability table — probes LiteAPI rates
+    with a default 2-night window 7 days out, then strips price/cancellation data.
     """
-    body = {"offerId": rate_id}
+    from datetime import timedelta
+    today = date.today()
+    probe_in = today + timedelta(days=7)
+    probe_out = probe_in + timedelta(days=2)
     try:
-        resp = await _client().post("/hotels/prebook", json=body)
+        room_types = await get_rates(liteapi_hotel_id, probe_in, probe_out, guests=1)
+    except LiteAPIError:
+        return []
+    return [_strip_room_type_prices(rt) for rt in room_types]
+
+
+def _parse_price_block(raw: dict, fallback_currency: str = "USD") -> tuple[float, str]:
+    """Extract (price, currency) from a LiteAPI prebook response.
+
+    LiteAPI v3.0 returns the confirmed amount under different keys depending on
+    sandbox vs production; we probe the common shapes in order.
+    """
+    # Shape A: { "price": 123.45, "currency": "USD" }
+    if raw.get("price") is not None:
+        return float(raw["price"]), raw.get("currency") or fallback_currency
+    # Shape B: { "offerRetailRate": {"amount": 123.45, "currency": "USD"} }
+    retail = raw.get("offerRetailRate")
+    if isinstance(retail, dict) and retail.get("amount") is not None:
+        return float(retail["amount"]), retail.get("currency") or fallback_currency
+    # Shape C: { "total": [{"amount": 123.45, "currency": "USD"}] }
+    total = raw.get("total")
+    if isinstance(total, list) and total and total[0].get("amount") is not None:
+        return float(total[0]["amount"]), total[0].get("currency") or fallback_currency
+    return 0.0, fallback_currency
+
+
+async def prebook(
+    rate_id: str,
+    guests: int = 1,
+    voucher_code: str | None = None,
+    use_payment_sdk: bool = False,
+) -> dict:
+    """Prebook a rate via POST /hotels/prebook to lock price and inventory.
+
+    Returns a dict with:
+        prebook_id        — pass this to book()
+        price, currency   — supplier-confirmed price (may differ from quoted)
+        supplier          — supplier name for audit
+        secret_key        — Stripe clientSecret if use_payment_sdk=True
+        transaction_id    — PaymentIntent ID if use_payment_sdk=True
+        payment_types     — list of accepted payment.method values for /hotels/book
+        expires_at        — ISO datetime or seconds-from-now; caller normalises
+    """
+    body: dict[str, Any] = {"offerId": rate_id, "usePaymentSdk": use_payment_sdk}
+    if voucher_code:
+        body["voucherCode"] = voucher_code
+
+    try:
+        # LiteAPI v3.0 booking ops live under `/rates/...`, NOT `/hotels/...`.
+        # The earlier `/hotels/prebook` path returned 404 (rendered as a gzip-empty
+        # body to httpx) which silently bypassed the booking flow.
+        resp = await _client().post("/rates/prebook", json=body)
         _raise_for_status(resp)
-        # Sandbox returns empty 200; production returns prebookId JSON
         if not resp.content:
-            return {"prebook_id": rate_id, "price": 0.0, "currency": "USD", "expires_at": None}
+            raise LiteAPIError(502, "LiteAPI prebook returned empty body")
         data = resp.json()
         raw = data.get("data") or data
+        prebook_id = raw.get("prebookId") or raw.get("preBookId")
+        if not prebook_id:
+            raise LiteAPIError(502, f"LiteAPI prebook missing prebookId: {raw}")
+        price, currency = _parse_price_block(raw)
+        # expiry: either "expireInSeconds" (int) or "expiryTime" (ISO)
+        expires_at = raw.get("expiryTime") or raw.get("expireInSeconds")
         return {
-            "prebook_id": raw.get("prebookId") or raw.get("offerId") or rate_id,
-            "price": float(raw.get("offerRetailRate", {}).get("amount") or raw.get("price") or 0),
-            "currency": raw.get("offerRetailRate", {}).get("currency") or raw.get("currency") or "USD",
-            "expires_at": raw.get("expiryTime"),
+            "prebook_id": prebook_id,
+            "price": price,
+            "currency": currency,
+            "supplier": raw.get("supplier") or raw.get("supplierName"),
+            "secret_key": raw.get("secretKey"),
+            "transaction_id": raw.get("transactionId"),
+            "payment_types": raw.get("paymentTypes") or [],
+            "expires_at": expires_at,
         }
     except LiteAPIError:
         raise
@@ -416,31 +670,51 @@ async def prebook(rate_id: str, guests: int = 1) -> dict:
 
 async def book(
     prebook_id: str,
-    guest_first_name: str,
-    guest_last_name: str,
-    guest_email: str,
-    payment_ref: str = "",
+    holder: dict,
+    guests: list[dict],
+    payment: dict | None = None,
+    client_reference: str = "",
+    transaction_id: str | None = None,
 ) -> dict:
-    """Complete a booking via POST /hotels/book. Returns liteapi_booking_id."""
-    body = {
+    """Complete a booking via POST /hotels/book. Returns liteapi_booking_id + status.
+
+    holder:    {"firstName", "lastName", "email", "phoneNumber"?}
+    guests:    [{"occupancyNumber":1, "firstName","lastName","email","remarks"?}, ...]
+               one entry per room (the lead guest); occupancyNumber starts at 1.
+    payment:   defaults to {"method": "ACC_CREDIT_CARD"} for the partner-pre-paid flow
+               (LiteAPI sandbox accepts this without card details). For the LiteAPI
+               Stripe SDK flow, pass {"method": "TRANSACTION_ID"} together with
+               transaction_id from prebook().
+    """
+    if payment is None:
+        payment = {"method": "ACC_CREDIT_CARD"}
+    if transaction_id and "transactionId" not in payment:
+        payment = {**payment, "transactionId": transaction_id}
+
+    body: dict[str, Any] = {
         "prebookId": prebook_id,
-        "guests": [
-            {
-                "firstName": guest_first_name,
-                "lastName": guest_last_name,
-                "email": guest_email,
-            }
-        ],
-        "payment": {"holderName": f"{guest_first_name} {guest_last_name}", "method": "CREDIT_CARD"},
+        "holder": holder,
+        "guests": guests,
+        "payment": payment,
     }
+    if client_reference:
+        body["clientReference"] = client_reference
+
     try:
-        resp = await _client().post("/hotels/book", json=body)
+        # LiteAPI v3.0 booking ops live under `/rates/...`, NOT `/hotels/...`.
+        resp = await _client().post("/rates/book", json=body)
         _raise_for_status(resp)
         data = resp.json()
         raw = data.get("data") or data
+        booking_id = raw.get("bookingId") or raw.get("id")
+        if not booking_id:
+            raise LiteAPIError(502, f"LiteAPI book missing bookingId: {raw}")
         return {
-            "liteapi_booking_id": raw.get("bookingId") or raw.get("id", ""),
+            "liteapi_booking_id": booking_id,
             "status": raw.get("status") or "CONFIRMED",
+            "supplier_booking_id": raw.get("supplierBookingId"),
+            "supplier": raw.get("supplier"),
+            "hotel_confirmation_code": raw.get("hotelConfirmationCode"),
         }
     except LiteAPIError:
         raise
@@ -461,18 +735,56 @@ async def get_booking(liteapi_booking_id: str) -> dict:
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
 
 
-async def cancel_booking(liteapi_booking_id: str) -> bool:
-    """Cancel a booking. Returns True on success."""
+async def get_prebook(prebook_id: str) -> dict:
+    """Retrieve a prebook by ID (GET /prebooks/{prebookId})."""
     try:
-        resp = await _client().put(
-            f"/bookings/{liteapi_booking_id}",
-            json={"status": "CANCELLED"},
-        )
+        resp = await _client().get(f"/prebooks/{prebook_id}")
         _raise_for_status(resp)
-        return True
+        return (resp.json().get("data") or resp.json())
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def cancel_booking(liteapi_booking_id: str) -> dict | None:
+    """
+    Cancel a LiteAPI booking.
+
+    Per LiteAPI docs (PUT /bookings/{id}, no body):
+    returns 200 with the booking object, or 304 if already cancelled (idempotent).
+    LiteAPI applies the rate plan's cancellation policy automatically and returns
+    `status` ("CANCELLED" if fully refundable, "CANCELLED_WITH_CHARGES" if past
+    the deadline or non-refundable), plus `cancellation_fee` and `refund_amount`.
+
+    Returns a dict with the supplier's cancellation result on success, or None
+    on failure. We never raise — the local cancel still proceeds either way.
+    """
+    try:
+        resp = await _client().put(f"/bookings/{liteapi_booking_id}")
+        # 304 = already cancelled; treat as success and synthesise the status
+        if resp.status_code == 304:
+            return {
+                "status": "CANCELLED",
+                "cancellation_fee": 0.0,
+                "refund_amount": None,
+                "currency": None,
+                "already_cancelled": True,
+            }
+        _raise_for_status(resp)
+        payload = resp.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        data = data or payload or {}
+        return {
+            "status": data.get("status") or "CANCELLED",
+            "cancellation_fee": data.get("cancellation_fee"),
+            "refund_amount": data.get("refund_amount"),
+            "currency": data.get("currency"),
+            "already_cancelled": False,
+        }
     except LiteAPIError as exc:
         logger.warning("LiteAPI cancel failed for %s: %s", liteapi_booking_id, exc.message)
-        return False
+        return None
     except Exception as exc:
         logger.warning("LiteAPI cancel error: %s", exc)
-        return False
+        return None

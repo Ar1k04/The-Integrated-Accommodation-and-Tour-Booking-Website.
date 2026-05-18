@@ -43,16 +43,50 @@ class BookingServiceError(ValueError):
 def _soft_lock_keys(entry) -> list[str]:
     """Return Redis lock keys to acquire for a BookingItemCreate entry.
 
-    Only local (DB-backed) inventory gets locked; external API items
-    (LiteAPI, Viator, Duffel) rely on their own prebook/TTL mechanisms.
+    Internal rooms: one key per night (sorted ascending) so overlapping ranges
+    collide on at least one shared day.
+    LiteAPI rooms: one key per (hotel_id, room_name, dates) tuple to fast-fail
+    duplicate prebook attempts before the external HTTP call.
+    Viator / Duffel: no Redis lock; their own APIs hold inventory.
     """
     if isinstance(entry, RoomItemCreate):
-        if entry.room_id and entry.check_in and entry.check_out and not entry.liteapi_rate_id:
-            return [lock_service.room_key(entry.room_id, entry.check_in, entry.check_out)]
+        if entry.liteapi_rate_id and entry.liteapi_hotel_id and entry.check_in and entry.check_out:
+            return [
+                lock_service.liteapi_key(
+                    entry.liteapi_hotel_id,
+                    entry.liteapi_room_name or "",
+                    entry.check_in,
+                    entry.check_out,
+                )
+            ]
+        if entry.room_id and entry.check_in and entry.check_out:
+            return lock_service.room_day_keys(entry.room_id, entry.check_in, entry.check_out)
     elif isinstance(entry, TourItemCreate):
         if entry.tour_id and entry.tour_date and not entry.viator_product_code:
             return [lock_service.tour_key(entry.tour_id, entry.tour_date)]
     return []
+
+
+def _parse_expiry_seconds(expires_at) -> int | None:
+    """Convert LiteAPI's expiryTime (ISO datetime or seconds-from-now) to seconds remaining.
+
+    Returns None if the field is missing/unparseable, so the caller can fall back
+    to the default Redis TTL.
+    """
+    if expires_at is None:
+        return None
+    try:
+        if isinstance(expires_at, (int, float)):
+            return max(int(expires_at), 1)
+        if isinstance(expires_at, str):
+            s = expires_at.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            now = datetime.now(tz=dt.tzinfo or timezone.utc)
+            delta = int((dt - now).total_seconds())
+            return delta if delta > 0 else None
+    except (ValueError, TypeError):
+        return None
+    return None
 
 
 def _daterange(start: date, end: date):
@@ -62,17 +96,55 @@ def _daterange(start: date, end: date):
         cur += timedelta(days=1)
 
 
+# Tolerance for price drift between the rate shown to the user (item.liteapi_price)
+# and the supplier-confirmed price returned by prebook. Anything bigger surfaces
+# as a price-change error so the frontend can re-confirm with the user.
+_LITEAPI_PRICE_TOLERANCE = Decimal("1.00")
+
+
 async def _reserve_liteapi_room_item(
     item: RoomItemCreate,
-) -> tuple[BookingItem, Decimal]:
-    """Prebook a LiteAPI rate and return a BookingItem with liteapi_prebook_id set."""
+) -> tuple[BookingItem, Decimal, int | None]:
+    """Prebook a LiteAPI rate and return a BookingItem with liteapi_prebook_id set.
+
+    Detects supplier-side price changes: if the price LiteAPI confirms at prebook
+    differs from the rate the user saw by more than _LITEAPI_PRICE_TOLERANCE,
+    raises BookingServiceError so the frontend can prompt for re-confirmation.
+    The third tuple element is the prebook's remaining lifetime in seconds (or
+    None if LiteAPI didn't return an expiryTime). Caller uses it to shrink the
+    Redis lock TTL so it never outlives the external hold.
+    """
     try:
         result = await liteapi_service.prebook(item.liteapi_rate_id, guests=item.guests_count)
     except LiteAPIError as exc:
+        # Map LiteAPI's noisy upstream errors to user-friendly text.
+        # 2001 = "no prebook availability" (room just sold out OR rate cache stale)
+        # HTTP 409 = supplier-side price/availability drift since the rate was quoted
+        # Both mean: the rate the user clicked is no longer bookable as quoted.
+        if exc.code == 2001 or exc.status_code == 409:
+            logger.info(
+                "LiteAPI prebook unavailable (code=%s, http=%s): %s",
+                exc.code, exc.status_code, exc.message,
+            )
+            raise BookingServiceError(
+                "This room just sold out or the price changed. "
+                "Please pick different dates or refresh to see the latest rates."
+            )
         raise BookingServiceError(f"LiteAPI prebook failed: {exc.message}")
 
-    price = item.liteapi_price if item.liteapi_price else result["price"]
-    unit_price = Decimal(str(price)).quantize(Decimal("0.01"))
+    supplier_price = Decimal(str(result["price"] or 0)).quantize(Decimal("0.01"))
+    quoted_price = Decimal(str(item.liteapi_price)).quantize(Decimal("0.01")) if item.liteapi_price else None
+    if quoted_price is not None and supplier_price > 0:
+        drift = abs(supplier_price - quoted_price)
+        if drift > _LITEAPI_PRICE_TOLERANCE:
+            raise BookingServiceError(
+                f"LiteAPI rate price changed from {quoted_price} to {supplier_price} "
+                f"({result.get('currency') or 'USD'}). Please re-confirm the rate before booking."
+            )
+
+    # Trust the supplier-confirmed price when available; fall back to the quoted
+    # price for sandbox responses that omit the amount.
+    unit_price = supplier_price if supplier_price > 0 else (quoted_price or Decimal("0.00"))
     subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
 
     bi = BookingItem(
@@ -86,12 +158,12 @@ async def _reserve_liteapi_room_item(
         status=BookingItemStatus.pending.value,
         liteapi_prebook_id=result["prebook_id"],
     )
-    return bi, subtotal
+    return bi, subtotal, _parse_expiry_seconds(result.get("expires_at"))
 
 
 async def _reserve_room_item(
     db: AsyncSession, item: RoomItemCreate
-) -> tuple[BookingItem, Decimal]:
+) -> tuple[BookingItem, Decimal, int | None]:
     if item.liteapi_rate_id:
         return await _reserve_liteapi_room_item(item)
 
@@ -163,7 +235,7 @@ async def _reserve_room_item(
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
     )
-    return bi, subtotal
+    return bi, subtotal, None
 
 
 async def _reserve_viator_tour_item(
@@ -371,14 +443,25 @@ async def create_booking(
 
     try:
         for entry in data.items:
+            expires_in: int | None = None
             if isinstance(entry, RoomItemCreate):
-                bi, subtotal = await _reserve_room_item(db, entry)
+                bi, subtotal, expires_in = await _reserve_room_item(db, entry)
             elif isinstance(entry, TourItemCreate):
                 bi, subtotal = await _reserve_tour_item(db, entry)
             elif isinstance(entry, FlightItemCreate):
                 bi, subtotal = await _reserve_flight_item(db, entry)
             else:
                 raise BookingServiceError("Unknown item type in cart")
+
+            # Shrink the LiteAPI lock TTL to match the external prebook expiry
+            # so the Redis lock cannot outlive the upstream hold.
+            if expires_in is not None and redis is not None:
+                ttl = min(expires_in, lock_service.CHECKOUT_LOCK_TTL)
+                for key in _soft_lock_keys(entry):
+                    try:
+                        await redis.expire(key, ttl)
+                    except Exception as exc:
+                        logger.warning("TTL shrink failed for %s: %s", key, exc)
 
             bi.booking_id = booking.id
             db.add(bi)
@@ -438,6 +521,7 @@ async def confirm_booking(
     guest_first_name: str = "Guest",
     guest_last_name: str = "Guest",
     guest_email: str = "guest@example.com",
+    guest_phone: str | None = None,
     redis=None,
 ) -> Booking:
     """Mark booking + items confirmed and award loyalty points based on final total."""
@@ -447,20 +531,41 @@ async def confirm_booking(
         item.status = BookingItemStatus.confirmed.value
         # Finalize any LiteAPI prebook → real booking
         if item.liteapi_prebook_id and not item.liteapi_booking_id:
+            holder = {
+                "firstName": guest_first_name,
+                "lastName": guest_last_name,
+                "email": guest_email,
+            }
+            if guest_phone:
+                holder["phoneNumber"] = guest_phone
+            # One guest entry per room (occupancyNumber starts at 1 per LiteAPI spec)
+            guests_payload = [
+                {
+                    "occupancyNumber": i + 1,
+                    "firstName": guest_first_name,
+                    "lastName": guest_last_name,
+                    "email": guest_email,
+                }
+                for i in range(max(1, item.quantity))
+            ]
             try:
                 result = await liteapi_service.book(
                     prebook_id=item.liteapi_prebook_id,
-                    guest_first_name=guest_first_name,
-                    guest_last_name=guest_last_name,
-                    guest_email=guest_email,
+                    holder=holder,
+                    guests=guests_payload,
+                    client_reference=f"BK-{booking.id}-{item.id}",
                 )
                 item.liteapi_booking_id = result["liteapi_booking_id"]
+                item.supplier_status = result.get("status") or "CONFIRMED"
+                item.supplier_status_synced_at = datetime.now(timezone.utc)
             except LiteAPIError as exc:
                 logger.warning(
                     "LiteAPI book failed for prebook %s: %s — booking recorded locally",
                     item.liteapi_prebook_id,
                     exc.message,
                 )
+                item.supplier_status = "BOOK_FAILED"
+                item.supplier_status_synced_at = datetime.now(timezone.utc)
 
         # Finalize any Viator tour → real booking
         if item.viator_product_code and not item.viator_booking_ref:
@@ -531,24 +636,82 @@ async def confirm_booking(
     return booking
 
 
-async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> Booking:
-    """Cancel booking and release inventory (tour slots, room_availability rows)."""
+async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> tuple[Booking, list[dict]]:
+    """
+    Cancel booking and release inventory (tour slots, room_availability rows).
 
+    Returns (booking, supplier_results) where supplier_results is a list of
+    per-item dicts capturing what each upstream supplier reported (LiteAPI's
+    refund_amount, cancellation_fee, etc.). The frontend uses this to show
+    the user whether they got a refund.
+    """
+
+    supplier_results: list[dict] = []
     if booking.status == BookingStatus.cancelled.value:
-        return booking
+        return booking, supplier_results
 
     booking.status = BookingStatus.cancelled.value
     for item in booking.items:
+        supplier_entry: dict | None = None
         if item.liteapi_booking_id:
-            await liteapi_service.cancel_booking(item.liteapi_booking_id)
+            result = await liteapi_service.cancel_booking(item.liteapi_booking_id)
+            if result:
+                item.supplier_status = result.get("status") or "CANCELLED"
+                item.supplier_status_synced_at = datetime.now(timezone.utc)
+                supplier_entry = {
+                    "item_id": item.id,
+                    "supplier": "liteapi",
+                    "status": result.get("status"),
+                    "refund_amount": result.get("refund_amount"),
+                    "cancellation_fee": result.get("cancellation_fee"),
+                    "currency": result.get("currency"),
+                }
+        elif item.liteapi_prebook_id:
+            # Prebook never finalized — record supplier-side as cancelled locally
+            item.supplier_status = "CANCELLED"
+            item.supplier_status_synced_at = datetime.now(timezone.utc)
+            supplier_entry = {
+                "item_id": item.id,
+                "supplier": "liteapi",
+                "status": "CANCELLED",
+                "refund_amount": None,
+                "cancellation_fee": 0.0,
+                "currency": None,
+            }
         if item.viator_booking_ref:
             await viator_service.cancel_booking(item.viator_booking_ref)
+            supplier_entry = supplier_entry or {
+                "item_id": item.id,
+                "supplier": "viator",
+                "status": "CANCELLED",
+                "refund_amount": None,
+                "cancellation_fee": None,
+                "currency": None,
+            }
         if item.item_type == BookingItemType.flight.value:
             flight = item.flight_booking
             if flight and flight.duffel_order_id:
                 await duffel_service.cancel_order(flight.duffel_order_id)
                 flight.status = "cancelled"
+                supplier_entry = supplier_entry or {
+                    "item_id": item.id,
+                    "supplier": "duffel",
+                    "status": "CANCELLED",
+                    "refund_amount": None,
+                    "cancellation_fee": None,
+                    "currency": None,
+                }
         item.status = BookingItemStatus.cancelled.value
+        if supplier_entry is None:
+            supplier_entry = {
+                "item_id": item.id,
+                "supplier": "local",
+                "status": "CANCELLED",
+                "refund_amount": None,
+                "cancellation_fee": None,
+                "currency": None,
+            }
+        supplier_results.append(supplier_entry)
         if item.item_type == BookingItemType.tour.value and item.tour_schedule_id:
             schedule = (
                 await db.execute(
@@ -594,4 +757,36 @@ async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> Book
     except Exception as exc:
         logger.warning("Cancellation email failed for booking %s: %s", booking.id, exc)
 
-    return booking
+    return booking, supplier_results
+
+
+async def sync_supplier_status(db: AsyncSession, item: BookingItem) -> str | None:
+    """Refresh BookingItem.supplier_status from LiteAPI's authoritative source.
+
+    Prefers the booking ID (post-confirmation). Falls back to the prebook ID
+    (pre-payment state). Returns the new supplier_status, or None if the item
+    has no LiteAPI reference or the API call fails.
+    """
+    raw_status: str | None = None
+    try:
+        if item.liteapi_booking_id:
+            data = await liteapi_service.get_booking(item.liteapi_booking_id)
+            raw_status = data.get("status") or data.get("bookingStatus")
+        elif item.liteapi_prebook_id:
+            data = await liteapi_service.get_prebook(item.liteapi_prebook_id)
+            raw_status = data.get("status") or data.get("prebookStatus")
+        else:
+            return None
+    except LiteAPIError as exc:
+        logger.warning(
+            "LiteAPI status sync failed for item %s: %s",
+            item.id,
+            getattr(exc, "message", str(exc)),
+        )
+        return None
+
+    if raw_status:
+        item.supplier_status = raw_status
+        item.supplier_status_synced_at = datetime.now(timezone.utc)
+        await db.flush()
+    return raw_status

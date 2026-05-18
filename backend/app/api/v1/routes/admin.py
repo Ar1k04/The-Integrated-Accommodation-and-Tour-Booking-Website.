@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import Date, String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,8 +19,25 @@ from app.models.tour import Tour
 from app.models.tour_schedule import TourSchedule
 from app.models.user import User
 from app.schemas.user import UserListResponse, UserResponse, UserUpdate
+from app.services import booking_service
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+
+def _has_liteapi_item(booking: Booking) -> bool:
+    return any(
+        bi.liteapi_prebook_id or bi.liteapi_booking_id
+        for bi in booking.items
+    )
+
+
+def _is_liteapi_only(booking: Booking) -> bool:
+    """True when every item in the booking is LiteAPI-sourced."""
+    if not booking.items:
+        return False
+    return all(
+        (bi.liteapi_prebook_id or bi.liteapi_booking_id) for bi in booking.items
+    )
 
 
 @router.get("/stats")
@@ -280,9 +297,12 @@ async def list_all_bookings(
                 "check_out": str(bi.check_out) if bi.check_out else None,
                 "quantity": bi.quantity,
                 "subtotal": float(bi.subtotal),
+                "liteapi_prebook_id": bi.liteapi_prebook_id,
                 "liteapi_booking_id": bi.liteapi_booking_id,
                 "viator_product_code": bi.viator_product_code,
                 "viator_booking_ref": bi.viator_booking_ref,
+                "supplier_status": bi.supplier_status,
+                "supplier_status_synced_at": bi.supplier_status_synced_at.isoformat() if bi.supplier_status_synced_at else None,
             }
             if room:
                 item_dict["room"] = {
@@ -337,6 +357,7 @@ async def list_all_bookings(
 @router.patch("/bookings/{booking_id}")
 async def admin_update_booking(
     booking_id: uuid.UUID,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
     new_status: str = Query(..., alias="status"),
@@ -354,6 +375,12 @@ async def admin_update_booking(
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
+    if _has_liteapi_item(booking):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LiteAPI bookings are managed by LiteAPI. Use the Sync action to refresh status.",
+        )
+
     if current_user.role == "partner":
         owns = any(
             (
@@ -366,9 +393,15 @@ async def admin_update_booking(
         if not owns:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your booking")
 
-    booking.status = new_status
-    await db.flush()
-    await db.refresh(booking)
+    if new_status == "cancelled" and booking.status != "cancelled":
+        redis = getattr(request.app.state, "redis", None)
+        await booking_service.cancel_booking(db, booking, redis=redis)
+    else:
+        booking.status = new_status
+        for bi in booking.items:
+            bi.status = new_status
+        await db.flush()
+        await db.refresh(booking)
 
     return {
         "success": True,
@@ -377,5 +410,39 @@ async def admin_update_booking(
             "status": booking.status,
         },
     }
+
+
+@router.post("/bookings/{booking_id}/sync-liteapi")
+async def admin_sync_liteapi_booking(
+    booking_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: StaffUser,
+):
+    """Refresh supplier_status for every LiteAPI item in the booking."""
+    query = select(Booking).options(selectinload(Booking.items)).where(Booking.id == booking_id)
+    booking = (await db.execute(query)).scalar_one_or_none()
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    if not _has_liteapi_item(booking):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This booking has no LiteAPI items to sync.",
+        )
+
+    synced = []
+    for bi in booking.items:
+        if not (bi.liteapi_prebook_id or bi.liteapi_booking_id):
+            continue
+        new_status = await booking_service.sync_supplier_status(db, bi)
+        synced.append({
+            "id": str(bi.id),
+            "supplier_status": new_status or bi.supplier_status,
+            "supplier_status_synced_at": bi.supplier_status_synced_at.isoformat() if bi.supplier_status_synced_at else None,
+        })
+
+    await db.flush()
+
+    return {"success": True, "data": {"booking_id": str(booking.id), "items": synced}}
 
 

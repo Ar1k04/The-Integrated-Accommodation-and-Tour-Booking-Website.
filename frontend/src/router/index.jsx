@@ -6,6 +6,8 @@ import RedirectIfAdmin from '@/components/common/RedirectIfAdmin'
 import HomePage from '@/pages/HomePage'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
+import ForgotPasswordPage from '@/pages/ForgotPasswordPage'
+import ResetPasswordPage from '@/pages/ResetPasswordPage'
 import SearchResultsPage from '@/pages/SearchResultsPage'
 import HotelDetailPage from '@/pages/HotelDetailPage'
 import LiteapiHotelDetailPage from '@/pages/LiteapiHotelDetailPage'
@@ -34,6 +36,8 @@ export const router = createBrowserRouter([
       { path: '/', element: <RedirectIfAdmin><HomePage /></RedirectIfAdmin> },
       { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <RedirectIfAdmin><RegisterPage /></RedirectIfAdmin> },
+      { path: '/forgot-password', element: <ForgotPasswordPage /> },
+      { path: '/reset-password', element: <ResetPasswordPage /> },
       { path: '/hotels/search', element: <RedirectIfAdmin><SearchResultsPage /></RedirectIfAdmin> },
       { path: '/hotels/liteapi/:liteapiId', element: <RedirectIfAdmin><LiteapiHotelDetailPage /></RedirectIfAdmin> },
       { path: '/hotels/:id', element: <RedirectIfAdmin><HotelDetailPage /></RedirectIfAdmin> },

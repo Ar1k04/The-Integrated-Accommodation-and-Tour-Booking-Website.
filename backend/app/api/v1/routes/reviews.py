@@ -1,5 +1,6 @@
 import math
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,9 +17,23 @@ from app.models.review import Review
 from app.models.room import Room
 from app.models.tour import Tour
 from app.models.tour_schedule import TourSchedule
-from app.schemas.review import ReviewCreate, ReviewListResponse, ReviewResponse, ReviewUpdate
+from app.schemas.review import (
+    ReviewCreate, ReviewListResponse, ReviewResponse, ReviewUpdate,
+    ViatorReviewItem, ViatorReviewListResponse, ViatorReviewUser,
+)
+from app.services import viator_service
+from app.services.viator_service import ViatorError
 
 router = APIRouter(tags=["Reviews"])
+
+
+def _parse_viator_date(date_str: str) -> datetime:
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+    return datetime.now(tz=timezone.utc)
 
 
 async def _paginated_reviews(
@@ -69,6 +84,64 @@ async def list_hotel_reviews(
     return await _paginated_reviews(db, query, sort_by, page, per_page)
 
 
+@router.get("/tours/viator/{viator_product_code}/reviews", response_model=ViatorReviewListResponse)
+async def list_viator_tour_reviews(
+    viator_product_code: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    page: int = Query(1, ge=1),
+    per_page: int = Query(5, ge=1, le=50),
+):
+    # Fetch user-written reviews from local DB first
+    local_q = select(Review).where(Review.viator_product_code == viator_product_code)
+    local_q = local_q.options(selectinload(Review.user)).order_by(Review.created_at.desc())
+    local_reviews = (await db.execute(local_q)).scalars().all()
+
+    local_items = [
+        ViatorReviewItem(
+            id=str(r.id),
+            rating=r.rating,
+            comment=r.comment,
+            created_at=r.created_at,
+            user=ViatorReviewUser(full_name=r.user.full_name if r.user else "Traveler"),
+        )
+        for r in local_reviews
+    ]
+
+    # Fetch Viator API / fallback reviews
+    try:
+        result = await viator_service.get_product_reviews(viator_product_code, page, per_page)
+    except ViatorError:
+        result = {"reviews": [], "total": 0}
+
+    reviews_raw = result.get("reviews") or []
+    viator_total = result.get("total") or len(reviews_raw)
+
+    viator_items = [
+        ViatorReviewItem(
+            id=r.get("id") or f"v-{viator_product_code}-{i}",
+            rating=max(1, min(5, r["rating"])),
+            comment=r.get("comment"),
+            created_at=_parse_viator_date(r.get("published_date", "")),
+            user=ViatorReviewUser(full_name=r.get("user_name") or "Traveler"),
+        )
+        for i, r in enumerate(reviews_raw)
+    ]
+
+    # Merge: local reviews appear first, then Viator reviews
+    all_items = local_items + viator_items
+    total = len(local_items) + viator_total
+    total_pages = math.ceil(total / per_page) if total else 0
+
+    # Paginate the merged list
+    start = (page - 1) * per_page
+    page_items = all_items[start: start + per_page]
+
+    return ViatorReviewListResponse(
+        items=page_items,
+        meta={"total": total, "page": page, "per_page": per_page, "total_pages": total_pages},
+    )
+
+
 @router.get("/tours/{tour_id}/reviews", response_model=ReviewListResponse)
 async def list_tour_reviews(
     tour_id: uuid.UUID,
@@ -91,10 +164,11 @@ async def create_review(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
-    if bool(data.hotel_id) == bool(data.tour_id):
+    targets = [bool(data.hotel_id), bool(data.tour_id), bool(data.viator_product_code)]
+    if targets.count(True) != 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide exactly one of hotel_id or tour_id",
+            detail="Provide exactly one of hotel_id, tour_id, or viator_product_code",
         )
 
     if data.hotel_id:
@@ -153,6 +227,36 @@ async def create_review(
                 select(Review.id).where(
                     Review.user_id == current_user.id,
                     Review.tour_id == data.tour_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if already:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already reviewed this tour")
+
+    if data.viator_product_code:
+        has_booking = (
+            await db.execute(
+                select(Booking.id)
+                .join(BookingItem, BookingItem.booking_id == Booking.id)
+                .where(
+                    Booking.user_id == current_user.id,
+                    BookingItem.viator_product_code == data.viator_product_code,
+                    BookingItem.status == "completed",
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if not has_booking:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only review Viator tours you have completed",
+            )
+
+        already = (
+            await db.execute(
+                select(Review.id).where(
+                    Review.user_id == current_user.id,
+                    Review.viator_product_code == data.viator_product_code,
                 )
             )
         ).scalar_one_or_none()
