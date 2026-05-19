@@ -67,9 +67,15 @@ async def test_polymorphic_booking_room_plus_tour(
 
     room_subtotal = Decimal(str(test_room.price_per_night)) * 2
     tour_subtotal = Decimal(str(test_tour.price_per_person)) * 2
-    expected_total = (room_subtotal + tour_subtotal).quantize(Decimal("0.01"))
+    expected_subtotal = (room_subtotal + tour_subtotal).quantize(Decimal("0.01"))
+    # TAX_RATE (10%) is applied on top of the subtotal.
+    from app.core.config import settings as _settings
+    expected_tax = (expected_subtotal * Decimal(str(_settings.TAX_RATE))).quantize(Decimal("0.01"))
+    expected_total = (expected_subtotal + expected_tax).quantize(Decimal("0.01"))
 
-    assert booking.total_price == expected_total
+    assert Decimal(str(booking.subtotal)) == expected_subtotal
+    assert Decimal(str(booking.taxes)) == expected_tax
+    assert Decimal(str(booking.total_price)) == expected_total
 
     items = (
         await db_session.execute(

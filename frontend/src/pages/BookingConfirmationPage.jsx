@@ -47,6 +47,18 @@ export default function BookingConfirmationPage() {
         doc.text(`  Subtotal: ${fmt(item.subtotal)}`, 20, y); y += 10
       }
     })
+    if (booking?.subtotal > 0) {
+      doc.text(`Subtotal: ${fmt(booking?.subtotal)}`, 20, y); y += 10
+    }
+    if (booking?.taxes > 0) {
+      doc.text(`Taxes & fees: ${fmt(booking?.taxes)}`, 20, y); y += 10
+    }
+    if (booking?.tier_discount > 0) {
+      doc.text(`Member discount: -${fmt(booking?.tier_discount)}`, 20, y); y += 10
+    }
+    if (booking?.discount_amount > 0) {
+      doc.text(`Voucher discount: -${fmt(booking?.discount_amount)}`, 20, y); y += 10
+    }
     doc.text(`Total: ${fmt(booking?.total_price)}`, 20, y); y += 10
     doc.text(`Status: ${booking?.status}`, 20, y)
     doc.save(`booking-${id.slice(0, 8)}.pdf`)
@@ -142,6 +154,37 @@ export default function BookingConfirmationPage() {
                 </div>
               )
             })()}
+
+            {(booking?.subtotal > 0 || booking?.taxes > 0 || booking?.discount_amount > 0 || booking?.tier_discount > 0) && (
+              <div className="rounded-lg bg-gray-50 px-4 py-3 text-sm space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Subtotal</span>
+                  <span className="font-medium">{fmt(booking?.subtotal)}</span>
+                </div>
+                {booking?.taxes > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Taxes &amp; fees</span>
+                    <span className="font-medium">{fmt(booking?.taxes)}</span>
+                  </div>
+                )}
+                {booking?.tier_discount > 0 && (
+                  <div className="flex justify-between text-green-700">
+                    <span>Member discount</span>
+                    <span>−{fmt(booking?.tier_discount)}</span>
+                  </div>
+                )}
+                {booking?.discount_amount > 0 && (
+                  <div className="flex justify-between text-green-700">
+                    <span>Voucher discount</span>
+                    <span>−{fmt(booking?.discount_amount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+                  <span>Total</span>
+                  <span className="text-primary">{fmt(booking?.total_price)}</span>
+                </div>
+              </div>
+            )}
 
             <hr />
 

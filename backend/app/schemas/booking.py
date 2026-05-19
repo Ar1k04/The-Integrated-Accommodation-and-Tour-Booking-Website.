@@ -23,6 +23,8 @@ class BookingUpdate(BaseModel):
 class BookingResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    subtotal: float = 0
+    taxes: float = 0
     total_price: float
     status: str
     special_requests: str | None = None

@@ -24,6 +24,16 @@ class Booking(Base):
 
     special_requests: Mapped[str | None] = mapped_column(Text)
 
+    # Pre-tax, pre-discount room/tour/flight total — the "subtotal" line
+    # in the booking summary.
+    subtotal: Mapped[float] = mapped_column(
+        Numeric(10, 2), default=0, server_default="0", nullable=False
+    )
+    # Tax amount computed on `subtotal` (TAX_RATE × subtotal).
+    taxes: Mapped[float] = mapped_column(
+        Numeric(10, 2), default=0, server_default="0", nullable=False
+    )
+    # Final amount the user is charged — subtotal + taxes − discounts.
     total_price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), default=BookingStatus.pending.value, server_default="pending"

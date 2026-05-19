@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemStatus, BookingItemType
 from app.models.flight_booking import FlightBooking
@@ -164,9 +165,13 @@ async def _reserve_liteapi_room_item(
 
     # Trust the supplier-confirmed price when available; fall back to the quoted
     # price for sandbox responses that omit the amount.
+    # LiteAPI returns a per-night rate, so multiply by nights to get the stay
+    # subtotal — matches the frontend's `roomRateTotal * nights` computation and
+    # the non-LiteAPI room path at _reserve_room_item.
+    nights = (item.check_out - item.check_in).days or 1
     unit_price = supplier_price if supplier_price > 0 else (quoted_price or Decimal("0.00"))
-    subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
-    supplier_discount = (supplier_discount_per_unit * item.quantity).quantize(Decimal("0.01"))
+    subtotal = (unit_price * nights * item.quantity).quantize(Decimal("0.01"))
+    supplier_discount = (supplier_discount_per_unit * nights * item.quantity).quantize(Decimal("0.01"))
 
     bi = BookingItem(
         item_type=BookingItemType.room.value,
@@ -477,8 +482,14 @@ async def create_booking(
         ):
             # Pre-validate against the *quoted* (pre-discount) subtotal so
             # min_order_value / budget / guest checks use the right baseline.
+            # liteapi_price is per-night; multiply by nights to get stay total.
             est_quoted_subtotal = sum(
-                (Decimal(str(e.liteapi_price or 0)) * e.quantity for e in data.items),
+                (
+                    Decimal(str(e.liteapi_price or 0))
+                    * e.quantity
+                    * max((e.check_out - e.check_in).days, 1)
+                    for e in data.items
+                ),
                 Decimal("0"),
             )
             try:
@@ -530,7 +541,12 @@ async def create_booking(
         await lock_service.release_many(redis, acquired_lock_keys, owner)
         raise
 
-    booking.total_price = running_subtotal.quantize(Decimal("0.01"))
+    # Gross subtotal = what the user saw before any discount. When a voucher is
+    # applied supplier-side the supplier returns a net-of-discount price, so we
+    # add the discount back to reconstruct the pre-discount amount. This is the
+    # baseline used for tier/voucher/tax math so it matches the frontend.
+    gross_subtotal = (running_subtotal + supplier_discount_total).quantize(Decimal("0.01"))
+    booking.total_price = gross_subtotal
 
     # Tier discount: apply member discount before voucher and points
     tier_discount = Decimal("0")
@@ -538,7 +554,7 @@ async def create_booking(
     if user_obj and user_obj.loyalty_tier_id:
         tier = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.id == user_obj.loyalty_tier_id))).scalar_one_or_none()
         if tier and tier.discount_percent > 0:
-            tier_discount = (running_subtotal * Decimal(str(tier.discount_percent)) / Decimal("100")).quantize(Decimal("0.01"))
+            tier_discount = (gross_subtotal * Decimal(str(tier.discount_percent)) / Decimal("100")).quantize(Decimal("0.01"))
             booking.tier_discount = float(tier_discount)
 
     discount = Decimal("0")
@@ -567,7 +583,19 @@ async def create_booking(
         )
         booking.points_redeemed = data.points_to_redeem
 
-    final_total = running_subtotal - tier_discount - discount - redeem_discount
+    # Tax on the pre-discount subtotal — matches the frontend display.
+    taxes = (gross_subtotal * Decimal(str(settings.TAX_RATE))).quantize(Decimal("0.01"))
+
+    # Surface the supplier-side voucher discount on the booking so MyBookings
+    # can display it. Local voucher path already set discount_amount via
+    # voucher_service.apply_voucher.
+    if supplier_side_voucher and supplier_discount_total > 0:
+        booking.discount_amount = float(supplier_discount_total.quantize(Decimal("0.01")))
+
+    booking.subtotal = gross_subtotal
+    booking.taxes = taxes
+
+    final_total = gross_subtotal + taxes - tier_discount - supplier_discount_total - discount - redeem_discount
     if final_total < 0:
         final_total = Decimal("0")
     booking.total_price = final_total.quantize(Decimal("0.01"))

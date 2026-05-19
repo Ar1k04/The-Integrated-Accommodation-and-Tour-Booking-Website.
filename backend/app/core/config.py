@@ -64,5 +64,9 @@ class Settings(BaseSettings):
     # Currency conversion (display only — bookings stored in USD)
     USD_TO_VND_RATE: int = 25_000
 
+    # Tax rate applied to room subtotal (decimal, e.g. 0.10 = 10%).
+    # Must be kept in sync with the frontend display in BookingPage.jsx.
+    TAX_RATE: float = 0.10
+
 
 settings = Settings()

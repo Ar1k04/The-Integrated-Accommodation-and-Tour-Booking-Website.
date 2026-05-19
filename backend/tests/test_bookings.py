@@ -31,7 +31,10 @@ async def test_create_booking_success(client: AsyncClient, test_user, test_room,
     assert res.status_code == 201
     data = res.json()
     assert data["status"] == "pending"
-    assert float(data["total_price"]) == 400.00  # 200 * 2 nights
+    # 200 * 2 nights = 400 subtotal, plus 10% tax (TAX_RATE) = 40, total 440
+    assert float(data["subtotal"]) == 400.00
+    assert float(data["taxes"]) == 40.00
+    assert float(data["total_price"]) == 440.00
 
 
 @pytest.mark.asyncio
