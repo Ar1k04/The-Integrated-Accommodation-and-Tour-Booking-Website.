@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     # LiteAPI
     LITEAPI_KEY: str = ""
     LITEAPI_BASE_URL: str = "https://api.liteapi.travel/v3.0"
+    LITEAPI_DASHBOARD_BASE_URL: str = "https://da.liteapi.travel"
+    LITEAPI_VOUCHER_SYNC_ENABLED: bool = False
 
     # Viator
     VIATOR_KEY: str = ""

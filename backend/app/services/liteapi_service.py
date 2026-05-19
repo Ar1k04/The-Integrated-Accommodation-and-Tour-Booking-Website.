@@ -10,6 +10,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _CLIENT: httpx.AsyncClient | None = None
+_DASHBOARD_CLIENT: httpx.AsyncClient | None = None
 
 
 def _client() -> httpx.AsyncClient:
@@ -21,6 +22,22 @@ def _client() -> httpx.AsyncClient:
             timeout=15.0,
         )
     return _CLIENT
+
+
+def _dashboard_client() -> httpx.AsyncClient:
+    """Separate client for LiteAPI's dashboard API (da.liteapi.travel).
+
+    Voucher management endpoints live on the dashboard host, not the main
+    booking host. Same API key works.
+    """
+    global _DASHBOARD_CLIENT
+    if _DASHBOARD_CLIENT is None or _DASHBOARD_CLIENT.is_closed:
+        _DASHBOARD_CLIENT = httpx.AsyncClient(
+            base_url=settings.LITEAPI_DASHBOARD_BASE_URL,
+            headers={"X-API-Key": settings.LITEAPI_KEY, "Accept": "application/json"},
+            timeout=15.0,
+        )
+    return _DASHBOARD_CLIENT
 
 
 class LiteAPIError(Exception):
@@ -788,3 +805,115 @@ async def cancel_booking(liteapi_booking_id: str) -> dict | None:
     except Exception as exc:
         logger.warning("LiteAPI cancel error: %s", exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Voucher management (dashboard API: https://da.liteapi.travel/vouchers)
+# ---------------------------------------------------------------------------
+
+def _unwrap_voucher(data: dict) -> dict:
+    """LiteAPI's voucher endpoints return one of:
+        {"voucher": {...}}       — POST/PUT/GET single
+        {"vouchers": [...]}      — GET list
+        {"data": {...}}          — some endpoints (defensive)
+        {...}                    — the bare object
+    Return the inner object for single-voucher responses, or the list dict
+    untouched so callers can pick the right key.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "voucher" in data and isinstance(data["voucher"], dict):
+        return data["voucher"]
+    if "data" in data and isinstance(data["data"], dict):
+        return data["data"]
+    return data
+
+
+async def create_voucher(payload: dict) -> dict:
+    """POST /vouchers. Returns the LiteAPI voucher object including its id."""
+    try:
+        resp = await _dashboard_client().post("/vouchers", json=payload)
+        _raise_for_status(resp)
+        return _unwrap_voucher(resp.json())
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def update_voucher(liteapi_id: str, payload: dict) -> dict:
+    """PUT /vouchers/{id}. LiteAPI requires all fields (not patch semantics)."""
+    try:
+        resp = await _dashboard_client().put(f"/vouchers/{liteapi_id}", json=payload)
+        _raise_for_status(resp)
+        return _unwrap_voucher(resp.json())
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def set_voucher_status(liteapi_id: str, status_value: str) -> dict:
+    """PUT /vouchers/{id}/status. status_value: 'active' or 'inactive'."""
+    try:
+        resp = await _dashboard_client().put(
+            f"/vouchers/{liteapi_id}/status", json={"status": status_value}
+        )
+        _raise_for_status(resp)
+        return _unwrap_voucher(resp.json())
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def delete_voucher(liteapi_id: str) -> None:
+    """DELETE /vouchers/{id}/. Permanent — caller should call only when local
+    delete is intended."""
+    try:
+        resp = await _dashboard_client().delete(f"/vouchers/{liteapi_id}/")
+        _raise_for_status(resp)
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def get_voucher(liteapi_id: str) -> dict:
+    """GET /vouchers/{voucherID}."""
+    try:
+        resp = await _dashboard_client().get(f"/vouchers/{liteapi_id}")
+        _raise_for_status(resp)
+        return _unwrap_voucher(resp.json())
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def list_vouchers() -> list[dict]:
+    """GET /vouchers. Returns the raw vouchers[] list, used for code → id lookup."""
+    try:
+        resp = await _dashboard_client().get("/vouchers")
+        _raise_for_status(resp)
+        body = resp.json()
+        if isinstance(body, dict):
+            return body.get("vouchers") or body.get("data") or []
+        return body if isinstance(body, list) else []
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def get_voucher_history() -> dict:
+    """GET /vouchers/history. Returns supplier-side usage records."""
+    try:
+        resp = await _dashboard_client().get("/vouchers/history")
+        _raise_for_status(resp)
+        data = resp.json()
+        return data.get("data") or data
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")

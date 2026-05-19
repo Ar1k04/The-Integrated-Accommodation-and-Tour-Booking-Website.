@@ -104,18 +104,26 @@ _LITEAPI_PRICE_TOLERANCE = Decimal("1.00")
 
 async def _reserve_liteapi_room_item(
     item: RoomItemCreate,
-) -> tuple[BookingItem, Decimal, int | None]:
+    voucher_code: str | None = None,
+) -> tuple[BookingItem, Decimal, int | None, Decimal]:
     """Prebook a LiteAPI rate and return a BookingItem with liteapi_prebook_id set.
 
-    Detects supplier-side price changes: if the price LiteAPI confirms at prebook
-    differs from the rate the user saw by more than _LITEAPI_PRICE_TOLERANCE,
-    raises BookingServiceError so the frontend can prompt for re-confirmation.
-    The third tuple element is the prebook's remaining lifetime in seconds (or
-    None if LiteAPI didn't return an expiryTime). Caller uses it to shrink the
-    Redis lock TTL so it never outlives the external hold.
+    When voucher_code is provided, it is forwarded to LiteAPI so the discount
+    is applied supplier-side. In that case the supplier-confirmed price is
+    expected to be LOWER than the quoted price, so the usual drift check is
+    relaxed (negative drift = expected discount).
+
+    Returns (BookingItem, subtotal, prebook_ttl_seconds, supplier_discount):
+        supplier_discount is (quoted - supplier) * quantity when a voucher was
+        applied supplier-side, else 0. Callers sum this across items to record
+        the discount on the booking without double-applying it locally.
     """
     try:
-        result = await liteapi_service.prebook(item.liteapi_rate_id, guests=item.guests_count)
+        result = await liteapi_service.prebook(
+            item.liteapi_rate_id,
+            guests=item.guests_count,
+            voucher_code=voucher_code,
+        )
     except LiteAPIError as exc:
         # Map LiteAPI's noisy upstream errors to user-friendly text.
         # 2001 = "no prebook availability" (room just sold out OR rate cache stale)
@@ -134,18 +142,31 @@ async def _reserve_liteapi_room_item(
 
     supplier_price = Decimal(str(result["price"] or 0)).quantize(Decimal("0.01"))
     quoted_price = Decimal(str(item.liteapi_price)).quantize(Decimal("0.01")) if item.liteapi_price else None
+    supplier_discount_per_unit = Decimal("0")
     if quoted_price is not None and supplier_price > 0:
-        drift = abs(supplier_price - quoted_price)
-        if drift > _LITEAPI_PRICE_TOLERANCE:
-            raise BookingServiceError(
-                f"LiteAPI rate price changed from {quoted_price} to {supplier_price} "
-                f"({result.get('currency') or 'USD'}). Please re-confirm the rate before booking."
-            )
+        if voucher_code:
+            # With a voucher, supplier price is expected to be <= quoted.
+            # Only flag an unexpected *upward* drift beyond tolerance.
+            if supplier_price - quoted_price > _LITEAPI_PRICE_TOLERANCE:
+                raise BookingServiceError(
+                    f"LiteAPI rate price increased from {quoted_price} to {supplier_price} "
+                    f"({result.get('currency') or 'USD'}) despite voucher. Please re-confirm."
+                )
+            if quoted_price > supplier_price:
+                supplier_discount_per_unit = quoted_price - supplier_price
+        else:
+            drift = abs(supplier_price - quoted_price)
+            if drift > _LITEAPI_PRICE_TOLERANCE:
+                raise BookingServiceError(
+                    f"LiteAPI rate price changed from {quoted_price} to {supplier_price} "
+                    f"({result.get('currency') or 'USD'}). Please re-confirm the rate before booking."
+                )
 
     # Trust the supplier-confirmed price when available; fall back to the quoted
     # price for sandbox responses that omit the amount.
     unit_price = supplier_price if supplier_price > 0 else (quoted_price or Decimal("0.00"))
     subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
+    supplier_discount = (supplier_discount_per_unit * item.quantity).quantize(Decimal("0.01"))
 
     bi = BookingItem(
         item_type=BookingItemType.room.value,
@@ -158,14 +179,14 @@ async def _reserve_liteapi_room_item(
         status=BookingItemStatus.pending.value,
         liteapi_prebook_id=result["prebook_id"],
     )
-    return bi, subtotal, _parse_expiry_seconds(result.get("expires_at"))
+    return bi, subtotal, _parse_expiry_seconds(result.get("expires_at")), supplier_discount
 
 
 async def _reserve_room_item(
-    db: AsyncSession, item: RoomItemCreate
-) -> tuple[BookingItem, Decimal, int | None]:
+    db: AsyncSession, item: RoomItemCreate, voucher_code: str | None = None
+) -> tuple[BookingItem, Decimal, int | None, Decimal]:
     if item.liteapi_rate_id:
-        return await _reserve_liteapi_room_item(item)
+        return await _reserve_liteapi_room_item(item, voucher_code=voucher_code)
 
     if item.check_in >= item.check_out:
         raise BookingServiceError("check_out must be after check_in")
@@ -235,7 +256,7 @@ async def _reserve_room_item(
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
     )
-    return bi, subtotal, None
+    return bi, subtotal, None, Decimal("0")
 
 
 async def _reserve_viator_tour_item(
@@ -438,14 +459,50 @@ async def create_booking(
     db.add(booking)
     await db.flush()
 
+    # Peek the voucher (if any) so we can decide whether to push it to LiteAPI
+    # at prebook time vs. apply it locally after the cart is reserved.
+    supplier_side_voucher: str | None = None
+    peeked_voucher = None
+    if data.voucher_code:
+        peeked_voucher = await voucher_service.peek_voucher(db, data.voucher_code)
+        all_liteapi_hotels = bool(data.items) and all(
+            isinstance(e, RoomItemCreate) and e.liteapi_rate_id for e in data.items
+        )
+        if (
+            peeked_voucher
+            and peeked_voucher.liteapi_sync_status == "synced"
+            and peeked_voucher.applicable_to in ("all", "hotel")
+            and peeked_voucher.guest_id is None
+            and all_liteapi_hotels
+        ):
+            # Pre-validate against the *quoted* (pre-discount) subtotal so
+            # min_order_value / budget / guest checks use the right baseline.
+            est_quoted_subtotal = sum(
+                (Decimal(str(e.liteapi_price or 0)) * e.quantity for e in data.items),
+                Decimal("0"),
+            )
+            try:
+                await voucher_service.validate_voucher(
+                    db, data.voucher_code, user_id, est_quoted_subtotal
+                )
+                supplier_side_voucher = data.voucher_code
+            except voucher_service.VoucherError:
+                # Fall through to local validation later (which will surface
+                # the same error to the caller in a single place).
+                supplier_side_voucher = None
+
     items: list[BookingItem] = []
     running_subtotal = Decimal("0")
+    supplier_discount_total = Decimal("0")
 
     try:
         for entry in data.items:
             expires_in: int | None = None
+            supplier_discount = Decimal("0")
             if isinstance(entry, RoomItemCreate):
-                bi, subtotal, expires_in = await _reserve_room_item(db, entry)
+                bi, subtotal, expires_in, supplier_discount = await _reserve_room_item(
+                    db, entry, voucher_code=supplier_side_voucher
+                )
             elif isinstance(entry, TourItemCreate):
                 bi, subtotal = await _reserve_tour_item(db, entry)
             elif isinstance(entry, FlightItemCreate):
@@ -467,6 +524,7 @@ async def create_booking(
             db.add(bi)
             items.append(bi)
             running_subtotal += subtotal
+            supplier_discount_total += supplier_discount
     except Exception:
         # Reservation failed — release any acquired locks and re-raise
         await lock_service.release_many(redis, acquired_lock_keys, owner)
@@ -484,7 +542,15 @@ async def create_booking(
             booking.tier_discount = float(tier_discount)
 
     discount = Decimal("0")
-    if data.voucher_code:
+    if supplier_side_voucher and peeked_voucher is not None:
+        # Voucher already applied at the supplier — record usage without
+        # double-discounting. running_subtotal already reflects the supplier
+        # discount, so booking.total_price is correct.
+        await voucher_service.record_usage_only(
+            db, booking, peeked_voucher, user_id, supplier_discount_total
+        )
+        discount = Decimal("0")  # already baked into running_subtotal
+    elif data.voucher_code:
         voucher = await voucher_service.validate_voucher(
             db, data.voucher_code, user_id, running_subtotal
         )

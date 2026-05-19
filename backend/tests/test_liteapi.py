@@ -124,7 +124,10 @@ async def test_get_rates_returns_room_type_groups():
     assert len(g["rates"]) == 2
 
     refundable_rate = g["rates"][0]
-    assert refundable_rate["rate_id"] == "INNER_RATE_001"
+    # roomType.offerId overwrites the inner rateId — see
+    # test_normalize_room_type_propagates_offerId_to_rates. The frontend stores
+    # this id and later sends it to /rates/prebook as offerId.
+    assert refundable_rate["rate_id"] == "RATE_ABC"
     assert refundable_rate["price"] == 120.0
     assert refundable_rate["board_name"] == "Breakfast Included"
     assert refundable_rate["refundable"] is True
