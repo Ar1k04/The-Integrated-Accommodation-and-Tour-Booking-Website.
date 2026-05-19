@@ -5,6 +5,7 @@ export const toursApi = {
   get: (id) => api.get(`/tours/${id}`),
   getViator: (code) => api.get(`/tours/viator/${code}`),
   getViatorAvailability: (code, params) => api.get(`/tours/viator/${code}/availability`, { params }),
+  getViatorTags: () => api.get('/tours/viator/tags'),
   create: (data) => api.post('/tours', data),
   update: (id, data) => api.patch(`/tours/${id}`, data),
   delete: (id) => api.delete(`/tours/${id}`),

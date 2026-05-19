@@ -1,10 +1,28 @@
 import axios from 'axios'
 import { useAuthStore } from '@/store/authStore'
 
+// Serialize array params as repeated keys (`tags=1&tags=2`) so FastAPI Query(list[int]) parses them.
+const repeatArraysSerializer = (params) => {
+  const usp = new URLSearchParams()
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === '') continue
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        if (v === undefined || v === null || v === '') continue
+        usp.append(key, v)
+      }
+    } else {
+      usp.append(key, value)
+    }
+  }
+  return usp.toString()
+}
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
+  paramsSerializer: repeatArraysSerializer,
 })
 
 api.interceptors.request.use((config) => {

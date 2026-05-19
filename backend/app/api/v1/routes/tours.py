@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import math
@@ -18,10 +19,11 @@ from app.schemas.tour import (
     TourListResponse,
     TourResponse,
     TourUpdate,
+    ViatorTagsResponse,
 )
 from app.services import lock_service, viator_service
 from app.services.lock_service import RedisUnavailableError
-from app.services.viator_service import ViatorError
+from app.services.viator_service import ViatorError, VIATOR_FLAGS
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +76,56 @@ async def _get_cached(redis, key: str) -> list[dict] | None:
     return None
 
 
-async def _set_cached(redis, key: str, data: list[dict] | dict) -> None:
+async def _set_cached(redis, key: str, data: list[dict] | dict, ttl: int | None = None) -> None:
     if redis is None:
         return
     try:
-        await redis.set(key, json.dumps(data), ex=_VIATOR_CACHE_TTL)
+        await redis.set(key, json.dumps(data), ex=ttl or _VIATOR_CACHE_TTL)
     except Exception:
         pass
 
 
+_SORT_BY_TO_VIATOR = {
+    "created_at": ("DATE_ADDED", "DESCENDING"),
+    "price_per_person": ("PRICE", "ASCENDING"),
+    "avg_rating": ("TRAVELER_RATING", "DESCENDING"),
+    "duration_days": ("ITINERARY_DURATION", "ASCENDING"),
+    "name": ("DEFAULT", "DESCENDING"),
+}
+
+
+def _map_sort_to_viator(sort_by: str, sort_order: str) -> tuple[str, str]:
+    viator_sort, default_order = _SORT_BY_TO_VIATOR.get(sort_by, ("DEFAULT", "DESCENDING"))
+    if viator_sort == "PRICE" or viator_sort == "ITINERARY_DURATION":
+        order = "ASCENDING" if sort_order == "asc" else "DESCENDING"
+    elif viator_sort == "TRAVELER_RATING":
+        order = "DESCENDING"
+    else:
+        order = default_order
+    return viator_sort, order
+
+
 # ── Viator endpoints — MUST be declared before /{tour_id} ────────────────────
+
+@router.get("/viator/tags", response_model=ViatorTagsResponse)
+async def list_viator_tags(request: Request):
+    """Return Viator tag tree (categories) used to render filter UI. Cached 24h."""
+    redis = getattr(request.app.state, "redis", None)
+    cache_key = "viator:tags:v1"
+    cached = await _get_cached(redis, cache_key)
+    if cached is not None:
+        return cached
+    try:
+        tags = await viator_service.get_tags()
+    except ViatorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,
+            detail=exc.message,
+        )
+    result = {"tags": tags}
+    await _set_cached(redis, cache_key, result, ttl=86400)
+    return result
+
 
 @router.get("/viator/{viator_product_code}", response_model=TourResponse)
 async def get_viator_tour(viator_product_code: str, request: Request):
@@ -141,72 +183,143 @@ async def list_tours(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    # ── Viator-specific filters (Affiliate Basic Access surface) ───────────
+    tags: list[int] | None = Query(None, description="Viator tag IDs (multi)"),
+    flags: list[str] | None = Query(None, description="Viator flags: FREE_CANCELLATION, etc."),
+    rating_min: float | None = Query(None, ge=1, le=5),
+    duration_min: int | None = Query(None, ge=0, description="Min duration in minutes"),
+    duration_max: int | None = Query(None, ge=0, description="Max duration in minutes"),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    source: str | None = Query(None, pattern="^(all|viator|local)$"),
 ):
-    # ── DB query ──────────────────────────────────────────────────────────────
-    query = select(Tour)
+    # Validate flags whitelist early so caller gets 422 rather than silent drop.
+    if flags:
+        invalid = [f for f in flags if f not in VIATOR_FLAGS]
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown Viator flags: {invalid}",
+            )
 
-    if owner_id:
-        query = query.where(Tour.owner_id == owner_id)
-    if city:
-        query = query.where(Tour.city.ilike(f"%{city}%"))
-    if country:
-        query = query.where(Tour.country.ilike(f"%{country}%"))
-    if category:
-        query = query.where(Tour.category == category)
-    if min_price is not None:
-        query = query.where(Tour.price_per_person >= min_price)
-    if max_price is not None:
-        query = query.where(Tour.price_per_person <= max_price)
-    if duration:
-        query = query.where(Tour.duration_days == duration)
-    if q:
-        pattern = f"%{q}%"
-        query = query.where(or_(Tour.name.ilike(pattern), Tour.description.ilike(pattern)))
+    # Determine effective source. Activating any Viator-only filter implicitly
+    # restricts results to Viator unless the caller pinned source explicitly.
+    viator_only_active = bool(
+        tags or flags or rating_min is not None
+        or duration_min is not None or duration_max is not None
+        or start_date is not None or end_date is not None
+    )
+    if source is None:
+        effective_source = "viator" if viator_only_active else "all"
+    else:
+        effective_source = source
 
-    count_q = select(func.count()).select_from(query.subquery())
-    total_db = (await db.execute(count_q)).scalar() or 0
+    db_items: list[TourResponse] = []
+    total_db = 0
+    db_viator_codes: set[str] = set()
 
-    sort_col = getattr(Tour, sort_by)
-    query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
-    query = query.offset((page - 1) * per_page).limit(per_page)
+    # ── DB query (skipped when effective_source == "viator") ─────────────────
+    if effective_source != "viator":
+        query = select(Tour)
 
-    result = await db.execute(query)
-    tours = result.scalars().all()
-    db_items = [_tour_response(t) for t in tours]
+        if owner_id:
+            query = query.where(Tour.owner_id == owner_id)
+        if city:
+            query = query.where(Tour.city.ilike(f"%{city}%"))
+        if country:
+            query = query.where(Tour.country.ilike(f"%{country}%"))
+        if category:
+            query = query.where(Tour.category == category)
+        if min_price is not None:
+            query = query.where(Tour.price_per_person >= min_price)
+        if max_price is not None:
+            query = query.where(Tour.price_per_person <= max_price)
+        if duration:
+            query = query.where(Tour.duration_days == duration)
+        if q:
+            pattern = f"%{q}%"
+            query = query.where(or_(Tour.name.ilike(pattern), Tour.description.ilike(pattern)))
 
-    # Collect viator_product_codes already in DB to avoid duplicates
-    db_viator_codes: set[str] = {t.viator_product_code for t in tours if t.viator_product_code}
+        count_q = select(func.count()).select_from(query.subquery())
+        total_db = (await db.execute(count_q)).scalar() or 0
 
-    # ── Viator hybrid search (page 1, no owner filter) ───────────────────────
-    # Use explicit city filter first; fall back to q as a destination name.
+        sort_col = getattr(Tour, sort_by)
+        query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
+        query = query.offset((page - 1) * per_page).limit(per_page)
+
+        result = await db.execute(query)
+        tours = result.scalars().all()
+        db_items = [_tour_response(t) for t in tours]
+        db_viator_codes = {t.viator_product_code for t in tours if t.viator_product_code}
+
+    # ── Viator hybrid search ─────────────────────────────────────────────────
     viator_city = city or q
     viator_items: list[TourResponse] = []
-    if viator_city and not owner_id and page == 1:
-        redis = getattr(request.app.state, "redis", None)
-        cache_key = f"viator:tours:{viator_city}"
-        cached = await _get_cached(redis, cache_key)
+    viator_total = 0
+    if effective_source != "local" and viator_city and not owner_id:
+        viator_sort, viator_order = _map_sort_to_viator(sort_by, sort_order)
+        filter_payload = {
+            "city": viator_city.lower(),
+            "tags": sorted(tags or []),
+            "flags": sorted(flags or []),
+            "rating_min": rating_min,
+            "duration_min": duration_min,
+            "duration_max": duration_max,
+            "lowest_price": min_price,
+            "highest_price": max_price,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+            "sort": viator_sort,
+            "order": viator_order,
+            "page": page,
+            "per_page": per_page,
+        }
+        key_hash = hashlib.sha1(
+            json.dumps(filter_payload, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+        cache_key = f"viator:tours:{key_hash}"
 
-        if cached is not None:
-            raw_tours = cached
+        redis = getattr(request.app.state, "redis", None)
+        cached = await _get_cached(redis, cache_key)
+        if cached is not None and isinstance(cached, dict):
+            raw_payload = cached
         else:
             try:
-                raw_tours = await viator_service.search_tours(city=viator_city, limit=20)
-                await _set_cached(redis, cache_key, raw_tours)
+                raw_payload = await viator_service.search_tours(
+                    city=viator_city,
+                    tags=tags,
+                    flags=flags,
+                    rating_from=rating_min,
+                    duration_from_min=duration_min,
+                    duration_to_min=duration_max,
+                    lowest_price=min_price,
+                    highest_price=max_price,
+                    start_date=start_date,
+                    end_date=end_date,
+                    sort=viator_sort,
+                    order=viator_order,
+                    start=(page - 1) * per_page + 1,
+                    count=per_page,
+                )
+                await _set_cached(redis, cache_key, raw_payload)
             except ViatorError as exc:
                 if exc.status_code != 400:
                     logger.warning("Viator search degraded: %s", exc.message)
-                raw_tours = []
+                raw_payload = {"products": [], "total": 0}
 
+        raw_tours = raw_payload.get("products", []) if isinstance(raw_payload, dict) else raw_payload
+        viator_total = int(raw_payload.get("total") or len(raw_tours)) if isinstance(raw_payload, dict) else len(raw_tours)
         for raw in raw_tours:
             code = raw.get("viator_product_code")
             if code and code in db_viator_codes:
                 continue
-            if category and raw.get("category") != category:
+            if category and effective_source != "viator" and raw.get("category") != category:
                 continue
             viator_items.append(_viator_tour_to_response(raw))
 
     all_items = db_items + viator_items
-    total = total_db + len(viator_items)
+    total = total_db + viator_total
+    total_pages = math.ceil(total / per_page) if total else 1
 
     return TourListResponse(
         items=all_items,
@@ -214,7 +327,7 @@ async def list_tours(
             "total": total,
             "page": page,
             "per_page": per_page,
-            "total_pages": math.ceil(total_db / per_page) if total_db else 1,
+            "total_pages": total_pages,
         },
     )
 

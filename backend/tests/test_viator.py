@@ -40,8 +40,10 @@ async def test_search_tours_normalizes_response():
 
         results = await viator_service.search_tours(city="Hanoi", limit=3)
 
-    assert len(results) == 1
-    t = results[0]
+    products = results["products"]
+    assert results["total"] == 1
+    assert len(products) == 1
+    t = products[0]
     assert t["viator_product_code"] == "TOUR_VN_001"
     assert t["name"] == "Hanoi Old Quarter Walking Tour"
     assert t["city"] == "Hanoi"
@@ -183,7 +185,8 @@ async def test_hybrid_search_includes_viator_tours(client):
         }
     ]
 
-    with patch.object(viator_service, "search_tours", new=AsyncMock(return_value=fake_viator_results)):
+    fake_payload = {"products": fake_viator_results, "total": len(fake_viator_results)}
+    with patch.object(viator_service, "search_tours", new=AsyncMock(return_value=fake_payload)):
         resp = await client.get("/api/v1/tours?city=Hanoi")
 
     assert resp.status_code == 200

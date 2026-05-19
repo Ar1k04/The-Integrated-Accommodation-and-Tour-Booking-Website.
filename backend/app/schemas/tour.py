@@ -76,3 +76,13 @@ class TourAvailabilityResponse(BaseModel):
 class TourListResponse(BaseModel):
     items: list[TourResponse]
     meta: dict
+
+
+class ViatorTag(BaseModel):
+    tag_id: int
+    parent_tag_id: int | None = None
+    name: str
+
+
+class ViatorTagsResponse(BaseModel):
+    tags: list[ViatorTag]

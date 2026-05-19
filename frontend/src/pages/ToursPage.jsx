@@ -6,10 +6,33 @@ import { useTranslation } from 'react-i18next'
 import { toursApi } from '@/api/toursApi'
 import { searchCities } from '@/api/nominatimApi'
 import TourCard from '@/components/tour/TourCard'
+import TourFilters from '@/components/tour/TourFilters'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import { TOUR_CATEGORIES } from '@/utils/constants'
-import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search } from 'lucide-react'
+import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search, Info } from 'lucide-react'
+
+const EMPTY_FILTERS = {
+  min_price: null,
+  max_price: null,
+  city: '',
+  tags: [],
+  flags: [],
+  rating_min: null,
+  duration_min: null,
+  duration_max: null,
+  start_date: '',
+  end_date: '',
+}
+
+const isViatorOnlyActive = (f) =>
+  (f.tags && f.tags.length > 0)
+  || (f.flags && f.flags.length > 0)
+  || f.rating_min != null
+  || f.duration_min != null
+  || f.duration_max != null
+  || (f.start_date && f.start_date !== '')
+  || (f.end_date && f.end_date !== '')
 
 export default function ToursPage() {
   const [params] = useSearchParams()
@@ -19,11 +42,7 @@ export default function ToursPage() {
   const [category, setCategory] = useState(params.get('category') || '')
   const [searchText, setSearchText] = useState(params.get('q') || '')
   const [submittedSearch, setSubmittedSearch] = useState(params.get('q') || '')
-  const [filters, setFilters] = useState({
-    min_price: null,
-    max_price: null,
-    city: params.get('city') || '',
-  })
+  const [filters, setFilters] = useState({ ...EMPTY_FILTERS, city: params.get('city') || '' })
 
   const SORT_OPTIONS = [
     { label: t('common:sort.recommended'), value: 'created_at' },
@@ -52,36 +71,17 @@ export default function ToursPage() {
     staleTime: 60_000,
   })
 
-  // Sidebar city filter Nominatim
-  const [cityInputValue, setCityInputValue] = useState(params.get('city') || '')
-  const [debouncedCity, setDebouncedCity] = useState(params.get('city') || '')
-  const [showCitySuggestions, setShowCitySuggestions] = useState(false)
-  const cityInputRef = useRef(null)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedCity(cityInputValue), 300)
-    return () => clearTimeout(timer)
-  }, [cityInputValue])
-
-  const { data: citySuggestions = [], isFetching: isFetchingCities } = useQuery({
-    queryKey: ['tour-city-suggestions', debouncedCity],
-    queryFn: () => searchCities(debouncedCity),
-    enabled: debouncedCity.length >= 2,
-    staleTime: 60_000,
-  })
-
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (heroInputRef.current && !heroInputRef.current.contains(e.target)) {
         setShowHeroSuggestions(false)
       }
-      if (cityInputRef.current && !cityInputRef.current.contains(e.target)) {
-        setShowCitySuggestions(false)
-      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  const viatorOnly = isViatorOnlyActive(filters)
 
   const isFirstRender = useRef(true)
   const queryParams = useMemo(() => ({
@@ -90,6 +90,13 @@ export default function ToursPage() {
     category: category || undefined,
     min_price: filters.min_price || undefined,
     max_price: filters.max_price || undefined,
+    tags: filters.tags?.length ? filters.tags : undefined,
+    flags: filters.flags?.length ? filters.flags : undefined,
+    rating_min: filters.rating_min ?? undefined,
+    duration_min: filters.duration_min ?? undefined,
+    duration_max: filters.duration_max ?? undefined,
+    start_date: filters.start_date || undefined,
+    end_date: filters.end_date || undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
     per_page: 12,
@@ -102,15 +109,20 @@ export default function ToursPage() {
 
   const handleSearch = () => {
     if (searchText) {
-      setFilters(f => ({ ...f, city: '' }))
-      setCityInputValue('')
+      setFilters((f) => ({ ...f, city: '' }))
     }
     setSubmittedSearch(searchText)
   }
 
   const handleCityFilterChange = (city) => {
-    setFilters(f => ({ ...f, city }))
-    setCityInputValue(city)
+    setFilters((f) => ({ ...f, city }))
+    setSearchText('')
+    setSubmittedSearch('')
+  }
+
+  const resetAll = () => {
+    setFilters({ ...EMPTY_FILTERS })
+    setCategory('')
     setSearchText('')
     setSubmittedSearch('')
   }
@@ -224,92 +236,27 @@ export default function ToursPage() {
             </h2>
             <button onClick={() => setShowFilters(!showFilters)}
               className="md:hidden flex items-center gap-2 text-sm font-medium text-primary">
-              <SlidersHorizontal className="w-4 h-4" /> {t('tours:page.filters')}
+              <SlidersHorizontal className="w-4 h-4" /> {t('tours:page.filters.title')}
             </button>
           </div>
 
           <div className="flex gap-6">
-            <div className={`${showFilters ? 'fixed inset-0 z-50 bg-white p-4 overflow-y-auto md:static md:bg-transparent' : 'hidden'} md:block w-full md:w-60 shrink-0`}>
+            <div className={`${showFilters ? 'fixed inset-0 z-50 bg-white p-4 overflow-y-auto md:static md:bg-transparent' : 'hidden'} md:block w-full md:w-64 shrink-0`}>
               <div className="flex items-center justify-between mb-4 md:hidden">
-                <h2 className="font-bold text-lg">{t('tours:page.filters')}</h2>
+                <h2 className="font-bold text-lg">{t('tours:page.filters.title')}</h2>
                 <button onClick={() => setShowFilters(false)}><X className="w-5 h-5" /></button>
               </div>
-              <div className="bg-white rounded-xl border p-5 space-y-5">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">{t('tours:page.destination')}</label>
-                  <div className="relative" ref={cityInputRef}>
-                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                      value={cityInputValue}
-                      onChange={(e) => {
-                        setCityInputValue(e.target.value)
-                        setShowCitySuggestions(true)
-                        if (!e.target.value) handleCityFilterChange('')
-                      }}
-                      onFocus={() => cityInputValue.length >= 2 && setShowCitySuggestions(true)}
-                      onKeyDown={(e) => e.key === 'Enter' && window.scrollTo({ top: 0, behavior: 'smooth' })}
-                      placeholder={t('tours:page.cityOrCountry')}
-                      className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                    {showCitySuggestions && (isFetchingCities || citySuggestions.length > 0) && (
-                      <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg overflow-hidden max-h-56 overflow-y-auto">
-                        {isFetchingCities && citySuggestions.length === 0 && (
-                          <li className="px-3 py-2 text-sm text-gray-400">{t('common:common.loading')}</li>
-                        )}
-                        {citySuggestions.map((s, i) => (
-                          <li
-                            key={i}
-                            onMouseDown={() => {
-                              handleCityFilterChange(s.city)
-                              setShowCitySuggestions(false)
-                            }}
-                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-primary/5"
-                          >
-                            <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
-                            <span className="font-medium">{s.city}</span>
-                            {s.state && <span className="text-gray-400 truncate">{s.state}, {s.country}</span>}
-                            {!s.state && s.country && <span className="text-gray-400 truncate">{s.country}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">{t('tours:page.priceRange')}</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      placeholder={t('common:common.min')}
-                      value={filters.min_price || ''}
-                      onChange={(e) => setFilters({ ...filters, min_price: e.target.value ? Number(e.target.value) : null })}
-                      className="w-full border rounded-lg px-3 py-2 text-sm"
-                    />
-                    <input
-                      type="number"
-                      placeholder={t('common:common.max')}
-                      value={filters.max_price || ''}
-                      onChange={(e) => setFilters({ ...filters, max_price: e.target.value ? Number(e.target.value) : null })}
-                      className="w-full border rounded-lg px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setFilters({ min_price: null, max_price: null, city: '' })
-                    setCityInputValue('')
-                    setCategory('')
-                    setSearchText('')
-                    setSubmittedSearch('')
-                  }}
-                  className="text-sm text-primary hover:underline"
-                >
-                  {t('common:common.clearFilters')}
-                </button>
-              </div>
+              <TourFilters filters={filters} onChange={setFilters} onClear={resetAll} />
             </div>
 
             <div className="flex-1 min-w-0">
+              {viatorOnly && (
+                <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 text-sm">
+                  <Info className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>{t('tours:page.filters.viatorOnlyBanner')}</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
                 <ArrowUpDown className="w-4 h-4 text-gray-400 shrink-0" />
                 {SORT_OPTIONS.map((opt) => (

@@ -57,3 +57,40 @@ export const CURRENCIES = [
 export const DEFAULT_CURRENCY = 'USD'
 
 export const ITEMS_PER_PAGE = 20
+
+// Viator tag IDs surfaced as quick-pick chips in the Tours filter sidebar.
+// Each entry is a top-level Viator tag (parent_tag_id = null) chosen for broad appeal.
+// `label` is a fallback shown until the live tag tree (/tours/viator/tags) loads.
+export const POPULAR_VIATOR_TAGS = [
+  { id: 21909, label: 'Walking Tours' },
+  { id: 21972, label: 'Food & Drink' },
+  { id: 11940, label: 'Day Trips' },
+  { id: 21911, label: 'Private Tours' },
+  { id: 11944, label: 'Cultural' },
+  { id: 11912, label: 'Cooking Classes' },
+  { id: 21915, label: 'Hiking' },
+  { id: 11930, label: 'City Tours' },
+  { id: 11919, label: 'Cruises' },
+  { id: 11947, label: 'Multi-day' },
+]
+
+// Whitelist of Viator product search flags (must match backend VIATOR_FLAGS).
+export const VIATOR_FLAGS = [
+  'FREE_CANCELLATION',
+  'SKIP_THE_LINE',
+  'PRIVATE_TOUR',
+  'SPECIAL_OFFER',
+  'LIKELY_TO_SELL_OUT',
+  'NEW_ON_VIATOR',
+]
+
+// Preset duration ranges in minutes, mapped to Viator durationInMinutes filter.
+export const VIATOR_DURATION_PRESETS = [
+  { id: 'less1h',   min: null, max: 60 },
+  { id: '1to4h',    min: 60,   max: 240 },
+  { id: '4to8h',    min: 240,  max: 480 },
+  { id: 'fullDay',  min: 480,  max: 1440 },
+  { id: 'multiDay', min: 1440, max: null },
+]
+
+export const VIATOR_RATING_PRESETS = [3, 4, 4.5]

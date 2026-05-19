@@ -61,6 +61,31 @@
     "clearFilters": "Clear all filters",
     "noResults": "No tours found",
     "tryAdjusting": "Try adjusting your search or filters.",
-    "filters": "Filters"
+    "filters": {
+      "title": "Filters",
+      "tourType": "Tour type",
+      "moreCategories": "More categories",
+      "searchTags": "Search categories...",
+      "applyTags": "Apply ({{count}})",
+      "flags": "Features",
+      "flag_FREE_CANCELLATION": "Free cancellation",
+      "flag_SKIP_THE_LINE": "Skip the line",
+      "flag_PRIVATE_TOUR": "Private tour",
+      "flag_SPECIAL_OFFER": "Special offer",
+      "flag_LIKELY_TO_SELL_OUT": "Likely to sell out",
+      "flag_NEW_ON_VIATOR": "New on Viator",
+      "rating": "Minimum rating",
+      "ratingAny": "Any",
+      "duration": "Duration",
+      "duration_less1h": "< 1 hour",
+      "duration_1to4h": "1–4 hours",
+      "duration_4to8h": "4–8 hours",
+      "duration_fullDay": "Full day",
+      "duration_multiDay": "Multi-day",
+      "dateRange": "Travel dates",
+      "startDate": "From",
+      "endDate": "To",
+      "viatorOnlyBanner": "Showing Viator tours only — partner tours are hidden because advanced filters apply only to Viator listings. Clear filters to see all tours."
+    }
   }
 }

@@ -1,6 +1,7 @@
 """Viator tour search, availability, booking, and cancellation integration."""
 import logging
 import re
+import time
 from datetime import date
 from typing import Any
 
@@ -11,6 +12,36 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _CLIENT: httpx.AsyncClient | None = None
+
+_VALID_SORTS = {"DEFAULT", "PRICE", "TRAVELER_RATING", "ITINERARY_DURATION", "DATE_ADDED"}
+_VALID_ORDERS = {"ASCENDING", "DESCENDING"}
+VIATOR_FLAGS = {
+    "NEW_ON_VIATOR", "FREE_CANCELLATION", "SKIP_THE_LINE",
+    "PRIVATE_TOUR", "SPECIAL_OFFER", "LIKELY_TO_SELL_OUT",
+}
+
+# Process-level cache for /products/tags — tag tree is essentially static.
+_TAG_CACHE: dict[str, Any] = {"data": None, "fetched_at": 0.0}
+_TAG_CACHE_TTL = 86400  # 24 hours
+
+# Demo tags returned when Viator key invalid so FE filter UI still renders.
+_DEMO_TAGS: list[dict] = [
+    {"tag_id": 21909, "parent_tag_id": None, "name": "Walking Tours"},
+    {"tag_id": 21972, "parent_tag_id": None, "name": "Food, Wine & Nightlife"},
+    {"tag_id": 11940, "parent_tag_id": None, "name": "Day Trips & Excursions"},
+    {"tag_id": 21911, "parent_tag_id": None, "name": "Private & Custom Tours"},
+    {"tag_id": 11944, "parent_tag_id": None, "name": "Cultural Tours"},
+    {"tag_id": 11912, "parent_tag_id": None, "name": "Cooking Classes"},
+    {"tag_id": 21915, "parent_tag_id": None, "name": "Hiking & Trekking"},
+    {"tag_id": 11930, "parent_tag_id": None, "name": "City Tours"},
+    {"tag_id": 11919, "parent_tag_id": None, "name": "Cruises & Sailing"},
+    {"tag_id": 11947, "parent_tag_id": None, "name": "Multi-day Tours"},
+    {"tag_id": 20757, "parent_tag_id": None, "name": "Likely to Sell Out"},
+    {"tag_id": 11929, "parent_tag_id": None, "name": "Photography Tours"},
+    {"tag_id": 21974, "parent_tag_id": None, "name": "Outdoor Activities"},
+    {"tag_id": 11920, "parent_tag_id": None, "name": "Water Sports"},
+    {"tag_id": 21933, "parent_tag_id": None, "name": "Wine Tasting & Winery Tours"},
+]
 
 
 def _client() -> httpx.AsyncClient:
@@ -301,36 +332,152 @@ def _normalize_product(raw: dict) -> dict:
     }
 
 
-async def search_tours(city: str = "", limit: int = 20) -> list[dict]:
-    """Search Viator products by destination city. Returns normalized dicts."""
-    dest_id = _infer_dest_id(city)
-    if not dest_id:
+async def search_tours(
+    city: str = "",
+    *,
+    dest_id: str | None = None,
+    tags: list[int] | None = None,
+    flags: list[str] | None = None,
+    rating_from: float | None = None,
+    rating_to: float | None = None,
+    duration_from_min: int | None = None,
+    duration_to_min: int | None = None,
+    lowest_price: float | None = None,
+    highest_price: float | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    sort: str = "TRAVELER_RATING",
+    order: str = "DESCENDING",
+    start: int = 1,
+    count: int = 20,
+    currency: str = "USD",
+    limit: int | None = None,
+) -> dict:
+    """Search Viator products with full filter support.
+
+    Returns {"products": list[normalized_dict], "total": int}.
+    `limit` is kept as an alias for `count` for backward compatibility.
+    """
+    if limit is not None:
+        count = limit
+    resolved_dest = dest_id or _infer_dest_id(city)
+    if not resolved_dest:
         raise ViatorError(400, f"Cannot resolve Viator destination for city '{city}'")
 
+    if sort not in _VALID_SORTS:
+        sort = "TRAVELER_RATING"
+    if order not in _VALID_ORDERS:
+        order = "DESCENDING"
+    if sort == "TRAVELER_RATING":
+        order = "DESCENDING"  # Viator spec — TRAVELER_RATING only allows DESCENDING
+
+    filtering: dict[str, Any] = {"destination": resolved_dest}
+    if tags:
+        filtering["tags"] = list(tags)
+    if flags:
+        valid = [f for f in flags if f in VIATOR_FLAGS]
+        if valid:
+            filtering["flags"] = valid
+    if rating_from is not None or rating_to is not None:
+        rating: dict[str, float] = {}
+        if rating_from is not None:
+            rating["from"] = float(rating_from)
+        if rating_to is not None:
+            rating["to"] = float(rating_to)
+        filtering["rating"] = rating
+    if duration_from_min is not None or duration_to_min is not None:
+        dur: dict[str, int] = {}
+        if duration_from_min is not None:
+            dur["from"] = int(duration_from_min)
+        if duration_to_min is not None:
+            dur["to"] = int(duration_to_min)
+        filtering["durationInMinutes"] = dur
+    if lowest_price is not None:
+        filtering["lowestPrice"] = float(lowest_price)
+    if highest_price is not None:
+        filtering["highestPrice"] = float(highest_price)
+    if start_date is not None:
+        filtering["startDate"] = start_date.isoformat()
+    if end_date is not None:
+        filtering["endDate"] = end_date.isoformat()
+
     body: dict[str, Any] = {
-        "filtering": {"destination": dest_id},
-        "sorting": {"sort": "TRAVELER_RATING", "order": "DESCENDING"},
-        "pagination": {"start": 1, "count": limit},
-        "currency": "USD",
+        "filtering": filtering,
+        "pagination": {"start": max(1, start), "count": max(1, count)},
+        "currency": currency,
     }
+    if sort == "DEFAULT":
+        body["sorting"] = {"sort": "DEFAULT"}
+    else:
+        body["sorting"] = {"sort": sort, "order": order}
 
     try:
         resp = await _client().post("/products/search", json=body, headers=_JSON_HEADERS)
         _raise_for_status(resp)
         data = resp.json()
         products = data.get("products") or []
-        return [_normalize_product(p) for p in products]
+        return {
+            "products": [_normalize_product(p) for p in products],
+            "total": int(data.get("totalCount") or len(products)),
+        }
     except ViatorError as exc:
         if exc.status_code == 401:
             # API key invalid — return demo data so the frontend still shows live-looking tours
-            demo = _get_demo_tours(dest_id, limit)
+            demo = _get_demo_tours(resolved_dest, count)
             if demo:
-                logger.info("Viator key invalid — serving demo tours for destId=%s", dest_id)
-                return demo
+                logger.info("Viator key invalid — serving demo tours for destId=%s", resolved_dest)
+                return {"products": demo, "total": len(demo)}
         raise
     except Exception as exc:
         logger.warning("Viator search failed: %s", exc)
         raise ViatorError(502, f"Viator unavailable: {exc}")
+
+
+async def get_tags() -> list[dict]:
+    """Fetch Viator tag tree (cached 24h in process).
+
+    Returns list of {tag_id, parent_tag_id, name}. Falls back to demo on 401.
+    """
+    now = time.time()
+    cached = _TAG_CACHE["data"]
+    if cached is not None and (now - _TAG_CACHE["fetched_at"]) < _TAG_CACHE_TTL:
+        return cached
+
+    try:
+        resp = await _client().get("/products/tags", headers=_LANG_HEADER)
+        _raise_for_status(resp)
+        raw = resp.json()
+        # Viator returns {"tags": [{tagId, parentTagIds, allNamesByLocale, ...}]}
+        # OpenAPI: tag may have multiple parents — flatten to first parent for our UI.
+        tags_out: list[dict] = []
+        for t in raw.get("tags") or []:
+            tag_id = t.get("tagId")
+            if tag_id is None:
+                continue
+            parents = t.get("parentTagIds") or []
+            parent = parents[0] if parents else None
+            names_by_locale = t.get("allNamesByLocale") or {}
+            name = (
+                names_by_locale.get("en")
+                or names_by_locale.get("en_US")
+                or t.get("tagName")
+                or t.get("name")
+                or f"Tag {tag_id}"
+            )
+            tags_out.append({"tag_id": int(tag_id), "parent_tag_id": parent, "name": str(name)})
+        _TAG_CACHE["data"] = tags_out
+        _TAG_CACHE["fetched_at"] = now
+        return tags_out
+    except ViatorError as exc:
+        if exc.status_code == 401:
+            logger.info("Viator key invalid — serving demo tags")
+            _TAG_CACHE["data"] = _DEMO_TAGS
+            _TAG_CACHE["fetched_at"] = now
+            return _DEMO_TAGS
+        raise
+    except Exception as exc:
+        logger.warning("Viator tags fetch failed: %s — serving demo tags", exc)
+        return _DEMO_TAGS
 
 
 def _find_demo_product(viator_product_code: str) -> dict | None:
