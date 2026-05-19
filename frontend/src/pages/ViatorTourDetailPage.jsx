@@ -364,12 +364,53 @@ export default function ViatorTourDetailPage() {
                   {fmt(displayPrice)}
                 </p>
                 <p className="text-sm text-gray-500">{t('common:common.perPerson')}</p>
-                {participants > 1 && (
-                  <p className="text-sm text-gray-400 mt-1">
-                    {t('tours:detail.totalFor', { price: fmt(totalPrice), count: participants })}
-                  </p>
-                )}
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('tours:detail.tourDateLabel')}</label>
+                <input
+                  type="date"
+                  value={tourDate}
+                  min={today}
+                  onChange={(e) => setTourDate(e.target.value)}
+                  className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('tours:detail.participantsLabel')}</label>
+                <div className="flex items-center border rounded-lg">
+                  <button
+                    onClick={() => setParticipants(Math.max(1, participants - 1))}
+                    className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
+                    aria-label={t('tours:detail.participantsLabel')}
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <span className="flex-1 text-center font-semibold">{participants}</span>
+                  <button
+                    onClick={() => setParticipants(Math.min(tour.max_participants, participants + 1))}
+                    className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
+                    aria-label={t('tours:detail.participantsLabel')}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <hr />
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">{fmt(displayPrice)} x {participants}</span>
+                  <span className="font-semibold">{fmt(totalPrice)}</span>
+                </div>
+                <div className="flex justify-between text-base font-bold pt-2 border-t">
+                  <span>{t('common:common.total')}</span>
+                  <span className="text-primary">{fmt(totalPrice)}</span>
+                </div>
+              </div>
+
               <button
                 onClick={handleBook}
                 className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-3 rounded-lg transition-colors"

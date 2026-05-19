@@ -513,7 +513,10 @@ async def get_min_rates_batch(
 ) -> dict[str, float]:
     """Batch-fetch minimum room rate for multiple LiteAPI hotels.
 
-    Returns {liteapi_hotel_id: min_price}. Hotels with no available rates are omitted.
+    Calls POST /hotels/min-rates, which returns the cheapest available rate per
+    hotel as a flat object `{hotelId, price, suggestedSellingPrice, offerId}` —
+    much lighter than /hotels/rates for populating "from $X" on search cards.
+    Returns {liteapi_hotel_id: min_price}; hotels with no availability are omitted.
     """
     if not hotel_ids:
         return {}
@@ -526,23 +529,29 @@ async def get_min_rates_batch(
         "guestNationality": "US",
     }
     try:
-        resp = await _client().post("/hotels/rates", json=body)
+        resp = await _client().post("/hotels/min-rates", json=body)
         _raise_for_status(resp)
         data = resp.json()
         hotels_data = data.get("data") or []
         result: dict[str, float] = {}
-        for hotel_entry in hotels_data:
-            hid = hotel_entry.get("hotelId") or hotel_entry.get("id") or ""
-            room_types = hotel_entry.get("roomTypes") or hotel_entry.get("rooms") or []
-            prices: list[float] = []
-            for rt in room_types:
-                normalized = _normalize_room_type(rt)
-                for plan in normalized["rates"]:
-                    if plan["price"] > 0:
-                        prices.append(plan["price"])
-            if prices:
-                result[hid] = min(prices)
+        for entry in hotels_data:
+            hid = entry.get("hotelId") or entry.get("id") or ""
+            price_raw = entry.get("price")
+            if not hid or price_raw is None:
+                continue
+            try:
+                price = float(price_raw)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                result[hid] = price
         return result
+    except LiteAPIError as exc:
+        # 2001 "no availability found" is normal for date ranges with no inventory.
+        if exc.code == 2001 or exc.status_code == 404:
+            return {}
+        logger.warning("LiteAPI batch min-rates failed: %s", exc)
+        return {}
     except Exception as exc:
         logger.warning("LiteAPI batch min-rates failed: %s", exc)
         return {}
