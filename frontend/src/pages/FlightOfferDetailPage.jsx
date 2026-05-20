@@ -1,41 +1,37 @@
-import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
+import {
+  CreditCard, CheckCircle, User, PlaneTakeoff, PlaneLanding, Armchair, Briefcase,
+} from 'lucide-react'
+
 import { flightsApi } from '@/api/flightsApi'
 import { useBookingStore } from '@/store/bookingStore'
 import { useAuth } from '@/hooks/useAuth'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
-import {
-  PlaneTakeoff, PlaneLanding, Clock, ChevronRight,
-  User, CreditCard, Calendar, CheckCircle,
-} from 'lucide-react'
-import { format, addYears } from 'date-fns'
-
-const TITLE_OPTIONS = ['mr', 'mrs', 'ms', 'dr']
-const GENDER_OPTIONS = [{ value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }]
+import FlightItineraryBlock from '@/components/flight/FlightItineraryBlock'
+import MultiPassengerForm from '@/components/flight/MultiPassengerForm'
+import { emptyPassenger, arePassengersComplete } from '@/components/flight/passengerHelpers'
+import FareBreakdownCard from '@/components/flight/FareBreakdownCard'
+import FareRulesAccordion from '@/components/flight/FareRulesAccordion'
+import SeatMapModal from '@/components/flight/SeatMapModal'
+import AncillariesModal from '@/components/flight/AncillariesModal'
 
 export default function FlightOfferDetailPage() {
   const { offerId } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const setBookingData = useBookingStore((s) => s.setBookingData)
   const { t } = useTranslation(['common', 'flights'])
   const fmt = useFormatCurrency()
 
-  const [passenger, setPassenger] = useState({
-    first_name: '',
-    last_name: '',
-    email: '',
-    gender: 'M',
-    born_on: format(addYears(new Date(), -30), 'yyyy-MM-dd'),
-    title: 'mr',
-    phone_number: '',
-  })
+  const requestedPax = Math.max(1, parseInt(searchParams.get('pax')) || 1)
 
   const { data: offer, isLoading } = useQuery({
     queryKey: ['duffel-offer', offerId],
@@ -43,59 +39,158 @@ export default function FlightOfferDetailPage() {
     select: (res) => res.data?.data,
   })
 
-  const formatTime = (iso) => {
-    if (!iso) return '—'
-    try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }
-    catch { return iso }
+  const paxCount = offer?.passengers || requestedPax
+
+  const [passengers, setPassengers] = useState(() =>
+    Array.from({ length: requestedPax }).map(emptyPassenger),
+  )
+
+  const [trackedPaxCount, setTrackedPaxCount] = useState(requestedPax)
+  if (offer && trackedPaxCount !== paxCount) {
+    setTrackedPaxCount(paxCount)
+    setPassengers((prev) => {
+      if (prev.length === paxCount) return prev
+      if (prev.length < paxCount) {
+        return [...prev, ...Array.from({ length: paxCount - prev.length }).map(emptyPassenger)]
+      }
+      return prev.slice(0, paxCount)
+    })
   }
 
-  const formatDateFull = (iso) => {
-    if (!iso) return '—'
-    try { return new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) }
-    catch { return iso }
-  }
+  // ── Seat + ancillary state ──────────────────────────────────────────
+  const [seatModalOpen, setSeatModalOpen] = useState(false)
+  const [ancillaryModalOpen, setAncillaryModalOpen] = useState(false)
+  const [selectedSeats, setSelectedSeats] = useState({}) // { paxIdx: service_id }
+  const [seatSummaries, setSeatSummaries] = useState({}) // local label cache
+  const [selectedServices, setSelectedServices] = useState([]) // [{id, quantity}]
+
+  const { data: seatMaps = [] } = useQuery({
+    queryKey: ['flight-seat-maps', offerId],
+    queryFn: () => flightsApi.getSeatMaps(offerId),
+    enabled: !!offerId,
+    select: (res) => res.data?.data || [],
+    staleTime: 60_000,
+  })
+
+  const { data: availableServices = [] } = useQuery({
+    queryKey: ['flight-services', offerId],
+    queryFn: () => flightsApi.getAvailableServices(offerId),
+    enabled: !!offerId,
+    select: (res) => res.data?.data || [],
+    staleTime: 60_000,
+  })
+
+  // Sum of selected services' prices
+  const servicesTotal = useMemo(() => {
+    if (!selectedServices.length || !availableServices.length) return 0
+    const byId = new Map(availableServices.map((s) => [s.id, s]))
+    return selectedServices.reduce((acc, sel) => {
+      const svc = byId.get(sel.id)
+      if (!svc) return acc
+      return acc + (parseFloat(svc.total_amount) || 0) * (sel.quantity || 0)
+    }, 0)
+  }, [selectedServices, availableServices])
+
+  // Sum of selected seat prices
+  const seatsTotal = useMemo(() => {
+    return Object.values(seatSummaries).reduce(
+      (acc, s) => acc + (parseFloat(s?.amount) || 0), 0,
+    )
+  }, [seatSummaries])
+
+  const ancillariesTotal = servicesTotal + seatsTotal
+
+  const perPaxAmount = useMemo(() => {
+    if (!offer?.total_amount || !paxCount) return 0
+    return offer.total_amount / paxCount
+  }, [offer, paxCount])
 
   const handleBook = () => {
     if (!isAuthenticated) {
-      navigate(`/login?redirect=/flights/offers/${offerId}`)
+      navigate(`/login?redirect=/flights/offers/${offerId}?pax=${paxCount}`)
       return
     }
-    if (!passenger.first_name || !passenger.last_name || !passenger.email || !passenger.born_on) {
+    if (!arePassengersComplete(passengers, paxCount)) {
       toast.error(t('flights:errors.fillPassengerDetails'))
       return
     }
+
+    const seatsForBooking = {}
+    for (const [k, v] of Object.entries(selectedSeats)) {
+      if (v) seatsForBooking[k] = v
+    }
+
     setBookingData({
       selectedFlight: {
         duffel_offer_id: offerId,
-        total_amount: offer.total_amount,
+        total_amount: offer.total_amount + ancillariesTotal,
         currency: offer.currency,
         airline_name: offer.airline_name,
+        airline_iata: offer.airline_iata,
+        cabin_class: offer.cabin_class,
         slices: offer.slices,
-        passenger: { ...passenger },
+        passengers,
+        quantity: paxCount,
+        selected_services: selectedServices,
+        selected_seats: seatsForBooking,
       },
     })
     navigate('/bookings/new?type=flight')
   }
 
-  const setPax = (field, value) => setPassenger((p) => ({ ...p, [field]: value }))
+  const handleSeatApply = (mapByPax) => {
+    setSelectedSeats(mapByPax)
+    // Build summaries from seat maps so we can display chips
+    const allSeats = {}
+    for (const segment of seatMaps) {
+      for (const cabin of segment.cabins || []) {
+        for (const row of cabin.rows || []) {
+          for (const section of row.sections || []) {
+            for (const el of section.elements || []) {
+              if (el.type === 'seat' && el.available_services?.length) {
+                for (const svc of el.available_services) {
+                  allSeats[svc.id] = {
+                    designator: el.designator,
+                    amount: svc.total_amount,
+                    currency: svc.total_currency,
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    const summaries = {}
+    for (const [k, svcId] of Object.entries(mapByPax)) {
+      const info = allSeats[svcId]
+      if (info) summaries[k] = info
+    }
+    setSeatSummaries(summaries)
+  }
 
   if (isLoading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-4">
+      <div className="max-w-5xl mx-auto px-4 py-8 space-y-4">
         <Skeleton className="h-48 rounded-xl" />
         <Skeleton className="h-64 rounded-xl" />
       </div>
     )
   }
 
-  if (!offer) return <div className="text-center py-20 text-gray-400">{t('flights:detail.notFound')}</div>
+  if (!offer) {
+    return <div className="text-center py-20 text-gray-400">{t('flights:detail.notFound')}</div>
+  }
+
+  const seatsCount = Object.keys(seatSummaries).length
+  const servicesCount = selectedServices.reduce((acc, s) => acc + (s.quantity || 0), 0)
 
   return (
     <>
       <Helmet>
         <title>{t('flights:detail.title')}</title>
       </Helmet>
-      <div className="max-w-4xl mx-auto px-4 py-6">
+      <div className="max-w-5xl mx-auto px-4 py-6">
         <Breadcrumb items={[
           { label: t('common:common.home'), to: '/' },
           { label: t('nav.flights'), to: '/flights' },
@@ -103,186 +198,157 @@ export default function FlightOfferDetailPage() {
         ]} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-          {/* Left: itinerary + passenger form */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Itinerary */}
-            <div className="bg-white border rounded-xl p-6">
-              <div className="flex items-center gap-2 mb-5">
-                <span className="bg-primary/10 text-primary text-sm font-bold px-3 py-1 rounded-full">
-                  {offer.airline_iata}
-                </span>
-                <h2 className="font-heading font-bold text-lg">{offer.airline_name}</h2>
-                {offer.cabin_class && (
-                  <span className="text-xs text-gray-400 capitalize bg-gray-100 px-2 py-0.5 rounded-full">
-                    {offer.cabin_class.replace('_', ' ')} {t('flights:detail.class')}
-                  </span>
-                )}
-              </div>
+            <FlightItineraryBlock
+              slices={offer.slices}
+              airlineName={offer.airline_name}
+              airlineIata={offer.airline_iata}
+              cabinClass={offer.cabin_class}
+            />
 
-              {offer.slices?.map((slice, si) => (
-                <div key={si} className={si > 0 ? 'mt-6 pt-6 border-t' : ''}>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                    {si === 0 ? t('flights:detail.outbound') : t('flights:detail.returnFlight')}
+            <FareRulesAccordion conditions={offer.conditions} />
+
+            {/* Add-on actions */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setSeatModalOpen(true)}
+                className="border rounded-xl p-4 hover:bg-primary/5 transition-colors text-left flex items-start gap-3"
+              >
+                <Armchair className="w-6 h-6 text-primary shrink-0" />
+                <div className="flex-1">
+                  <p className="font-semibold text-sm text-gray-900">
+                    {t('flights:seats.chooseSeats')}
                   </p>
-                  {slice.segments?.map((seg, i) => (
-                    <div key={i} className={i > 0 ? 'mt-4 pt-4 border-t border-dashed' : ''}>
-                      <div className="flex items-center gap-4">
-                        <div className="text-center w-16">
-                          <p className="text-2xl font-bold text-gray-900">{formatTime(seg.departure_at)}</p>
-                          <p className="text-xs font-semibold text-primary">{seg.origin_iata}</p>
-                          <p className="text-xs text-gray-400 truncate">{seg.origin_name}</p>
-                        </div>
-                        <div className="flex-1 flex flex-col items-center gap-1">
-                          {seg.duration && (
-                            <span className="text-xs text-gray-400 flex items-center gap-1">
-                              <Clock className="w-3 h-3" />{seg.duration}
-                            </span>
-                          )}
-                          <div className="w-full flex items-center">
-                            <PlaneTakeoff className="w-4 h-4 text-gray-300 mr-1 shrink-0" />
-                            <div className="flex-1 h-0.5 bg-gray-200" />
-                            <PlaneLanding className="w-4 h-4 text-gray-300 ml-1 shrink-0" />
-                          </div>
-                          <span className="text-xs text-gray-400">
-                            {seg.flight_number}
-                            {seg.aircraft ? ` · ${seg.aircraft}` : ''}
-                          </span>
-                        </div>
-                        <div className="text-center w-16">
-                          <p className="text-2xl font-bold text-gray-900">{formatTime(seg.arrival_at)}</p>
-                          <p className="text-xs font-semibold text-primary">{seg.destination_iata}</p>
-                          <p className="text-xs text-gray-400 truncate">{seg.destination_name}</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-2">{formatDateFull(seg.departure_at)}</p>
-                    </div>
-                  ))}
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {seatsCount > 0
+                      ? `${seatsCount} / ${paxCount} ${t('flights:seats.selected').toLowerCase()}`
+                      : (seatMaps.length === 0
+                        ? t('flights:seats.noSeatMap')
+                        : t('flights:seats.subtitle'))}
+                  </p>
                 </div>
-              ))}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAncillaryModalOpen(true)}
+                disabled={availableServices.length === 0}
+                className="border rounded-xl p-4 hover:bg-primary/5 transition-colors text-left flex items-start gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Briefcase className="w-6 h-6 text-primary shrink-0" />
+                <div className="flex-1">
+                  <p className="font-semibold text-sm text-gray-900">
+                    {t('flights:ancillaries.addBaggage')}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {availableServices.length === 0
+                      ? t('flights:ancillaries.noServices')
+                      : (servicesCount > 0
+                        ? `${servicesCount} ${t('flights:ancillaries.title').toLowerCase()}`
+                        : t('flights:ancillaries.subtitle'))}
+                  </p>
+                </div>
+              </button>
             </div>
 
-            {/* Passenger form */}
-            <div className="bg-white border rounded-xl p-6 space-y-4">
-              <h2 className="font-heading font-bold text-lg flex items-center gap-2">
+            <div>
+              <h2 className="font-heading font-bold text-lg flex items-center gap-2 mb-3">
                 <User className="w-5 h-5" /> {t('flights:detail.passengerDetails')}
               </h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.title')} *</label>
-                  <select
-                    value={passenger.title}
-                    onChange={(e) => setPax('title', e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  >
-                    {TITLE_OPTIONS.map((t) => <option key={t} value={t}>{t.toUpperCase()}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.gender')} *</label>
-                  <select
-                    value={passenger.gender}
-                    onChange={(e) => setPax('gender', e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  >
-                    {GENDER_OPTIONS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.firstName')} *</label>
-                  <input
-                    value={passenger.first_name}
-                    onChange={(e) => setPax('first_name', e.target.value)}
-                    placeholder={t('flights:detail.passenger.firstNamePlaceholder')}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.lastName')} *</label>
-                  <input
-                    value={passenger.last_name}
-                    onChange={(e) => setPax('last_name', e.target.value)}
-                    placeholder={t('flights:detail.passenger.lastNamePlaceholder')}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.email')} *</label>
-                  <input
-                    type="email"
-                    value={passenger.email}
-                    onChange={(e) => setPax('email', e.target.value)}
-                    placeholder={t('flights:detail.passenger.emailPlaceholder')}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.dateOfBirth')} *</label>
-                  <input
-                    type="date"
-                    value={passenger.born_on}
-                    max={format(new Date(), 'yyyy-MM-dd')}
-                    onChange={(e) => setPax('born_on', e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('flights:detail.passenger.phoneOptional')}</label>
-                  <input
-                    type="tel"
-                    value={passenger.phone_number}
-                    onChange={(e) => setPax('phone_number', e.target.value)}
-                    placeholder={t('flights:detail.passenger.phonePlaceholder')}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                </div>
-              </div>
+              <MultiPassengerForm
+                passengers={passengers}
+                onChange={setPassengers}
+                count={paxCount}
+              />
             </div>
           </div>
 
-          {/* Right: price summary */}
-          <div className="lg:col-span-1">
-            <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
-              <div className="text-center">
-                <p className="text-3xl font-bold text-gray-900">
-                  {fmt(offer.total_amount)}
-                </p>
-                <p className="text-xs text-gray-400">{t('flights:detail.perPersonTotalFare')}</p>
-              </div>
-
-              <div className="text-sm space-y-2 text-gray-600">
-                <div className="flex items-center gap-2">
-                  <PlaneTakeoff className="w-4 h-4 text-gray-400" />
-                  <span>{offer.slices?.[0]?.origin} → {offer.slices?.[0]?.destination}</span>
+          {/* Right column — price */}
+          <div className="lg:col-span-1 space-y-4">
+            <div className="sticky top-20 space-y-4">
+              <div className="bg-white border rounded-xl p-5 shadow-sm space-y-4">
+                <div className="text-center">
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(perPaxAmount, offer.currency)}
+                  </p>
+                  <p className="text-xs text-gray-400">{t('flights:detail.perPersonTotalFare')}</p>
+                  {paxCount > 1 && (
+                    <p className="text-sm text-gray-600 mt-2">
+                      {t('flights:detail.totalAllPax')}:{' '}
+                      <strong>{fmt(offer.total_amount, offer.currency)}</strong>
+                      <span className="text-xs text-gray-400 ml-1">× {paxCount}</span>
+                    </p>
+                  )}
                 </div>
-                {offer.slices?.length > 1 && (
+
+                <div className="text-sm space-y-2 text-gray-600">
                   <div className="flex items-center gap-2">
-                    <PlaneLanding className="w-4 h-4 text-gray-400" />
-                    <span>{offer.slices[1].origin} → {offer.slices[1].destination}</span>
+                    <PlaneTakeoff className="w-4 h-4 text-gray-400" />
+                    <span>{offer.slices?.[0]?.origin} → {offer.slices?.[0]?.destination}</span>
                   </div>
-                )}
-                {offer.cabin_class && (
-                  <p className="capitalize">{offer.cabin_class.replace('_', ' ')} {t('flights:detail.class')}</p>
-                )}
+                  {offer.slices?.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <PlaneLanding className="w-4 h-4 text-gray-400" />
+                      <span>{offer.slices[1].origin} → {offer.slices[1].destination}</span>
+                    </div>
+                  )}
+                  {offer.cabin_class && (
+                    <p className="capitalize">{offer.cabin_class.replace('_', ' ')} {t('flights:detail.class')}</p>
+                  )}
+                </div>
+
+                <hr />
+
+                <ul className="text-xs text-gray-500 space-y-1">
+                  <li className="flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3 text-success" /> {t('flights:detail.poweredByDuffel')}
+                  </li>
+                  <li className="flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3 text-success" /> {t('flights:detail.realtimeInventory')}
+                  </li>
+                </ul>
+
+                <button
+                  onClick={handleBook}
+                  className="w-full bg-accent hover:bg-accent/90 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+                >
+                  <CreditCard className="w-5 h-5" />
+                  {t('flights:detail.continueCheckout')}
+                </button>
               </div>
 
-              <hr />
-
-              <ul className="text-xs text-gray-500 space-y-1">
-                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t('flights:detail.poweredByDuffel')}</li>
-                <li className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-success" /> {t('flights:detail.realtimeInventory')}</li>
-              </ul>
-
-              <button
-                onClick={handleBook}
-                className="w-full bg-accent hover:bg-accent/90 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
-              >
-                <CreditCard className="w-5 h-5" />
-                {t('flights:detail.continueCheckout')}
-              </button>
+              <FareBreakdownCard
+                offer={offer}
+                paxCount={paxCount}
+                servicesTotal={ancillariesTotal}
+              />
             </div>
           </div>
         </div>
       </div>
+
+      <SeatMapModal
+        open={seatModalOpen}
+        onClose={() => setSeatModalOpen(false)}
+        seatMaps={seatMaps}
+        passengers={passengers}
+        initialSelected={(() => {
+          const out = {}
+          for (const [k, info] of Object.entries(seatSummaries)) {
+            out[k] = { _designator: info.designator, service_id: selectedSeats[k] }
+          }
+          return out
+        })()}
+        onApply={handleSeatApply}
+      />
+      <AncillariesModal
+        open={ancillaryModalOpen}
+        onClose={() => setAncillaryModalOpen(false)}
+        services={availableServices}
+        passengers={passengers}
+        initialSelection={selectedServices}
+        onApply={setSelectedServices}
+      />
     </>
   )
 }

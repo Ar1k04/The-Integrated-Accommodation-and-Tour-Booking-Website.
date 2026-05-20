@@ -6,9 +6,10 @@ import { bookingsApi } from '@/api/bookingsApi'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { formatDate } from '@/utils/formatters'
 import Skeleton from '@/components/common/Skeleton'
-import { CheckCircle, Download, Calendar, Users, Copy } from 'lucide-react'
+import { CheckCircle, Download, Calendar, Users, Copy, PlaneTakeoff, Ticket } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
+import FlightItineraryBlock from '@/components/flight/FlightItineraryBlock'
 
 export default function BookingConfirmationPage() {
   const { id } = useParams()
@@ -150,6 +151,65 @@ export default function BookingConfirmationPage() {
                   <div>
                     <p className="text-gray-500">Total Paid</p>
                     <p className="font-bold text-lg text-primary">{fmt(booking?.total_price)}</p>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Flight-specific block */}
+            {(() => {
+              const flightItem = booking?.items?.find(i => i.item_type === 'flight')
+              const flight = flightItem?.flight_booking
+              if (!flight) return null
+              const details = flight.passenger_details || {}
+              const snapshot = details.offer_snapshot || {}
+              const passengers = details.passengers || []
+              return (
+                <div className="border-t pt-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <PlaneTakeoff className="w-5 h-5 text-primary" />
+                    <h3 className="font-heading font-bold text-sm">
+                      {flight.airline_name} — {flight.flight_number}
+                    </h3>
+                  </div>
+
+                  {flight.duffel_booking_ref && (
+                    <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 text-center">
+                      <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">
+                        Booking Reference (PNR)
+                      </p>
+                      <code className="text-2xl font-mono font-bold text-primary tracking-widest">
+                        {flight.duffel_booking_ref}
+                      </code>
+                    </div>
+                  )}
+
+                  {snapshot.slices?.length > 0 && (
+                    <FlightItineraryBlock
+                      slices={snapshot.slices}
+                      cabinClass={flight.cabin_class}
+                      compact
+                    />
+                  )}
+
+                  {passengers.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                        Passengers ({passengers.length})
+                      </p>
+                      <ul className="space-y-1 text-sm">
+                        {passengers.map((p, i) => (
+                          <li key={i} className="flex items-center gap-2 text-gray-700">
+                            <Ticket className="w-3.5 h-3.5 text-gray-400" />
+                            {p.title?.toUpperCase()}. {p.first_name} {p.last_name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+                    💡 Online check-in opens 24 hours before departure.
                   </div>
                 </div>
               )

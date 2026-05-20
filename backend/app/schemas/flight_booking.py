@@ -39,6 +39,7 @@ class FlightBookingResponse(BaseModel):
     total_amount: float
     currency: str
     status: str
+    passenger_details: dict | None = None
     created_at: datetime
     updated_at: datetime
 

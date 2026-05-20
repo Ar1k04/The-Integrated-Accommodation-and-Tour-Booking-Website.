@@ -342,17 +342,43 @@ async def _reserve_tour_item(
 
 
 async def _reserve_duffel_flight_item(
-    db: AsyncSession, item: FlightItemCreate
+    db: AsyncSession, item: FlightItemCreate, redis=None,
 ) -> tuple[BookingItem, Decimal]:
-    """Validate a Duffel offer and create a pending FlightBooking snapshot."""
+    """Validate a Duffel offer and create a pending FlightBooking snapshot.
+
+    Handles multi-passenger orders: the lead pax populates the dedicated columns,
+    all passengers go into JSONB passenger_details["passengers"], and the offer
+    snapshot (slices/airline) is preserved so the confirmation page can render
+    a full itinerary without re-hitting Duffel.
+
+    If Duffel's individual-offer lookup fails (often happens late in the offer
+    TTL) but we have a per-offer snapshot in Redis from /search, fall back to
+    that snapshot. The actual create_order step at confirmation time is what
+    really validates the offer with Duffel.
+    """
+    import json as _json
     from app.models.flight_booking import FlightBookingStatus
 
+    offer: dict | None = None
+    fetch_error: str | None = None
     try:
         offer = await duffel_service.get_offer(item.duffel_offer_id)
     except DuffelError as exc:
-        raise BookingServiceError(f"Duffel offer validation failed: {exc.message}")
+        fetch_error = exc.message
 
-    # Extract first-segment details for the snapshot
+    if offer is None and redis is not None:
+        try:
+            cached = await redis.get(f"duffel:offer:{item.duffel_offer_id}")
+            if cached:
+                offer = _json.loads(cached)
+        except Exception:
+            offer = None
+
+    if offer is None:
+        raise BookingServiceError(
+            f"Duffel offer validation failed: {fetch_error or 'offer unavailable'}"
+        )
+
     first_slice = offer["slices"][0] if offer.get("slices") else {}
     first_seg = first_slice.get("segments", [{}])[0]
     last_slice = offer["slices"][-1] if offer.get("slices") else {}
@@ -366,7 +392,14 @@ async def _reserve_duffel_flight_item(
         except Exception:
             return datetime.now(tz=timezone.utc)
 
-    pax = item.passenger
+    passenger_list = item.passengers or ([item.passenger] if item.passenger else [])
+    if not passenger_list:
+        raise BookingServiceError("At least one passenger is required for a flight booking")
+
+    lead = passenger_list[0]
+    total_amount = float(offer["total_amount"])
+    pax_count = len(passenger_list)
+
     flight = FlightBooking(
         duffel_order_id=None,
         airline_name=offer.get("airline_name", "Unknown"),
@@ -376,39 +409,49 @@ async def _reserve_duffel_flight_item(
         departure_at=_parse_dt(first_seg.get("departure_at", "")),
         arrival_at=_parse_dt(last_seg.get("arrival_at", "")),
         cabin_class=offer.get("cabin_class"),
-        passenger_name=f"{pax.first_name} {pax.last_name}",
-        passenger_email=pax.email,
-        base_amount=offer["total_amount"],
-        total_amount=offer["total_amount"],
+        passenger_name=f"{lead.first_name} {lead.last_name}",
+        passenger_email=lead.email,
+        base_amount=total_amount,
+        total_amount=total_amount,
         currency=offer["currency"],
         status=FlightBookingStatus.pending.value,
         passenger_details={
             "offer_id": item.duffel_offer_id,
-            "passenger": pax.model_dump(mode="json"),
+            "passengers": [p.model_dump(mode="json") for p in passenger_list],
+            "selected_services": item.selected_services or [],
+            "selected_seats": item.selected_seats or {},
+            "offer_snapshot": {
+                "airline_name": offer.get("airline_name"),
+                "airline_iata": offer.get("airline_iata"),
+                "cabin_class": offer.get("cabin_class"),
+                "slices": offer.get("slices") or [],
+                "total_amount": total_amount,
+                "currency": offer["currency"],
+            },
         },
     )
     db.add(flight)
     await db.flush()
 
-    unit_price = Decimal(str(offer["total_amount"])).quantize(Decimal("0.01"))
-    subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
+    unit_price = (Decimal(str(total_amount)) / Decimal(pax_count)).quantize(Decimal("0.01"))
+    subtotal = Decimal(str(total_amount)).quantize(Decimal("0.01"))
 
     bi = BookingItem(
         item_type=BookingItemType.flight.value,
         flight_booking_id=flight.id,
         unit_price=unit_price,
         subtotal=subtotal,
-        quantity=item.quantity,
+        quantity=pax_count,
         status=BookingItemStatus.pending.value,
     )
     return bi, subtotal
 
 
 async def _reserve_flight_item(
-    db: AsyncSession, item: FlightItemCreate
+    db: AsyncSession, item: FlightItemCreate, redis=None,
 ) -> tuple[BookingItem, Decimal]:
     if item.duffel_offer_id:
-        return await _reserve_duffel_flight_item(db, item)
+        return await _reserve_duffel_flight_item(db, item, redis=redis)
 
     flight = (
         await db.execute(
@@ -517,7 +560,7 @@ async def create_booking(
             elif isinstance(entry, TourItemCreate):
                 bi, subtotal = await _reserve_tour_item(db, entry)
             elif isinstance(entry, FlightItemCreate):
-                bi, subtotal = await _reserve_flight_item(db, entry)
+                bi, subtotal = await _reserve_flight_item(db, entry, redis=redis)
             else:
                 raise BookingServiceError("Unknown item type in cart")
 
@@ -687,12 +730,17 @@ async def confirm_booking(
             if flight and flight.status == "pending" and not flight.duffel_order_id:
                 details = flight.passenger_details or {}
                 if details.get("offer_id"):
+                    pax_list = details.get("passengers") or (
+                        [details["passenger"]] if details.get("passenger") else []
+                    )
                     try:
                         result = await duffel_service.create_order(
                             duffel_offer_id=details["offer_id"],
-                            passenger=details.get("passenger", {}),
+                            passengers=pax_list,
                             amount=str(flight.total_amount),
                             currency=flight.currency,
+                            services=details.get("selected_services") or None,
+                            selected_seats=details.get("selected_seats") or None,
                         )
                         flight.duffel_order_id = result["duffel_order_id"]
                         flight.duffel_booking_ref = result.get("duffel_booking_ref")

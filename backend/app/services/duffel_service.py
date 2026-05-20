@@ -90,16 +90,39 @@ def _normalize_offer(raw: dict) -> dict:
         })
 
     owner = raw.get("owner") or {}
+
+    # Collect baggage info from the first passenger (Duffel returns per-passenger
+    # baggages on each segment). Surfaced as a simple flag the UI can check.
+    has_baggage = False
+    raw_passengers = raw.get("passengers") or []
+    if raw_passengers:
+        for sl in raw.get("slices") or []:
+            for seg in sl.get("segments") or []:
+                seg_passengers = seg.get("passengers") or []
+                for p in seg_passengers:
+                    baggages = p.get("baggages") or []
+                    if any((b.get("quantity") or 0) > 0 for b in baggages):
+                        has_baggage = True
+                        break
+                if has_baggage:
+                    break
+            if has_baggage:
+                break
+
     return {
         "duffel_offer_id": raw.get("id") or "",
         "total_amount": float(raw.get("total_amount") or 0),
+        "base_amount": float(raw.get("base_amount")) if raw.get("base_amount") else None,
+        "tax_amount": float(raw.get("tax_amount")) if raw.get("tax_amount") else None,
         "currency": raw.get("total_currency") or "USD",
         "airline_name": owner.get("name") or "Unknown Airline",
         "airline_iata": owner.get("iata_code") or "",
         "slices": slices,
-        "passengers": len(raw.get("passengers") or []),
+        "passengers": len(raw_passengers),
         "cabin_class": raw.get("cabin_class"),
         "expires_at": raw.get("expires_at"),
+        "conditions": raw.get("conditions") or {},
+        "has_baggage": has_baggage,
         "source": "duffel",
     }
 
@@ -155,13 +178,20 @@ async def get_offer(duffel_offer_id: str) -> dict:
 
 async def create_order(
     duffel_offer_id: str,
-    passenger: dict,
+    passengers: list[dict],
     amount: str,
     currency: str,
+    services: list[dict] | None = None,
+    selected_seats: dict[str, str] | None = None,
 ) -> dict:
-    """Book the offer. Fetches passenger IDs first, then POSTs /air/orders."""
+    """Book the offer. Fetches passenger IDs first, then POSTs /air/orders.
+
+    passengers: one dict per traveler (count MUST equal offer's pax count).
+    services: optional Duffel services to add — [{"id": "ase_...", "quantity": 1}].
+    selected_seats: optional mapping {pax_index_str: seat_service_id} — injected
+        per-passenger as Duffel expects seats attached to the passenger record.
+    """
     try:
-        # Get fresh offer to retrieve Duffel-assigned passenger IDs
         offer_resp = await _client().get(f"/air/offers/{duffel_offer_id}")
         _raise_for_status(offer_resp)
         offer_data = offer_resp.json()["data"]
@@ -174,33 +204,43 @@ async def create_order(
     if not pax_ids:
         raise DuffelError(422, "No passengers found on offer")
 
-    # Build passenger payloads — map to Duffel's expected fields
-    passengers_payload = []
-    for pax_id in pax_ids:
-        pax = {
-            "id": pax_id,
-            "title": passenger.get("title", "mr"),
-            "gender": passenger.get("gender", "M").lower(),
-            "given_name": passenger.get("first_name", ""),
-            "family_name": passenger.get("last_name", ""),
-            "born_on": str(passenger.get("born_on", "1990-01-01")),
-            "email": passenger.get("email", ""),
-        }
-        phone = passenger.get("phone_number")
-        if phone:
-            pax["phone_number"] = phone
-        passengers_payload.append(pax)
+    if len(pax_ids) != len(passengers):
+        raise DuffelError(
+            422,
+            f"Passenger count mismatch: offer expects {len(pax_ids)}, got {len(passengers)}",
+        )
 
-    body = {
-        "data": {
-            "selected_offers": [duffel_offer_id],
-            "passengers": passengers_payload,
-            "payments": [{"type": "balance", "amount": amount, "currency": currency}],
+    passengers_payload = []
+    for idx, (pax_id, pax) in enumerate(zip(pax_ids, passengers)):
+        entry = {
+            "id": pax_id,
+            "title": pax.get("title", "mr"),
+            "gender": (pax.get("gender") or "M").lower(),
+            "given_name": pax.get("first_name", ""),
+            "family_name": pax.get("last_name", ""),
+            "born_on": str(pax.get("born_on", "1990-01-01")),
+            "email": pax.get("email", ""),
         }
+        phone = pax.get("phone_number")
+        if phone:
+            entry["phone_number"] = phone
+        # Attach seat selection by passenger index (frontend keys seats this way)
+        if selected_seats:
+            seat_service_id = selected_seats.get(str(idx)) or selected_seats.get(pax_id)
+            if seat_service_id:
+                entry["seat"] = seat_service_id
+        passengers_payload.append(entry)
+
+    body_data = {
+        "selected_offers": [duffel_offer_id],
+        "passengers": passengers_payload,
+        "payments": [{"type": "balance", "amount": amount, "currency": currency}],
     }
+    if services:
+        body_data["services"] = services
 
     try:
-        resp = await _client().post("/air/orders", json=body)
+        resp = await _client().post("/air/orders", json={"data": body_data})
         _raise_for_status(resp)
         order = resp.json()["data"]
         return {
@@ -214,6 +254,85 @@ async def create_order(
         raise
     except Exception as exc:
         raise DuffelError(502, f"Duffel create_order failed: {exc}") from exc
+
+
+async def get_order(duffel_order_id: str) -> dict:
+    """Fetch a Duffel order with full details (passengers, slices, documents)."""
+    try:
+        resp = await _client().get(f"/air/orders/{duffel_order_id}")
+        _raise_for_status(resp)
+        raw = resp.json()["data"]
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel get_order failed: {exc}") from exc
+
+    slices = []
+    for sl in raw.get("slices") or []:
+        segs = [_normalize_segment(s) for s in sl.get("segments") or []]
+        origin_obj = sl.get("origin") or {}
+        dest_obj = sl.get("destination") or {}
+        slices.append({
+            "origin": origin_obj.get("iata_code") or "",
+            "destination": dest_obj.get("iata_code") or "",
+            "duration": _parse_duration(sl.get("duration")),
+            "segments": segs,
+        })
+
+    passengers_out = []
+    for p in raw.get("passengers") or []:
+        passengers_out.append({
+            "id": p.get("id"),
+            "title": p.get("title"),
+            "given_name": p.get("given_name"),
+            "family_name": p.get("family_name"),
+            "email": p.get("email"),
+            "born_on": p.get("born_on"),
+        })
+
+    return {
+        "duffel_order_id": raw.get("id") or "",
+        "duffel_booking_ref": raw.get("booking_reference"),
+        "status": raw.get("status") or raw.get("synced_at"),
+        "total_amount": float(raw.get("total_amount") or 0),
+        "currency": raw.get("total_currency") or "USD",
+        "passengers": passengers_out,
+        "slices": slices,
+        "documents": raw.get("documents") or [],
+        "conditions": raw.get("conditions") or {},
+        "created_at": raw.get("created_at"),
+    }
+
+
+async def get_seat_maps(duffel_offer_id: str) -> list[dict]:
+    """Fetch seat map for an offer. Returns empty list if not supported by airline."""
+    try:
+        resp = await _client().get(f"/air/seat_maps?offer_id={duffel_offer_id}")
+        if resp.status_code == 404:
+            return []
+        _raise_for_status(resp)
+        return resp.json().get("data") or []
+    except DuffelError as exc:
+        if exc.status_code in (404, 422):
+            return []
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel get_seat_maps failed: {exc}") from exc
+
+
+async def get_available_services(duffel_offer_id: str) -> list[dict]:
+    """Fetch available add-on services (baggage, etc.) for an offer."""
+    try:
+        resp = await _client().get(
+            f"/air/offers/{duffel_offer_id}?return_available_services=true"
+        )
+        _raise_for_status(resp)
+        raw = resp.json()["data"]
+        return raw.get("available_services") or []
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel get_available_services failed: {exc}") from exc
 
 
 async def cancel_order(duffel_order_id: str) -> bool:

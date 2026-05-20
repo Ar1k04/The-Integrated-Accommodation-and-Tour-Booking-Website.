@@ -1,4 +1,80 @@
 {
+  "page": {
+    "title": "Search Flights — TravelBooking",
+    "heading": "Search Flights",
+    "subtitle": "Real-time prices from 300+ airlines",
+    "from": "From",
+    "to": "To",
+    "depart": "Departure",
+    "return": "Return",
+    "passengers": "Passengers",
+    "cabinClass": "Cabin Class",
+    "search": "Search Flights",
+    "searching": "Searching…",
+    "swap": "Swap origin/destination",
+    "noResults": "No flights found for this route and date.",
+    "noResultsHint": "Try different dates, airports, or relax your filters.",
+    "found_one": "Found {{count}} flight",
+    "found_other": "Found {{count}} flights",
+    "filtersTitle": "Filter Flights",
+    "showFilters": "Show filters",
+    "hideFilters": "Hide filters",
+    "directOnly": "Direct only",
+    "selectAirportFirst": "Please choose origin and destination",
+    "sameAirport": "Origin and destination cannot be the same",
+    "selectDate": "Please select a departure date",
+    "selectReturnDate": "Please select a return date",
+    "returnAfterDeparture": "Return date must be after departure",
+    "searchUnavailable": "Flight search unavailable — try again later",
+    "tripType": {
+      "oneWay": "One Way",
+      "roundTrip": "Round Trip"
+    },
+    "cabin": {
+      "economy": "Economy",
+      "premium_economy": "Premium Economy",
+      "business": "Business",
+      "first": "First"
+    }
+  },
+  "filters": {
+    "title": "Filters",
+    "price": "Price",
+    "maxPrice": "Max price",
+    "stops": "Stops",
+    "stopsAny": "Any",
+    "stopsDirect": "Direct only",
+    "stopsOneMax": "1 stop max",
+    "airlines": "Airlines",
+    "departureTime": "Departure time",
+    "duration": "Max duration",
+    "maxDurationHours": "Max duration (hours)",
+    "clear": "Clear filters",
+    "tw_earlyMorning": "Early (00–06)",
+    "tw_morning": "Morning (06–12)",
+    "tw_afternoon": "Afternoon (12–18)",
+    "tw_evening": "Evening (18–24)"
+  },
+  "sort": {
+    "label": "Sort by",
+    "cheapest": "Cheapest",
+    "fastest": "Fastest",
+    "earliest": "Earliest"
+  },
+  "card": {
+    "direct": "Direct",
+    "stop_one": "{{count}} stop",
+    "stop_other": "{{count}} stops",
+    "showSegments": "Show details",
+    "hideSegments": "Hide details",
+    "refundable": "Refundable",
+    "baggage": "Baggage incl.",
+    "perPerson": "per person",
+    "select": "Select",
+    "roundTrip": "Round-trip",
+    "layover": "Layover",
+    "in": "in"
+  },
   "detail": {
     "title": "Flight Details — TravelBooking",
     "notFound": "Offer not found or expired",
@@ -6,6 +82,7 @@
     "returnFlight": "Return Flight",
     "passengerDetails": "Passenger Details",
     "perPersonTotalFare": "per person · total fare",
+    "totalAllPax": "Total for all passengers",
     "class": "class",
     "poweredByDuffel": "Powered by Duffel",
     "realtimeInventory": "Real-time inventory",
@@ -24,8 +101,89 @@
       "phonePlaceholder": "+84 900 000 000"
     }
   },
+  "passengers": {
+    "passenger_n": "Passenger {{n}}",
+    "leadPassenger": "Lead passenger (contact)",
+    "additionalPassenger": "Additional passenger",
+    "edit": "Edit",
+    "collapse": "Collapse"
+  },
   "errors": {
-    "fillPassengerDetails": "Please fill in all required passenger details"
+    "fillPassengerDetails": "Please fill in all required passenger details for every traveler"
+  },
+  "seats": {
+    "chooseSeats": "Choose seats",
+    "title": "Seat Selection",
+    "subtitle": "Pick seats for each passenger",
+    "noSeatMap": "Seats will be assigned at check-in",
+    "available": "Available",
+    "selected": "Selected",
+    "occupied": "Occupied",
+    "extraLegroom": "Extra legroom",
+    "apply": "Apply selection",
+    "cancel": "Cancel",
+    "freeOfCharge": "Free",
+    "segment": "Segment {{n}}",
+    "passengerN": "Passenger {{n}}"
+  },
+  "ancillaries": {
+    "title": "Add-on Services",
+    "subtitle": "Baggage, meals and more",
+    "addBaggage": "Add baggage / meals",
+    "noServices": "No add-on services available for this flight",
+    "baggage": "Baggage",
+    "meals": "Meals",
+    "other": "Other",
+    "perPassenger": "Per passenger",
+    "apply": "Apply",
+    "cancel": "Cancel",
+    "total": "Total"
+  },
+  "fareBreakdown": {
+    "title": "Fare breakdown",
+    "base": "Base fare",
+    "taxes": "Taxes & fees",
+    "services": "Add-on services",
+    "perPax": "per passenger",
+    "total": "Total",
+    "totalAllPax": "Total for {{count}} passengers"
+  },
+  "fareRules": {
+    "title": "Fare rules",
+    "cancellation": "Cancellation",
+    "changes": "Changes",
+    "refundable": "Refundable",
+    "nonRefundable": "Non-refundable",
+    "changesAllowed": "Changes allowed",
+    "changesNotAllowed": "Changes not allowed",
+    "feeApplies": "fee applies"
+  },
+  "confirmation": {
+    "pnrLabel": "Booking Reference (PNR)",
+    "checkInTip": "Online check-in opens 24 hours before departure.",
+    "manageBooking": "Manage booking",
+    "eTicket": "E-ticket",
+    "passengersOn": "Passengers on this booking",
+    "nextSteps": "Next steps"
+  },
+  "manage": {
+    "title": "Manage Booking — TravelBooking",
+    "heading": "Manage Booking",
+    "pnr": "PNR",
+    "status": "Status",
+    "totalPaid": "Total paid",
+    "passengers": "Passengers",
+    "syncFromAirline": "Sync from airline",
+    "syncing": "Syncing…",
+    "syncSuccess": "Synced with the airline",
+    "syncFailed": "Could not reach the airline. Try again later.",
+    "downloadETicket": "Download e-ticket",
+    "cancelBooking": "Cancel booking",
+    "cancelling": "Cancelling…",
+    "cancelConfirm": "Are you sure you want to cancel this booking?",
+    "refundInfo": "Refund information",
+    "noBooking": "Booking not found",
+    "documents": "Tickets & documents"
   },
   "myBookings": {
     "airline": "Airline",
@@ -34,6 +192,7 @@
     "departure": "Departure",
     "arrival": "Arrival",
     "bookingRef": "Booking Reference",
-    "flightNumber": "Flight Number"
+    "flightNumber": "Flight Number",
+    "manage": "Manage"
   }
 }

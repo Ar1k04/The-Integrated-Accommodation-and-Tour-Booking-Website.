@@ -29,7 +29,9 @@ class _FlightSummary(BaseModel):
     total_amount: float
     currency: str
     status: str
+    duffel_order_id: str | None = None
     duffel_booking_ref: str | None = None
+    passenger_details: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -62,14 +64,24 @@ class FlightItemCreate(BaseModel):
     flight_booking_id: uuid.UUID | None = None
     duffel_offer_id: str | None = None
     passenger: PassengerInfo | None = None
+    passengers: list[PassengerInfo] | None = None
+    selected_services: list[dict] | None = None
+    selected_seats: dict[str, str] | None = None
     quantity: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def check_flight_source(self) -> "FlightItemCreate":
         if not self.flight_booking_id and not self.duffel_offer_id:
             raise ValueError("Either flight_booking_id or duffel_offer_id must be set")
-        if self.duffel_offer_id and not self.passenger:
-            raise ValueError("passenger is required when duffel_offer_id is set")
+        if self.duffel_offer_id:
+            if not self.passengers and not self.passenger:
+                raise ValueError("passengers (list) is required when duffel_offer_id is set")
+            if not self.passengers and self.passenger:
+                self.passengers = [self.passenger]
+            if self.passengers and len(self.passengers) != self.quantity:
+                raise ValueError(
+                    f"passengers count ({len(self.passengers)}) must equal quantity ({self.quantity})"
+                )
         return self
 
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
@@ -352,12 +352,20 @@ function BookingsTab() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-col items-end gap-2">
                         <p className="font-bold text-primary">{fmt(b.total_price)}</p>
-                        {canCancel(b.status) && (
-                          <button onClick={() => setPendingCancel(b)}
-                            className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
-                        )}
+                        <div className="flex items-center gap-3 text-xs">
+                          <Link
+                            to={`/flights/bookings/${b.id}`}
+                            className="text-primary hover:underline font-medium"
+                          >
+                            Manage
+                          </Link>
+                          {canCancel(b.status) && (
+                            <button onClick={() => setPendingCancel(b)}
+                              className="text-error hover:underline">{t('bookings.cancel')}</button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )

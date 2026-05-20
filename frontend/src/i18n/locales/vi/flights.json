@@ -1,4 +1,80 @@
 {
+  "page": {
+    "title": "Tìm chuyến bay — TravelBooking",
+    "heading": "Tìm chuyến bay",
+    "subtitle": "Giá thực tế từ hơn 300 hãng hàng không",
+    "from": "Điểm đi",
+    "to": "Điểm đến",
+    "depart": "Ngày đi",
+    "return": "Ngày về",
+    "passengers": "Hành khách",
+    "cabinClass": "Hạng ghế",
+    "search": "Tìm chuyến bay",
+    "searching": "Đang tìm…",
+    "swap": "Đổi điểm đi/đến",
+    "noResults": "Không tìm thấy chuyến bay cho lộ trình này.",
+    "noResultsHint": "Thử ngày khác, sân bay khác hoặc bỏ bớt bộ lọc.",
+    "found_one": "Tìm thấy {{count}} chuyến",
+    "found_other": "Tìm thấy {{count}} chuyến",
+    "filtersTitle": "Lọc chuyến bay",
+    "showFilters": "Hiện bộ lọc",
+    "hideFilters": "Ẩn bộ lọc",
+    "directOnly": "Chỉ bay thẳng",
+    "selectAirportFirst": "Vui lòng chọn điểm đi và điểm đến",
+    "sameAirport": "Điểm đi và điểm đến không được trùng",
+    "selectDate": "Vui lòng chọn ngày khởi hành",
+    "selectReturnDate": "Vui lòng chọn ngày về",
+    "returnAfterDeparture": "Ngày về phải sau ngày đi",
+    "searchUnavailable": "Tạm thời không tra cứu được — vui lòng thử lại sau",
+    "tripType": {
+      "oneWay": "Một chiều",
+      "roundTrip": "Khứ hồi"
+    },
+    "cabin": {
+      "economy": "Phổ thông",
+      "premium_economy": "Phổ thông đặc biệt",
+      "business": "Thương gia",
+      "first": "Hạng nhất"
+    }
+  },
+  "filters": {
+    "title": "Bộ lọc",
+    "price": "Giá",
+    "maxPrice": "Giá tối đa",
+    "stops": "Điểm dừng",
+    "stopsAny": "Tất cả",
+    "stopsDirect": "Bay thẳng",
+    "stopsOneMax": "Tối đa 1 điểm dừng",
+    "airlines": "Hãng bay",
+    "departureTime": "Giờ khởi hành",
+    "duration": "Thời gian bay tối đa",
+    "maxDurationHours": "Thời gian tối đa (giờ)",
+    "clear": "Xóa bộ lọc",
+    "tw_earlyMorning": "Sáng sớm (00–06)",
+    "tw_morning": "Sáng (06–12)",
+    "tw_afternoon": "Chiều (12–18)",
+    "tw_evening": "Tối (18–24)"
+  },
+  "sort": {
+    "label": "Sắp xếp",
+    "cheapest": "Rẻ nhất",
+    "fastest": "Nhanh nhất",
+    "earliest": "Bay sớm nhất"
+  },
+  "card": {
+    "direct": "Bay thẳng",
+    "stop_one": "{{count}} điểm dừng",
+    "stop_other": "{{count}} điểm dừng",
+    "showSegments": "Xem chi tiết",
+    "hideSegments": "Ẩn chi tiết",
+    "refundable": "Có hoàn vé",
+    "baggage": "Có hành lý",
+    "perPerson": "mỗi người",
+    "select": "Chọn",
+    "roundTrip": "Khứ hồi",
+    "layover": "Nối chuyến",
+    "in": "tại"
+  },
   "detail": {
     "title": "Chi tiết chuyến bay — TravelBooking",
     "notFound": "Không tìm thấy vé hoặc vé đã hết hạn",
@@ -6,6 +82,7 @@
     "returnFlight": "Chuyến bay về",
     "passengerDetails": "Thông tin hành khách",
     "perPersonTotalFare": "mỗi người · tổng giá vé",
+    "totalAllPax": "Tổng cho tất cả hành khách",
     "class": "hạng",
     "poweredByDuffel": "Được cung cấp bởi Duffel",
     "realtimeInventory": "Dữ liệu thời gian thực",
@@ -24,8 +101,89 @@
       "phonePlaceholder": "+84 900 000 000"
     }
   },
+  "passengers": {
+    "passenger_n": "Hành khách {{n}}",
+    "leadPassenger": "Hành khách chính (liên hệ)",
+    "additionalPassenger": "Hành khách bổ sung",
+    "edit": "Chỉnh sửa",
+    "collapse": "Thu gọn"
+  },
   "errors": {
-    "fillPassengerDetails": "Vui lòng điền đầy đủ thông tin hành khách"
+    "fillPassengerDetails": "Vui lòng điền đầy đủ thông tin cho tất cả hành khách"
+  },
+  "seats": {
+    "chooseSeats": "Chọn ghế",
+    "title": "Chọn ghế ngồi",
+    "subtitle": "Chọn ghế cho từng hành khách",
+    "noSeatMap": "Ghế sẽ được sắp xếp khi làm thủ tục",
+    "available": "Còn trống",
+    "selected": "Đã chọn",
+    "occupied": "Đã có người",
+    "extraLegroom": "Chỗ duỗi chân",
+    "apply": "Áp dụng",
+    "cancel": "Hủy",
+    "freeOfCharge": "Miễn phí",
+    "segment": "Chặng {{n}}",
+    "passengerN": "Hành khách {{n}}"
+  },
+  "ancillaries": {
+    "title": "Dịch vụ bổ sung",
+    "subtitle": "Hành lý, suất ăn và các dịch vụ khác",
+    "addBaggage": "Thêm hành lý / suất ăn",
+    "noServices": "Chuyến bay này không có dịch vụ bổ sung",
+    "baggage": "Hành lý",
+    "meals": "Suất ăn",
+    "other": "Khác",
+    "perPassenger": "Mỗi hành khách",
+    "apply": "Áp dụng",
+    "cancel": "Hủy",
+    "total": "Tổng"
+  },
+  "fareBreakdown": {
+    "title": "Chi tiết giá",
+    "base": "Giá vé cơ bản",
+    "taxes": "Thuế & phí",
+    "services": "Dịch vụ bổ sung",
+    "perPax": "mỗi hành khách",
+    "total": "Tổng cộng",
+    "totalAllPax": "Tổng cho {{count}} hành khách"
+  },
+  "fareRules": {
+    "title": "Quy định vé",
+    "cancellation": "Hủy vé",
+    "changes": "Đổi vé",
+    "refundable": "Có hoàn tiền",
+    "nonRefundable": "Không hoàn tiền",
+    "changesAllowed": "Cho phép đổi",
+    "changesNotAllowed": "Không cho phép đổi",
+    "feeApplies": "có phí"
+  },
+  "confirmation": {
+    "pnrLabel": "Mã đặt chỗ (PNR)",
+    "checkInTip": "Check-in trực tuyến mở 24 giờ trước giờ khởi hành.",
+    "manageBooking": "Quản lý đặt chỗ",
+    "eTicket": "Vé điện tử",
+    "passengersOn": "Hành khách trong đặt chỗ này",
+    "nextSteps": "Các bước tiếp theo"
+  },
+  "manage": {
+    "title": "Quản lý đặt chỗ — TravelBooking",
+    "heading": "Quản lý đặt chỗ",
+    "pnr": "PNR",
+    "status": "Trạng thái",
+    "totalPaid": "Đã thanh toán",
+    "passengers": "Hành khách",
+    "syncFromAirline": "Đồng bộ từ hãng bay",
+    "syncing": "Đang đồng bộ…",
+    "syncSuccess": "Đã đồng bộ với hãng bay",
+    "syncFailed": "Không kết nối được hãng bay. Vui lòng thử lại.",
+    "downloadETicket": "Tải vé điện tử",
+    "cancelBooking": "Hủy đặt chỗ",
+    "cancelling": "Đang hủy…",
+    "cancelConfirm": "Bạn có chắc muốn hủy đặt chỗ này không?",
+    "refundInfo": "Thông tin hoàn tiền",
+    "noBooking": "Không tìm thấy đặt chỗ",
+    "documents": "Vé & tài liệu"
   },
   "myBookings": {
     "airline": "Hãng bay",
@@ -34,6 +192,7 @@
     "departure": "Khởi hành",
     "arrival": "Đến nơi",
     "bookingRef": "Mã đặt chỗ",
-    "flightNumber": "Số hiệu chuyến bay"
+    "flightNumber": "Số hiệu chuyến bay",
+    "manage": "Quản lý"
   }
 }

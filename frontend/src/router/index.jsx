@@ -28,6 +28,7 @@ import ManageUsers from '@/pages/admin/ManageUsers'
 import ManageVouchers from '@/pages/admin/ManageVouchers'
 import FlightsSearchPage from '@/pages/FlightsSearchPage'
 import FlightOfferDetailPage from '@/pages/FlightOfferDetailPage'
+import FlightManageBookingPage from '@/pages/FlightManageBookingPage'
 
 export const router = createBrowserRouter([
   {
@@ -51,6 +52,10 @@ export const router = createBrowserRouter([
       },
       { path: '/flights', element: <RedirectIfAdmin><FlightsSearchPage /></RedirectIfAdmin> },
       { path: '/flights/offers/:offerId', element: <RedirectIfAdmin><FlightOfferDetailPage /></RedirectIfAdmin> },
+      {
+        path: '/flights/bookings/:bookingId',
+        element: <ProtectedRoute userOnly><FlightManageBookingPage /></ProtectedRoute>,
+      },
       { path: '/tours', element: <RedirectIfAdmin><ToursPage /></RedirectIfAdmin> },
       { path: '/tours/viator/:code', element: <RedirectIfAdmin><ViatorTourDetailPage /></RedirectIfAdmin> },
       { path: '/tours/:id', element: <RedirectIfAdmin><TourDetailPage /></RedirectIfAdmin> },

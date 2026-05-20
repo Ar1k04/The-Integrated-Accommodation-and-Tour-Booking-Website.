@@ -131,11 +131,11 @@ async def test_create_order_returns_order_id():
 
         result = await duffel_service.create_order(
             duffel_offer_id="off_0000test",
-            passenger={
+            passengers=[{
                 "first_name": "John", "last_name": "Doe",
                 "email": "john@example.com", "gender": "M",
                 "born_on": "1990-01-01", "title": "mr",
-            },
+            }],
             amount="123.45",
             currency="USD",
         )
@@ -143,6 +143,196 @@ async def test_create_order_returns_order_id():
     assert result["duffel_order_id"] == "ord_0000test"
     assert result["duffel_booking_ref"] == "DUFXYZ"
     assert result["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_create_order_multi_passenger_assigns_distinct_names():
+    """Each Duffel pax_id receives the corresponding passenger dict, not a duplicate."""
+    offer_raw_multi = {
+        "data": {
+            **_OFFER_RAW,
+            "passengers": [
+                {"id": "pas_001", "type": "adult"},
+                {"id": "pas_002", "type": "adult"},
+                {"id": "pas_003", "type": "adult"},
+            ],
+        }
+    }
+    order_raw = {
+        "data": {
+            "id": "ord_multi",
+            "booking_reference": "MULTI1",
+            "status": "confirmed",
+            "total_amount": "370.35",
+            "total_currency": "USD",
+        }
+    }
+
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, offer_raw_multi))
+        mock_client.post = AsyncMock(return_value=_mock_response(200, order_raw))
+        mock_client_fn.return_value = mock_client
+
+        await duffel_service.create_order(
+            duffel_offer_id="off_0000test",
+            passengers=[
+                {"first_name": "Alice", "last_name": "Doe", "email": "a@x.com",
+                 "gender": "F", "born_on": "1990-01-01", "title": "ms"},
+                {"first_name": "Bob", "last_name": "Smith", "email": "b@x.com",
+                 "gender": "M", "born_on": "1985-05-10", "title": "mr"},
+                {"first_name": "Carol", "last_name": "Lee", "email": "c@x.com",
+                 "gender": "F", "born_on": "2010-08-20", "title": "ms"},
+            ],
+            amount="370.35",
+            currency="USD",
+        )
+
+        call = mock_client.post.call_args
+        body = call.kwargs.get("json") or call.args[1]
+        sent_pax = body["data"]["passengers"]
+        names = [p["given_name"] for p in sent_pax]
+        assert names == ["Alice", "Bob", "Carol"]
+        assert sent_pax[0]["id"] == "pas_001"
+        assert sent_pax[1]["id"] == "pas_002"
+        assert sent_pax[2]["id"] == "pas_003"
+
+
+@pytest.mark.asyncio
+async def test_create_order_passenger_count_mismatch_raises_422():
+    """Mismatch between offer pax_ids and provided passenger list must raise 422."""
+    offer_raw_2pax = {
+        "data": {
+            **_OFFER_RAW,
+            "passengers": [
+                {"id": "pas_001", "type": "adult"},
+                {"id": "pas_002", "type": "adult"},
+            ],
+        }
+    }
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, offer_raw_2pax))
+        mock_client.post = AsyncMock()
+        mock_client_fn.return_value = mock_client
+
+        with pytest.raises(DuffelError) as exc_info:
+            await duffel_service.create_order(
+                duffel_offer_id="off_0000test",
+                passengers=[{
+                    "first_name": "Alice", "last_name": "Doe", "email": "a@x.com",
+                    "gender": "F", "born_on": "1990-01-01", "title": "ms",
+                }],
+                amount="246.90",
+                currency="USD",
+            )
+        assert exc_info.value.status_code == 422
+        mock_client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_order_forwards_services_and_seats():
+    """When services + selected_seats provided, they appear in the POST body."""
+    offer_raw_2pax = {
+        "data": {
+            **_OFFER_RAW,
+            "passengers": [
+                {"id": "pas_001", "type": "adult"},
+                {"id": "pas_002", "type": "adult"},
+            ],
+        }
+    }
+    order_raw = {"data": {"id": "ord_seats", "booking_reference": "SEATS1", "status": "confirmed",
+                          "total_amount": "246.90", "total_currency": "USD"}}
+
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, offer_raw_2pax))
+        mock_client.post = AsyncMock(return_value=_mock_response(200, order_raw))
+        mock_client_fn.return_value = mock_client
+
+        await duffel_service.create_order(
+            duffel_offer_id="off_0000test",
+            passengers=[
+                {"first_name": "Alice", "last_name": "Doe", "email": "a@x.com",
+                 "gender": "F", "born_on": "1990-01-01", "title": "ms"},
+                {"first_name": "Bob", "last_name": "Smith", "email": "b@x.com",
+                 "gender": "M", "born_on": "1985-05-10", "title": "mr"},
+            ],
+            amount="246.90",
+            currency="USD",
+            services=[{"id": "ase_bag123", "quantity": 1}],
+            selected_seats={"0": "ase_seat12A", "1": "ase_seat12B"},
+        )
+
+        body = mock_client.post.call_args.kwargs["json"]["data"]
+        assert body["services"] == [{"id": "ase_bag123", "quantity": 1}]
+        assert body["passengers"][0]["seat"] == "ase_seat12A"
+        assert body["passengers"][1]["seat"] == "ase_seat12B"
+
+
+@pytest.mark.asyncio
+async def test_get_order_normalizes_response():
+    raw = {
+        "data": {
+            "id": "ord_xyz",
+            "booking_reference": "PNR123",
+            "status": "confirmed",
+            "total_amount": "200.00",
+            "total_currency": "USD",
+            "passengers": [
+                {"id": "pas_1", "given_name": "Alice", "family_name": "Doe",
+                 "email": "a@x.com", "title": "ms", "born_on": "1990-01-01"},
+            ],
+            "slices": _OFFER_RAW["slices"],
+            "documents": [{"type": "electronic_ticket", "unique_identifier": "TICKET-1"}],
+        }
+    }
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, raw))
+        mock_client_fn.return_value = mock_client
+
+        order = await duffel_service.get_order("ord_xyz")
+
+    assert order["duffel_order_id"] == "ord_xyz"
+    assert order["duffel_booking_ref"] == "PNR123"
+    assert order["passengers"][0]["given_name"] == "Alice"
+    assert order["documents"][0]["type"] == "electronic_ticket"
+    assert len(order["slices"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_seat_maps_returns_empty_on_404():
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(404, {}))
+        mock_client_fn.return_value = mock_client
+
+        result = await duffel_service.get_seat_maps("off_no_seats")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_available_services_returns_list():
+    raw = {
+        "data": {
+            **_OFFER_RAW,
+            "available_services": [
+                {"id": "ase_bag1", "type": "baggage", "total_amount": "25.00", "total_currency": "USD"},
+            ],
+        }
+    }
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, raw))
+        mock_client_fn.return_value = mock_client
+
+        services = await duffel_service.get_available_services("off_0000test")
+
+    assert len(services) == 1
+    assert services[0]["type"] == "baggage"
 
 
 @pytest.mark.asyncio

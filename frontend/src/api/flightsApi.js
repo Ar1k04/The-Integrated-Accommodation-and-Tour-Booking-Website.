@@ -1,17 +1,15 @@
-import axios from 'axios'
-
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '' })
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
+import api from './axiosInstance'
 
 export const flightsApi = {
-  search: (params) =>
-    api.get('/api/v1/flights/search', { params }),
-
-  getOffer: (duffelOfferId) =>
-    api.get(`/api/v1/flights/offers/${duffelOfferId}`),
+  search: (params) => api.get('/flights/search', { params }),
+  getOffer: (duffelOfferId) => api.get(`/flights/offers/${duffelOfferId}`),
+  searchAirports: (q, limit = 10) =>
+    api.get('/flights/airports', { params: { q, limit } }),
+  getOrder: (duffelOrderId) => api.get(`/flights/orders/${duffelOrderId}`),
+  syncOrder: (duffelOrderId) =>
+    api.post(`/flights/orders/${duffelOrderId}/sync`),
+  getSeatMaps: (duffelOfferId) =>
+    api.get(`/flights/seat-maps/${duffelOfferId}`),
+  getAvailableServices: (duffelOfferId) =>
+    api.get(`/flights/offers/${duffelOfferId}/available_services`),
 }

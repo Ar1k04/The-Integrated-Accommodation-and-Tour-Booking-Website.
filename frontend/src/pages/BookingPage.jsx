@@ -211,13 +211,18 @@ export default function BookingPage() {
     try {
       // 1. Create booking
       const isLiteapi = !isViatorTour && !isRegularTour && !isFlightBooking && Boolean(selectedRoom?.liteapi_rate_id)
+      const flightPaxList = selectedFlight?.passengers
+        || (selectedFlight?.passenger ? [selectedFlight.passenger] : [])
+      const flightPaxCount = selectedFlight?.quantity || flightPaxList.length || 1
       const bookingPayload = isFlightBooking
         ? {
             items: [{
               item_type: 'flight',
               duffel_offer_id: selectedFlight.duffel_offer_id,
-              passenger: selectedFlight.passenger,
-              quantity: 1,
+              passengers: flightPaxList,
+              selected_services: selectedFlight.selected_services || undefined,
+              selected_seats: selectedFlight.selected_seats || undefined,
+              quantity: flightPaxCount,
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
@@ -505,8 +510,7 @@ export default function BookingPage() {
 function FlightOrderSummary({ flight }) {
   const fmt = useFormatCurrency()
   if (!flight) return null
-  const firstSlice = flight.slices?.[0]
-  const pax = flight.passenger
+  const paxList = flight.passengers || (flight.passenger ? [flight.passenger] : [])
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
@@ -521,8 +525,19 @@ function FlightOrderSummary({ flight }) {
           {slice.duration && <span className="text-xs text-gray-400 ml-2">{slice.duration}</span>}
         </div>
       ))}
-      {pax && (
-        <p className="text-xs text-gray-400">Passenger: {pax.first_name} {pax.last_name}</p>
+      {paxList.length > 0 && (
+        <div className="text-xs text-gray-500">
+          <p className="font-medium text-gray-600 mb-1">
+            {paxList.length} passenger{paxList.length > 1 ? 's' : ''}:
+          </p>
+          <ul className="space-y-0.5">
+            {paxList.map((p, i) => (
+              <li key={i} className="truncate">
+                {i + 1}. {p.first_name} {p.last_name}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <hr />
       <div className="flex justify-between text-sm font-bold">
