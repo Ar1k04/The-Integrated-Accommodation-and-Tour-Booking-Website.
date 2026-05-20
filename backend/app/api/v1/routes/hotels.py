@@ -216,9 +216,6 @@ async def list_hotels(
     if check_in and check_out:
         query = query.where(room_price_subq.c.min_room_price.isnot(None))
 
-    count_q = select(func.count()).select_from(query.subquery())
-    total_db = (await db.execute(count_q)).scalar() or 0
-
     if sort_by == "base_price":
         sort_col = room_price_subq.c.min_room_price
     else:
@@ -228,8 +225,32 @@ async def list_hotels(
         query = query.order_by(sort_col.desc().nulls_last() if sort_by == "base_price" else sort_col.desc())
     else:
         query = query.order_by(sort_col.asc().nulls_last() if sort_by == "base_price" else sort_col.asc())
-    query = query.offset((page - 1) * per_page).limit(per_page)
 
+    geo_search = latitude is not None and longitude is not None
+    use_liteapi = (city or country or geo_search) and not owner_id and not search
+
+    # When LiteAPI is in the mix, we fetch *all* matching DB rows so we can merge,
+    # sort, and paginate the combined list locally. DB rows are typically few
+    # (mostly local/seeded hotels), so this stays cheap. When LiteAPI is not used
+    # (admin owner queries, free-text search), we paginate at the SQL level.
+    if not use_liteapi:
+        count_q = select(func.count()).select_from(query.subquery())
+        total_db = (await db.execute(count_q)).scalar() or 0
+        query = query.offset((page - 1) * per_page).limit(per_page)
+        result = await db.execute(query)
+        rows = result.all()
+        db_items = [_hotel_response(row[0], row[1]) for row in rows]
+        return HotelListResponse(
+            items=db_items,
+            meta={
+                "total": total_db,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": math.ceil(total_db / per_page) if total_db else 1,
+            },
+        )
+
+    # ── Combined DB + LiteAPI path ────────────────────────────────────────────
     result = await db.execute(query)
     rows = result.all()
     db_items = [_hotel_response(row[0], row[1]) for row in rows]
@@ -239,103 +260,103 @@ async def list_hotels(
         row[0].liteapi_hotel_id for row in rows if row[0].liteapi_hotel_id
     }
 
-    # ── LiteAPI hybrid search (city/country OR coord search, page 1, no owner filter) ──
+    # ── LiteAPI hybrid search (cached; runs on every page so client pagination
+    # over the combined list works without re-hitting the supplier) ──
     liteapi_items: list[HotelResponse] = []
-    geo_search = latitude is not None and longitude is not None
-    if (city or country or geo_search) and not owner_id and not search and page == 1:
-        redis = getattr(request.app.state, "redis", None)
-        # Translate amenity slugs → LiteAPI facility IDs
-        selected_slugs = [s.strip() for s in (amenities or "").split(",") if s.strip()]
-        facility_ids = [SLUG_TO_LITEAPI_ID[s] for s in selected_slugs if s in SLUG_TO_LITEAPI_ID]
-        strict = len(facility_ids) >= 2
-        # Translate hotel-type slugs → LiteAPI hotel-type IDs
-        hotel_type_ids = [
-            HOTEL_TYPE_SLUG_TO_ID[s] for s in selected_type_slugs if s in HOTEL_TYPE_SLUG_TO_ID
-        ]
-        slugs_key = ",".join(sorted(selected_slugs)) if selected_slugs else ""
-        types_key = ",".join(sorted(selected_type_slugs)) if selected_type_slugs else ""
-        geo_key = f"{latitude}:{longitude}:{radius_km}" if geo_search else ""
-        cache_key = f"liteapi:hotels:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}"
-        cached = await _get_cached_liteapi_hotels(redis, cache_key)
+    redis = getattr(request.app.state, "redis", None)
+    # Translate amenity slugs → LiteAPI facility IDs
+    selected_slugs = [s.strip() for s in (amenities or "").split(",") if s.strip()]
+    facility_ids = [SLUG_TO_LITEAPI_ID[s] for s in selected_slugs if s in SLUG_TO_LITEAPI_ID]
+    strict = len(facility_ids) >= 2
+    # Translate hotel-type slugs → LiteAPI hotel-type IDs
+    hotel_type_ids = [
+        HOTEL_TYPE_SLUG_TO_ID[s] for s in selected_type_slugs if s in HOTEL_TYPE_SLUG_TO_ID
+    ]
+    slugs_key = ",".join(sorted(selected_slugs)) if selected_slugs else ""
+    types_key = ",".join(sorted(selected_type_slugs)) if selected_type_slugs else ""
+    geo_key = f"{latitude}:{longitude}:{radius_km}" if geo_search else ""
+    # Cache-key prefix bumped to v2 to invalidate stale 20-item entries.
+    cache_key = f"liteapi:hotels_v2:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}:200"
+    cached = await _get_cached_liteapi_hotels(redis, cache_key)
 
-        if cached is not None:
-            raw_hotels = cached
+    if cached is not None:
+        raw_hotels = cached
+    else:
+        try:
+            raw_hotels = await liteapi_service.search_hotels(
+                country_code=country or "",
+                city=city or "",
+                check_in=check_in,
+                check_out=check_out,
+                guests=guests or 1,
+                limit=200,
+                facility_ids=facility_ids or None,
+                strict_facilities_filtering=strict,
+                hotel_type_ids=hotel_type_ids or None,
+                latitude=latitude if geo_search else None,
+                longitude=longitude if geo_search else None,
+                radius_km=radius_km if geo_search else None,
+            )
+            await _set_cached_liteapi_hotels(redis, cache_key, raw_hotels)
+        except LiteAPIError as exc:
+            # 400 means we couldn't infer country — that's expected for unknown cities
+            if exc.status_code != 400:
+                logger.warning("LiteAPI search degraded: %s", exc.message)
+            raw_hotels = []
+
+    # Build initial list and collect IDs that have no static minRate
+    no_price_ids: list[str] = []
+    for raw in raw_hotels:
+        lite_id = raw.get("liteapi_hotel_id")
+        if lite_id and lite_id in db_liteapi_ids:
+            continue
+        if star_rating and int(raw.get("star_rating") or 0) != star_rating:
+            continue
+        item = _liteapi_hotel_to_response(raw)
+        liteapi_items.append(item)
+        if item.min_room_price is None and lite_id:
+            no_price_ids.append(lite_id)
+
+    # Batch-fetch min rates for hotels that have no static pricing
+    if no_price_ids:
+        rate_check_in = check_in or (date.today() + timedelta(days=7))
+        rate_check_out = check_out or (rate_check_in + timedelta(days=1))
+        rate_cache_key = f"liteapi:minrates:{','.join(sorted(no_price_ids))}:{rate_check_in}:{rate_check_out}"
+        cached_rates = await _get_cached_liteapi_hotels(redis, rate_cache_key)
+        if cached_rates is not None:
+            min_rates = {k: v for k, v in (cached_rates if isinstance(cached_rates, dict) else {}).items()}
         else:
-            try:
-                raw_hotels = await liteapi_service.search_hotels(
-                    country_code=country or "",
-                    city=city or "",
-                    check_in=check_in,
-                    check_out=check_out,
-                    guests=guests or 1,
-                    limit=20,
-                    facility_ids=facility_ids or None,
-                    strict_facilities_filtering=strict,
-                    hotel_type_ids=hotel_type_ids or None,
-                    latitude=latitude if geo_search else None,
-                    longitude=longitude if geo_search else None,
-                    radius_km=radius_km if geo_search else None,
-                )
-                await _set_cached_liteapi_hotels(redis, cache_key, raw_hotels)
-            except LiteAPIError as exc:
-                # 400 means we couldn't infer country — that's expected for unknown cities
-                if exc.status_code != 400:
-                    logger.warning("LiteAPI search degraded: %s", exc.message)
-                raw_hotels = []
+            parsed_child_ages = _parse_child_ages(child_ages)
+            min_rates = await get_min_rates_batch(
+                no_price_ids,
+                rate_check_in,
+                rate_check_out,
+                guests or 1,
+                children_ages=parsed_child_ages,
+            )
+            if min_rates:
+                await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL) if redis else None
+        for item in liteapi_items:
+            if item.min_room_price is None and item.liteapi_hotel_id in min_rates:
+                item.min_room_price = min_rates[item.liteapi_hotel_id]
 
-        # Build initial list and collect IDs that have no static minRate
-        no_price_ids: list[str] = []
-        for raw in raw_hotels:
-            lite_id = raw.get("liteapi_hotel_id")
-            if lite_id and lite_id in db_liteapi_ids:
-                continue
-            if star_rating and int(raw.get("star_rating") or 0) != star_rating:
-                continue
-            item = _liteapi_hotel_to_response(raw)
-            liteapi_items.append(item)
-            if item.min_room_price is None and lite_id:
-                no_price_ids.append(lite_id)
-
-        # Batch-fetch min rates for hotels that have no static pricing
-        if no_price_ids:
-            rate_check_in = check_in or (date.today() + timedelta(days=7))
-            rate_check_out = check_out or (rate_check_in + timedelta(days=1))
-            rate_cache_key = f"liteapi:minrates:{','.join(sorted(no_price_ids))}:{rate_check_in}:{rate_check_out}"
-            cached_rates = await _get_cached_liteapi_hotels(redis, rate_cache_key)
-            if cached_rates is not None:
-                min_rates = {k: v for k, v in (cached_rates if isinstance(cached_rates, dict) else {}).items()}
-            else:
-                parsed_child_ages = _parse_child_ages(child_ages)
-                min_rates = await get_min_rates_batch(
-                    no_price_ids,
-                    rate_check_in,
-                    rate_check_out,
-                    guests or 1,
-                    children_ages=parsed_child_ages,
-                )
-                if min_rates:
-                    await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL) if redis else None
-            for item in liteapi_items:
-                if item.min_room_price is None and item.liteapi_hotel_id in min_rates:
-                    item.min_room_price = min_rates[item.liteapi_hotel_id]
-
-        # Apply price range filter to LiteAPI results after prices are populated
-        if min_price is not None:
-            liteapi_items = [
-                item for item in liteapi_items
-                if item.min_room_price is not None and item.min_room_price >= min_price
-            ]
-        if max_price is not None:
-            liteapi_items = [
-                item for item in liteapi_items
-                if item.min_room_price is not None and item.min_room_price <= max_price
-            ]
+    # Apply price range filter to LiteAPI results after prices are populated
+    if min_price is not None:
+        liteapi_items = [
+            item for item in liteapi_items
+            if item.min_room_price is not None and item.min_room_price >= min_price
+        ]
+    if max_price is not None:
+        liteapi_items = [
+            item for item in liteapi_items
+            if item.min_room_price is not None and item.min_room_price <= max_price
+        ]
 
     all_items = db_items + liteapi_items
 
-    # Re-sort the merged list so LiteAPI hotels respect the requested sort order.
+    # Sort the merged list so DB and LiteAPI hotels share the requested order.
     # Hotels without a value for the sort field always sink to the bottom.
-    if sort_by != "created_at" and liteapi_items:
+    if sort_by != "created_at":
         reverse = sort_order == "desc"
 
         def _sort_key(item: HotelResponse):
@@ -353,15 +374,19 @@ async def list_hotels(
 
         all_items = sorted(all_items, key=_sort_key)
 
-    total = total_db + len(liteapi_items)
+    total = len(all_items)
+    total_pages = math.ceil(total / per_page) if total else 1
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = all_items[start:end]
 
     return HotelListResponse(
-        items=all_items,
+        items=page_items,
         meta={
             "total": total,
             "page": page,
             "per_page": per_page,
-            "total_pages": math.ceil(total_db / per_page) if total_db else 1,
+            "total_pages": total_pages,
         },
     )
 

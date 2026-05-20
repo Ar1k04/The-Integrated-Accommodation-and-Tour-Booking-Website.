@@ -52,7 +52,7 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
     hotel_types: filters.hotel_types?.length ? filters.hotel_types.join(',') : undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
-    per_page: 10,
+    per_page: 20,
   }), [city, checkIn, checkOut, guests, childAges, filters, sortBy, sortOrder])
 
   const {
