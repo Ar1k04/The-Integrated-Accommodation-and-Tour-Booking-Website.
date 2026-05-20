@@ -58,8 +58,8 @@ def _client() -> httpx.AsyncClient:
     return _CLIENT
 
 
-_LANG_HEADER = {"Accept-Language": "en-US"}
-_JSON_HEADERS = {"Content-Type": "application/json;version=2.0", "Accept-Language": "en-US"}
+_LANG_HEADER = {"Accept-Language": "en"}
+_JSON_HEADERS = {"Content-Type": "application/json;version=2.0", "Accept-Language": "en"}
 
 
 class ViatorError(Exception):
@@ -436,7 +436,7 @@ async def search_tours(
 async def get_tags() -> list[dict]:
     """Fetch Viator tag tree (cached 24h in process).
 
-    Returns list of {tag_id, parent_tag_id, name}. Falls back to demo on 401.
+    Returns list of {tag_id, parent_tag_id, name, names_by_locale}. Falls back to demo on 401.
     """
     now = time.time()
     cached = _TAG_CACHE["data"]
@@ -459,12 +459,18 @@ async def get_tags() -> list[dict]:
             names_by_locale = t.get("allNamesByLocale") or {}
             name = (
                 names_by_locale.get("en")
-                or names_by_locale.get("en_US")
+                or names_by_locale.get("en_GB")
+                or names_by_locale.get("en_AU")
                 or t.get("tagName")
                 or t.get("name")
                 or f"Tag {tag_id}"
             )
-            tags_out.append({"tag_id": int(tag_id), "parent_tag_id": parent, "name": str(name)})
+            tags_out.append({
+                "tag_id": int(tag_id),
+                "parent_tag_id": parent,
+                "name": str(name),
+                "names_by_locale": {str(k): str(v) for k, v in names_by_locale.items()},
+            })
         _TAG_CACHE["data"] = tags_out
         _TAG_CACHE["fetched_at"] = now
         return tags_out

@@ -62,16 +62,16 @@ export const ITEMS_PER_PAGE = 20
 // Each entry is a top-level Viator tag (parent_tag_id = null) chosen for broad appeal.
 // `label` is a fallback shown until the live tag tree (/tours/viator/tags) loads.
 export const POPULAR_VIATOR_TAGS = [
-  { id: 21909, label: 'Walking Tours' },
-  { id: 21972, label: 'Food & Drink' },
-  { id: 11940, label: 'Day Trips' },
-  { id: 21911, label: 'Private Tours' },
-  { id: 11944, label: 'Cultural' },
-  { id: 11912, label: 'Cooking Classes' },
-  { id: 21915, label: 'Hiking' },
-  { id: 11930, label: 'City Tours' },
-  { id: 11919, label: 'Cruises' },
-  { id: 11947, label: 'Multi-day' },
+  { id: 12046, label: 'Walking Tours' },
+  { id: 21911, label: 'Food & Drink' },
+  { id: 11889, label: 'Day Trips' },
+  { id: 12050, label: 'Private Tours' },
+  { id: 12028, label: 'Cultural Tours' },
+  { id: 12034, label: 'Cooking Classes' },
+  { id: 11902, label: 'Hiking Tours' },
+  { id: 12075, label: 'City Tours' },
+  { id: 21701, label: 'Cruises & Sailing' },
+  { id: 11922, label: 'Multi-day Tours' },
 ]
 
 // Whitelist of Viator product search flags (must match backend VIATOR_FLAGS).

@@ -1,4 +1,5 @@
 """LiteAPI hotel search, rates, prebook, and booking integration."""
+import asyncio
 import logging
 from datetime import date
 from typing import Any
@@ -532,25 +533,17 @@ async def get_hotel_reviews(liteapi_hotel_id: str, limit: int = 50) -> list[dict
         return []
 
 
-async def get_min_rates_batch(
+_MIN_RATES_CHUNK_SIZE = 50
+
+
+async def _min_rates_chunk(
     hotel_ids: list[str],
     check_in: date,
     check_out: date,
-    guests: int = 1,
-    children_ages: list[int] | None = None,
+    guests: int,
+    children_ages: list[int] | None,
 ) -> dict[str, float]:
-    """Batch-fetch minimum room rate for multiple LiteAPI hotels.
-
-    Calls POST /hotels/min-rates, which returns the cheapest available rate per
-    hotel as a flat object `{hotelId, price, suggestedSellingPrice, offerId}` —
-    much lighter than /hotels/rates for populating "from $X" on search cards.
-    Returns {liteapi_hotel_id: min_price}; hotels with no availability are omitted.
-
-    ``children_ages`` is a list of child ages (0–17). When provided, suppliers
-    apply their own per-hotel child-pricing policy.
-    """
-    if not hotel_ids:
-        return {}
+    """Single LiteAPI /hotels/min-rates call for up to ~50 hotel IDs."""
     body = {
         "hotelIds": hotel_ids,
         "checkin": check_in.isoformat(),
@@ -581,11 +574,52 @@ async def get_min_rates_batch(
         # 2001 "no availability found" is normal for date ranges with no inventory.
         if exc.code == 2001 or exc.status_code == 404:
             return {}
-        logger.warning("LiteAPI batch min-rates failed: %s", exc)
+        logger.warning("LiteAPI batch min-rates failed (%d ids): %s", len(hotel_ids), exc)
         return {}
     except Exception as exc:
-        logger.warning("LiteAPI batch min-rates failed: %s", exc)
+        logger.warning("LiteAPI batch min-rates failed (%d ids): %s", len(hotel_ids), exc)
         return {}
+
+
+async def get_min_rates_batch(
+    hotel_ids: list[str],
+    check_in: date,
+    check_out: date,
+    guests: int = 1,
+    children_ages: list[int] | None = None,
+) -> dict[str, float]:
+    """Batch-fetch minimum room rate for multiple LiteAPI hotels.
+
+    Calls POST /hotels/min-rates, which returns the cheapest available rate per
+    hotel as a flat object `{hotelId, price, suggestedSellingPrice, offerId}` —
+    much lighter than /hotels/rates for populating "from $X" on search cards.
+    Returns {liteapi_hotel_id: min_price}; hotels with no availability are omitted.
+
+    Long input lists are split into chunks of ~50 IDs and fetched concurrently
+    so a 200-hotel page doesn't trip per-call timeouts or supplier batch caps.
+
+    ``children_ages`` is a list of child ages (0–17). When provided, suppliers
+    apply their own per-hotel child-pricing policy.
+    """
+    if not hotel_ids:
+        return {}
+    if len(hotel_ids) <= _MIN_RATES_CHUNK_SIZE:
+        return await _min_rates_chunk(hotel_ids, check_in, check_out, guests, children_ages)
+
+    chunks = [
+        hotel_ids[i : i + _MIN_RATES_CHUNK_SIZE]
+        for i in range(0, len(hotel_ids), _MIN_RATES_CHUNK_SIZE)
+    ]
+    chunk_results = await asyncio.gather(
+        *(
+            _min_rates_chunk(chunk, check_in, check_out, guests, children_ages)
+            for chunk in chunks
+        )
+    )
+    merged: dict[str, float] = {}
+    for r in chunk_results:
+        merged.update(r)
+    return merged
 
 
 async def get_rates(

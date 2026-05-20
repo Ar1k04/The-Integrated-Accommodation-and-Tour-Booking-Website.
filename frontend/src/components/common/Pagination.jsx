@@ -22,13 +22,20 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
 
   const pages = getPageNumbers(currentPage, totalPages)
 
+  const navBtn =
+    'p-1.5 rounded-lg border border-gray-200 text-gray-600 transition-all duration-150 ' +
+    'hover:bg-primary hover:text-white hover:border-primary hover:-translate-y-0.5 hover:shadow-md ' +
+    'active:translate-y-0 active:shadow-sm ' +
+    'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-gray-600 ' +
+    'disabled:hover:border-gray-200 disabled:hover:translate-y-0 disabled:hover:shadow-none'
+
   return (
-    <div className="flex items-center justify-center gap-1 mt-6">
+    <div className="flex items-center justify-center gap-1.5 mt-6">
       <button
         type="button"
         onClick={() => onPageChange(currentPage - 1)}
         disabled={currentPage === 1}
-        className="p-1.5 rounded-lg border hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className={navBtn}
         aria-label="Previous page"
       >
         <ChevronLeft className="w-4 h-4" />
@@ -44,10 +51,11 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
             key={p}
             type="button"
             onClick={() => onPageChange(p)}
-            className={`min-w-[36px] h-9 px-2 rounded-lg text-sm font-medium border transition-colors ${
+            aria-current={p === currentPage ? 'page' : undefined}
+            className={`min-w-[36px] h-9 px-2 rounded-lg text-sm font-medium border transition-all duration-150 ${
               p === currentPage
-                ? 'bg-primary text-white border-primary'
-                : 'hover:bg-gray-50 text-gray-700 border-gray-200'
+                ? 'bg-primary text-white border-primary shadow-md scale-105 cursor-default'
+                : 'bg-white text-gray-700 border-gray-200 hover:bg-primary/10 hover:text-primary hover:border-primary hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:shadow-sm'
             }`}
           >
             {p}
@@ -59,7 +67,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
         type="button"
         onClick={() => onPageChange(currentPage + 1)}
         disabled={currentPage === totalPages}
-        className="p-1.5 rounded-lg border hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className={navBtn}
         aria-label="Next page"
       >
         <ChevronRight className="w-4 h-4" />

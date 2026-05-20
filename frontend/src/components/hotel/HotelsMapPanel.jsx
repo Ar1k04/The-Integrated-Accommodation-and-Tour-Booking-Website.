@@ -5,7 +5,12 @@ import L from 'leaflet'
 import StarRating from '@/components/common/StarRating'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { useSearchStore } from '@/store/searchStore'
-import { buildHotelHref, buildPricePinIcon, validCoords } from '@/utils/hotelMapHelpers'
+import {
+  buildHotelHref,
+  buildLocationDotIcon,
+  buildPricePinIcon,
+  validCoords,
+} from '@/utils/hotelMapHelpers'
 import MyLocationControl from './MyLocationControl'
 
 function FitBounds({ positions }) {
@@ -65,7 +70,7 @@ export default function HotelsMapPanel({ hotels = [], preview = false, onExpand,
               <Marker
                 key={key}
                 position={[Number(hotel.latitude), Number(hotel.longitude)]}
-                icon={buildPricePinIcon(price, isPartner)}
+                icon={preview ? buildLocationDotIcon() : buildPricePinIcon(price, isPartner)}
                 interactive={!preview}
               >
                 {preview ? null : <Popup>

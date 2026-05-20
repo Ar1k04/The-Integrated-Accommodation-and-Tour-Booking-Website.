@@ -82,6 +82,7 @@ class ViatorTag(BaseModel):
     tag_id: int
     parent_tag_id: int | None = None
     name: str
+    names_by_locale: dict[str, str] = Field(default_factory=dict)
 
 
 class ViatorTagsResponse(BaseModel):

@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
 import { hotelsApi } from '@/api/hotelsApi'
@@ -10,7 +10,7 @@ import HotelsMapPanel from '@/components/hotel/HotelsMapPanel'
 import HotelsMapModal from '@/components/hotel/HotelsMapModal'
 import { HotelCardSkeleton } from '@/components/common/Skeleton'
 import SearchBar from '@/components/common/SearchBar'
-import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
+import Pagination from '@/components/common/Pagination'
 import { SlidersHorizontal, ArrowUpDown, X } from 'lucide-react'
 
 // Separated so that changing city/dates/guests fully remounts this component
@@ -20,6 +20,7 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState('created_at')
   const [mapOpen, setMapOpen] = useState(false)
+  const [page, setPage] = useState(1)
   const [filters, setFilters] = useState({
     min_price: null,
     max_price: null,
@@ -55,24 +56,27 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
     per_page: 20,
   }), [city, checkIn, checkOut, guests, childAges, filters, sortBy, sortOrder])
 
-  const {
-    data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading,
-  } = useInfiniteQuery({
-    queryKey: ['hotels-search', queryParams],
-    queryFn: ({ pageParam = 1 }) => hotelsApi.list({ ...queryParams, page: pageParam }),
-    getNextPageParam: (lastPage) => {
-      const meta = lastPage.data?.meta
-      if (meta && meta.page < meta.total_pages) return meta.page + 1
-      return undefined
-    },
+  // Reset to page 1 whenever filters, sort, or the underlying search change.
+  useEffect(() => { setPage(1) }, [queryParams])
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['hotels-search', queryParams, page],
+    queryFn: () => hotelsApi.list({ ...queryParams, page }),
+    placeholderData: keepPreviousData,
   })
 
-  const allHotels = data?.pages.flatMap((p) => p.data?.items || []) || []
-  const total = data?.pages[0]?.data?.meta?.total || 0
+  const hotels = data?.data?.items || []
+  const meta = data?.data?.meta
+  const total = meta?.total || 0
+  const totalPages = meta?.total_pages || 1
 
-  const loadMoreRef = useInfiniteScroll(() => {
-    if (hasNextPage && !isFetchingNextPage) fetchNextPage()
-  }, { enabled: hasNextPage })
+  const handlePageChange = (next) => {
+    if (next < 1 || next > totalPages || next === page) return
+    setPage(next)
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
 
   const resultLabel = isLoading
     ? t('hotels:search.searching')
@@ -85,10 +89,10 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
     <div className="flex gap-6">
       {/* Filters Sidebar (with mini map preview on top) */}
       <div className={`${showFilters ? 'fixed inset-0 z-50 bg-white p-4 overflow-y-auto md:static md:bg-transparent' : 'hidden'} md:block w-full md:w-64 shrink-0 space-y-4`}>
-        {!isLoading && allHotels.length > 0 && (
+        {!isLoading && hotels.length > 0 && (
           <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white">
             <HotelsMapPanel
-              hotels={allHotels}
+              hotels={hotels}
               preview
               onExpand={() => setMapOpen(true)}
             />
@@ -123,26 +127,32 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
           ))}
         </div>
 
-        <div className="space-y-4">
+        <div className={`space-y-4 ${isFetching && !isLoading ? 'opacity-60 transition-opacity' : ''}`}>
           {isLoading
             ? Array.from({ length: 4 }, (_, i) => <HotelCardSkeleton key={i} />)
-            : allHotels.map((hotel) => <HotelCard key={hotel.id || hotel.liteapi_hotel_id} hotel={hotel} />)
+            : hotels.map((hotel) => <HotelCard key={hotel.id || hotel.liteapi_hotel_id} hotel={hotel} />)
           }
-          {!isLoading && allHotels.length === 0 && (
+          {!isLoading && hotels.length === 0 && (
             <div className="text-center py-20">
               <p className="text-gray-400 text-lg mb-2">{t('hotels:search.noResults')}</p>
               <p className="text-gray-400 text-sm">{t('hotels:search.tryAdjusting')}</p>
             </div>
           )}
-          {isFetchingNextPage && <HotelCardSkeleton />}
-          <div ref={loadMoreRef} />
         </div>
+
+        {!isLoading && totalPages > 1 && (
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            onPageChange={handlePageChange}
+          />
+        )}
       </div>
     </div>
     <HotelsMapModal
       open={mapOpen}
       onClose={() => setMapOpen(false)}
-      hotels={allHotels}
+      hotels={hotels}
       title={city ? `Hotels in ${city}` : 'All hotels'}
     />
     </>

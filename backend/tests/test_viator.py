@@ -55,6 +55,88 @@ async def test_search_tours_normalizes_response():
 
 
 @pytest.mark.asyncio
+async def test_search_tours_sends_viator_filter_payload():
+    raw = {"products": [], "totalCount": 0}
+
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(200, raw))
+        mock_client_fn.return_value = mock_client
+
+        await viator_service.search_tours(
+            city="Hanoi",
+            tags=[21909, 11940],
+            flags=["FREE_CANCELLATION", "PRIVATE_TOUR"],
+            rating_from=4,
+            duration_from_min=60,
+            duration_to_min=240,
+            lowest_price=10,
+            highest_price=100,
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 30),
+            sort="PRICE",
+            order="ASCENDING",
+            start=3,
+            count=5,
+        )
+
+    call = mock_client.post.await_args
+    assert call.args[0] == "/products/search"
+    assert call.kwargs["headers"]["Accept-Language"] == "en"
+    body = call.kwargs["json"]
+    assert body["filtering"] == {
+        "destination": "351",
+        "tags": [21909, 11940],
+        "flags": ["FREE_CANCELLATION", "PRIVATE_TOUR"],
+        "rating": {"from": 4.0},
+        "durationInMinutes": {"from": 60, "to": 240},
+        "lowestPrice": 10.0,
+        "highestPrice": 100.0,
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30",
+    }
+    assert body["pagination"] == {"start": 3, "count": 5}
+    assert body["sorting"] == {"sort": "PRICE", "order": "ASCENDING"}
+
+
+@pytest.mark.asyncio
+async def test_get_tags_preserves_locale_names():
+    viator_service._TAG_CACHE["data"] = None
+    viator_service._TAG_CACHE["fetched_at"] = 0
+    raw = {
+        "tags": [
+            {
+                "tagId": 21768,
+                "parentTagIds": [21701, 21913],
+                "allNamesByLocale": {
+                    "en": "Shore Excursions",
+                    "fr": "Excursions en bord de mer",
+                },
+            }
+        ]
+    }
+
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, raw))
+        mock_client_fn.return_value = mock_client
+
+        tags = await viator_service.get_tags()
+
+    assert tags == [
+        {
+            "tag_id": 21768,
+            "parent_tag_id": 21701,
+            "name": "Shore Excursions",
+            "names_by_locale": {
+                "en": "Shore Excursions",
+                "fr": "Excursions en bord de mer",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_search_tours_degrades_on_unknown_city():
     """City with no known destination ID raises ViatorError(400) — caller should degrade gracefully."""
     with pytest.raises(ViatorError) as exc_info:
@@ -193,3 +275,41 @@ async def test_hybrid_search_includes_viator_tours(client):
     items = resp.json()["items"]
     viator_names = [i["name"] for i in items if i.get("source") == "viator"]
     assert "Viator Hanoi Tour" in viator_names
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_forwards_advanced_filters(client):
+    fake_payload = {"products": [], "total": 0}
+    search_mock = AsyncMock(return_value=fake_payload)
+
+    with patch.object(viator_service, "search_tours", new=search_mock):
+        resp = await client.get(
+            "/api/v1/tours"
+            "?city=Hanoi"
+            "&tags=21909&tags=11940"
+            "&flags=FREE_CANCELLATION&flags=PRIVATE_TOUR"
+            "&rating_min=4"
+            "&duration_min=60&duration_max=240"
+            "&min_price=10&max_price=100"
+            "&start_date=2026-06-01&end_date=2026-06-30"
+            "&sort_by=price_per_person&sort_order=asc"
+            "&page=2&per_page=5"
+        )
+
+    assert resp.status_code == 200
+    search_mock.assert_awaited_once()
+    kwargs = search_mock.await_args.kwargs
+    assert kwargs["city"] == "Hanoi"
+    assert kwargs["tags"] == [21909, 11940]
+    assert kwargs["flags"] == ["FREE_CANCELLATION", "PRIVATE_TOUR"]
+    assert kwargs["rating_from"] == 4
+    assert kwargs["duration_from_min"] == 60
+    assert kwargs["duration_to_min"] == 240
+    assert kwargs["lowest_price"] == 10
+    assert kwargs["highest_price"] == 100
+    assert kwargs["start_date"] == date(2026, 6, 1)
+    assert kwargs["end_date"] == date(2026, 6, 30)
+    assert kwargs["sort"] == "PRICE"
+    assert kwargs["order"] == "ASCENDING"
+    assert kwargs["start"] == 6
+    assert kwargs["count"] == 5

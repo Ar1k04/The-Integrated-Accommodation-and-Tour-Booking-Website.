@@ -111,7 +111,7 @@ def _map_sort_to_viator(sort_by: str, sort_order: str) -> tuple[str, str]:
 async def list_viator_tags(request: Request):
     """Return Viator tag tree (categories) used to render filter UI. Cached 24h."""
     redis = getattr(request.app.state, "redis", None)
-    cache_key = "viator:tags:v1"
+    cache_key = "viator:tags:v2"
     cached = await _get_cached(redis, cache_key)
     if cached is not None:
         return cached

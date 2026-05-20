@@ -4,6 +4,7 @@ import { useSearchStore } from '@/store/searchStore'
 import { useDebounce } from '@/hooks/useDebounce'
 import { useQuery } from '@tanstack/react-query'
 import { searchCities } from '@/api/nominatimApi'
+import { hotelsApi } from '@/api/hotelsApi'
 import { Search, MapPin, Calendar, Users } from 'lucide-react'
 import { format } from 'date-fns'
 import DateRangeCalendar from '@/components/common/DateRangeCalendar'
@@ -21,6 +22,8 @@ export default function SearchBar({ variant = 'hero' }) {
   const calendarWrapRef = useRef(null)
   const guestsWrapRef = useRef(null)
   const debouncedDest = useDebounce(localDest, 300)
+  const calendarDestination = localDest.trim()
+  const shouldLoadCalendarPrices = showCalendar && searchType === 'hotels' && calendarDestination.length >= 2
 
   const { data: suggestions, isFetching: suggestionsLoading } = useQuery({
     queryKey: ['location-suggestions', debouncedDest],
@@ -29,6 +32,26 @@ export default function SearchBar({ variant = 'hero' }) {
     staleTime: 60_000,
     placeholderData: [],
   })
+
+  const { data: calendarPriceData, isFetching: calendarPriceLoading } = useQuery({
+    queryKey: ['hotel-calendar-price-guide', calendarDestination],
+    queryFn: () =>
+      hotelsApi.list({
+        city: calendarDestination,
+        star_rating: 3,
+        sort_by: 'base_price',
+        sort_order: 'asc',
+        per_page: 1,
+      }),
+    enabled: shouldLoadCalendarPrices,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const calendarPriceHotel = calendarPriceData?.data?.items?.find((hotel) => {
+    const price = Number(hotel.min_room_price)
+    return Number.isFinite(price) && price > 0
+  })
+  const calendarPriceBaseUsd = calendarPriceHotel ? Number(calendarPriceHotel.min_room_price) : null
 
   const childAges = guests.child_ages || []
   const totalGuests = guests.adults + guests.children
@@ -195,11 +218,13 @@ export default function SearchBar({ variant = 'hero' }) {
           </div>
 
           {showCalendar && (
-            <div ref={calendarWrapRef} className="absolute left-0 top-full z-50 mt-2">
+            <div ref={calendarWrapRef} className="absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2">
               <DateRangeCalendar
                 checkIn={checkIn}
                 checkOut={checkOut}
                 minDate={new Date()}
+                priceBaseUsd={shouldLoadCalendarPrices ? calendarPriceBaseUsd : null}
+                priceLoading={shouldLoadCalendarPrices && calendarPriceLoading && !calendarPriceBaseUsd}
                 onChange={(from, to) => {
                   setDates(from, to)
                 }}

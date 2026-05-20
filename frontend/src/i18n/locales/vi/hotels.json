@@ -17,7 +17,10 @@
     "searching": "Đang tìm kiếm…",
     "hotelsFound": "Tìm thấy {{count}} khách sạn",
     "hotelsInCity": "{{count}} khách sạn tại {{city}}",
-    "tryAdjusting": "Hãy thử điều chỉnh tìm kiếm hoặc bộ lọc."
+    "tryAdjusting": "Hãy thử điều chỉnh tìm kiếm hoặc bộ lọc.",
+    "calendarPriceCaption": "Giá ước tính cho một đêm ở trong một chỗ nghỉ 3 sao cho vị trí được tìm kiếm",
+    "calendarPriceLoading": "Đang tải giá ước tính từ khách sạn 3 sao...",
+    "calendarPriceAria": "giá ước tính {{price}}"
   },
   "detail": {
     "overview": "Tổng quan",

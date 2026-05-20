@@ -17,7 +17,10 @@
     "searching": "Searching…",
     "hotelsFound": "{{count}} hotels found",
     "hotelsInCity": "{{count}} hotels in {{city}}",
-    "tryAdjusting": "Try adjusting your search or filters."
+    "tryAdjusting": "Try adjusting your search or filters.",
+    "calendarPriceCaption": "Estimated price per night for a 3-star stay in the searched destination",
+    "calendarPriceLoading": "Loading 3-star price estimates...",
+    "calendarPriceAria": "estimated {{price}}"
   },
   "detail": {
     "overview": "Overview",

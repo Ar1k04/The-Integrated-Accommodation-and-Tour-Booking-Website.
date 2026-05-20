@@ -82,6 +82,7 @@ export default function ToursPage() {
   }, [])
 
   const viatorOnly = isViatorOnlyActive(filters)
+  const viatorNeedsDestination = viatorOnly && !filters.city && !submittedSearch
 
   const isFirstRender = useRef(true)
   const queryParams = useMemo(() => ({
@@ -253,7 +254,11 @@ export default function ToursPage() {
               {viatorOnly && (
                 <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 text-sm">
                   <Info className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>{t('tours:page.filters.viatorOnlyBanner')}</span>
+                  <span>
+                    {t(viatorNeedsDestination
+                      ? 'tours:page.filters.viatorNeedsDestinationBanner'
+                      : 'tours:page.filters.viatorOnlyBanner')}
+                  </span>
                 </div>
               )}
 

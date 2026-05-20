@@ -12,13 +12,14 @@ import {
   VIATOR_DURATION_PRESETS,
   VIATOR_RATING_PRESETS,
 } from '@/utils/constants'
+import { getViatorTagLabel } from '@/utils/viatorTags'
 
 const durationsEqual = (filters, p) =>
   (filters.duration_min ?? null) === (p.min ?? null)
   && (filters.duration_max ?? null) === (p.max ?? null)
 
 export default function TourFilters({ filters, onChange, onClear }) {
-  const { t } = useTranslation(['tours', 'common'])
+  const { t, i18n } = useTranslation(['tours', 'common'])
   const [expanded, setExpanded] = useState({
     destination: true, price: true, tags: true, flags: true,
     rating: true, duration: true, dates: false,
@@ -151,7 +152,7 @@ export default function TourFilters({ filters, onChange, onClear }) {
         <div className="flex flex-wrap gap-2">
           {POPULAR_VIATOR_TAGS.map((tag) => {
             const active = (filters.tags || []).includes(tag.id)
-            const liveName = tagById.get(tag.id)?.name || tag.label
+            const liveTag = tagById.get(tag.id) || tag
             return (
               <button
                 key={tag.id}
@@ -160,7 +161,7 @@ export default function TourFilters({ filters, onChange, onClear }) {
                   active ? 'bg-primary text-white border-primary' : 'hover:border-primary'
                 }`}
               >
-                {liveName}
+                {getViatorTagLabel(liveTag, t, i18n.language)}
               </button>
             )
           })}
@@ -173,7 +174,7 @@ export default function TourFilters({ filters, onChange, onClear }) {
                 onClick={() => toggleArrayItem('tags', id)}
                 className="px-3 py-1.5 rounded-full text-xs font-medium border bg-primary text-white border-primary"
               >
-                {tagById.get(id)?.name || `#${id}`}
+                {getViatorTagLabel(tagById.get(id) || { id }, t, i18n.language)}
               </button>
             ))}
         </div>

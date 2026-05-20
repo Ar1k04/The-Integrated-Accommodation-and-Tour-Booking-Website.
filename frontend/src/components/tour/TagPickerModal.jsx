@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { X, Search } from 'lucide-react'
 import { toursApi } from '@/api/toursApi'
+import { getViatorTagLabel } from '@/utils/viatorTags'
 
 export default function TagPickerModal({ open, selectedTagIds, onApply, onClose }) {
-  const { t } = useTranslation(['tours', 'common'])
+  const { t, i18n } = useTranslation(['tours', 'common'])
   const [draft, setDraft] = useState(selectedTagIds || [])
   const [search, setSearch] = useState('')
   // Reset draft when the modal transitions from closed → open. Render-phase
@@ -48,7 +49,11 @@ export default function TagPickerModal({ open, selectedTagIds, onApply, onClose 
 
   const visibleGroups = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const matches = (tag) => !q || tag.name.toLowerCase().includes(q)
+    const matches = (tag) => {
+      if (!q) return true
+      const localizedName = getViatorTagLabel(tag, t, i18n.language).toLowerCase()
+      return localizedName.includes(q) || String(tag.name || '').toLowerCase().includes(q)
+    }
     return grouped.top
       .map((parent) => {
         const children = grouped.childrenOf.get(parent.tag_id) || []
@@ -58,7 +63,7 @@ export default function TagPickerModal({ open, selectedTagIds, onApply, onClose 
         return { parent, children: q ? matched : children, parentMatches }
       })
       .filter(Boolean)
-  }, [grouped, search])
+  }, [grouped, search, t, i18n.language])
 
   const toggle = (id) => {
     setDraft((curr) => (curr.includes(id) ? curr.filter((x) => x !== id) : [...curr, id]))
@@ -108,7 +113,7 @@ export default function TagPickerModal({ open, selectedTagIds, onApply, onClose 
                   onChange={() => toggle(parent.tag_id)}
                   className="rounded border-gray-300"
                 />
-                <span className="font-semibold text-sm text-gray-900">{parent.name}</span>
+                <span className="font-semibold text-sm text-gray-900">{getViatorTagLabel(parent, t, i18n.language)}</span>
               </label>
               {children.length > 0 && (
                 <div className="mt-2 ml-6 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -120,7 +125,7 @@ export default function TagPickerModal({ open, selectedTagIds, onApply, onClose 
                         onChange={() => toggle(child.tag_id)}
                         className="rounded border-gray-300"
                       />
-                      <span className="text-sm text-gray-700">{child.name}</span>
+                      <span className="text-sm text-gray-700">{getViatorTagLabel(child, t, i18n.language)}</span>
                     </label>
                   ))}
                 </div>

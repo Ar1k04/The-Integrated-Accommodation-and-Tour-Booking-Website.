@@ -53,6 +53,17 @@ export function buildPricePinIcon(formattedPrice, isPartner) {
   })
 }
 
+export function buildLocationDotIcon() {
+  return L.divIcon({
+    className: '',
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+    html:
+      '<div style="transform:translate(-50%,-50%);width:12px;height:12px;border-radius:9999px;' +
+      `background:${PIN_BG};border:2px solid #fff;box-shadow:0 0 0 1px ${PIN_BORDER};"></div>`,
+  })
+}
+
 export function buildCenterPinIcon() {
   return L.divIcon({
     className: '',
