@@ -244,6 +244,16 @@ def _normalize_rate_plan(rate: dict, fallback_currency: str = "USD") -> dict:
 
     # LiteAPI's /hotels/prebook expects offerId, so prefer it over rateId
     # when the rate plan exposes both (newer v3.0 responses do).
+    # Echo occupancy from LiteAPI when present so the frontend recommender can
+    # filter "adults only" rates and align its per-room display with what the
+    # supplier actually accepts. These fields are nullable — older sandbox
+    # responses omit them, in which case the recommender trusts LiteAPI's own
+    # request-side filtering.
+    adult_count_raw = rate.get("adultCount")
+    child_count_raw = rate.get("childCount")
+    children_ages_raw = rate.get("childrenAges")
+    occupancy_number_raw = rate.get("occupancyNumber")
+
     return {
         "rate_id": rate.get("offerId") or rate.get("rateId") or "",
         "board_name": board,
@@ -257,6 +267,10 @@ def _normalize_rate_plan(rate: dict, fallback_currency: str = "USD") -> dict:
         "discount_percent": discount_percent,
         "currency": currency or fallback_currency,
         "max_occupancy": int(rate.get("maxOccupancy") or 2),
+        "adult_count": int(adult_count_raw) if adult_count_raw is not None else None,
+        "child_count": int(child_count_raw) if child_count_raw is not None else None,
+        "children_ages": [int(a) for a in children_ages_raw] if isinstance(children_ages_raw, list) else None,
+        "occupancy_number": int(occupancy_number_raw) if occupancy_number_raw is not None else None,
     }
 
 

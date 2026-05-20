@@ -181,12 +181,16 @@ export default function LiteapiHotelDetailPage() {
       discount_percent: r.discount_percent,
       currency: r.currency,
       max_occupancy: r.max_occupancy,
+      adult_count: r.adult_count,
+      child_count: r.child_count,
+      children_ages: r.children_ages,
+      occupancy_number: r.occupancy_number,
     })),
   }))
 
   const nights = datesSelected ? differenceInDays(new Date(checkOut), new Date(checkIn)) : 0
   const recommendation = datesSelected
-    ? recommendCombination(roomGroups, { guests, rooms, nights })
+    ? recommendCombination(roomGroups, { adults, childAges, rooms, nights })
     : null
 
   let _selTotal = 0

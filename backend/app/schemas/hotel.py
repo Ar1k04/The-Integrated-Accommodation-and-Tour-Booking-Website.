@@ -90,6 +90,10 @@ class HotelRatePlanResponse(BaseModel):
     discount_percent: int | None = None
     currency: str = "USD"
     max_occupancy: int = 2
+    adult_count: int | None = None
+    child_count: int | None = None
+    children_ages: list[int] | None = None
+    occupancy_number: int | None = None
 
 
 class HotelRoomTypeResponse(BaseModel):

@@ -24,6 +24,30 @@ export function GuestIcons({ count }) {
   )
 }
 
+/**
+ * One room's occupancy: adults as person icons + a small pill per child age.
+ * Used inside RoomRecommendation rows so the user can see exactly which
+ * room holds which child age (mirrors the backend round-robin distribution).
+ */
+export function OccupancySlot({ adults, childAges }) {
+  const safeAges = Array.isArray(childAges) ? childAges : []
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <GuestIcons count={adults} />
+      {safeAges.map((age, i) => (
+        <span
+          key={i}
+          className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] font-medium px-1.5 py-0.5 rounded-full"
+          title={`Child age ${age}`}
+        >
+          <Users className="w-3 h-3" />
+          {age}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 export const AMENITY_ICONS = {
   wifi: Wifi,
   free_wifi: Wifi,

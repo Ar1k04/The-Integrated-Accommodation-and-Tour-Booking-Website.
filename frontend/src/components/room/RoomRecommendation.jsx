@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { CheckCircle, Coffee } from 'lucide-react'
-import { GuestIcons, BedInfo } from './_internal'
+import { CheckCircle, Coffee, AlertCircle } from 'lucide-react'
+import { OccupancySlot, BedInfo } from './_internal'
 
 /**
  * Booking.com-style "Recommended for N adults" panel. Renders the precomputed
@@ -31,12 +31,27 @@ export default function RoomRecommendation({ recommendation, nights, guests, adu
     ? t('hotels:detail.nightsAdultsChildren', { nights, adults: adultsCount, count: children })
     : t('hotels:detail.nightsAdults', { nights, guests: adultsCount })
 
+  const expandedFrom = recommendation.expandedFromRooms
+  const expandedToRooms = recommendation.totalRooms
+
   return (
     <div className="rounded-xl border border-gray-200 overflow-hidden mb-6 shadow-sm">
       <div className="bg-white px-4 py-3 border-b border-gray-200">
         <h3 className="font-bold text-gray-900 text-base">
           {headerLabel}
         </h3>
+        {expandedFrom != null && (
+          <div className="mt-2 flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>
+              {t('hotels:detail.expandedRoomsNote', {
+                requested: expandedFrom,
+                used: expandedToRooms,
+                defaultValue: 'We split your party across {{used}} rooms to comfortably fit everyone ({{requested}} requested).',
+              })}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Desktop layout: 3-column grid, sticky reserve panel on the right */}
@@ -111,7 +126,12 @@ export default function RoomRecommendation({ recommendation, nights, guests, adu
 }
 
 function RecommendationRow({ item, nights, fmt, t, compact = false }) {
-  const { group, rate, quantity, perUnitGuests } = item
+  const { group, rate, quantity, perUnitGuests, perUnitSlots } = item
+  // Prefer the new slot composition (adults + child ages); fall back to the
+  // legacy count list for callers still passing { guests } only.
+  const slots = perUnitSlots && perUnitSlots.length > 0
+    ? perUnitSlots
+    : (perUnitGuests || []).map((n) => ({ adults: n, childAges: [] }))
   const stayPriceForRow =
     (rate.price_excl_taxes != null ? rate.price_excl_taxes : rate.price) *
     quantity *
@@ -128,12 +148,12 @@ function RecommendationRow({ item, nights, fmt, t, compact = false }) {
           <span className="font-semibold">{quantity} ×</span>{' '}
           <a className="text-primary font-semibold hover:underline cursor-pointer">{group.name}</a>
         </p>
-        <p className="text-xs text-gray-700 mb-1">
-          <span className="font-medium">{t('hotels:detail.priceForLabel')}</span>{' '}
-          {perUnitGuests.map((n, i) => (
-            <span key={i} className="inline-flex items-center gap-1 mr-1">
-              <GuestIcons count={n} />
-              {i < perUnitGuests.length - 1 && <span className="text-gray-400">,</span>}
+        <p className="text-xs text-gray-700 mb-1 flex flex-wrap items-center gap-2">
+          <span className="font-medium">{t('hotels:detail.priceForLabel')}</span>
+          {slots.map((slot, i) => (
+            <span key={i} className="inline-flex items-center">
+              <OccupancySlot adults={slot.adults} childAges={slot.childAges} />
+              {i < slots.length - 1 && <span className="text-gray-400 mx-1">,</span>}
             </span>
           ))}
         </p>
