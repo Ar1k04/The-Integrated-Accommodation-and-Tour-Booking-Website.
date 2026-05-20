@@ -16,6 +16,8 @@ import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import FacilitiesSection from '@/components/hotel/FacilitiesSection'
 import OccupancySelector from '@/components/hotel/OccupancySelector'
+import HotelMiniMap from '@/components/hotel/HotelMiniMap'
+import NearbyHotelsMapModal from '@/components/hotel/NearbyHotelsMapModal'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { MapPin, CalendarDays, Users, CheckCircle, Search, Star } from 'lucide-react'
 import { format, differenceInDays } from 'date-fns'
@@ -44,6 +46,7 @@ export default function LiteapiHotelDetailPage() {
   const guests = adults + childAges.length
   const childAgesParam = childAges.join(',')
   const [reviewPage, setReviewPage] = useState(1)
+  const [mapOpen, setMapOpen] = useState(false)
   const REVIEWS_PER_PAGE = 5
 
   const datesSelected = !!(checkIn && checkOut)
@@ -465,7 +468,27 @@ export default function LiteapiHotelDetailPage() {
           </div>
 
           {/* Right sticky panel */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-1 space-y-4">
+            {hotel.latitude != null && hotel.longitude != null && (
+              <>
+                <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm h-56 relative">
+                  <HotelMiniMap
+                    latitude={hotel.latitude}
+                    longitude={hotel.longitude}
+                    name={hotel.name}
+                    onExpand={() => setMapOpen(true)}
+                  />
+                </div>
+                <NearbyHotelsMapModal
+                  open={mapOpen}
+                  onClose={() => setMapOpen(false)}
+                  centerLat={hotel.latitude}
+                  centerLng={hotel.longitude}
+                  centerHotelName={hotel.name}
+                  centerHotelId={hotel.liteapi_hotel_id}
+                />
+              </>
+            )}
             <div className="sticky top-20 bg-white border rounded-xl p-5 shadow-sm space-y-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-900">

@@ -7,6 +7,7 @@ import { router } from './router'
 import { useAuthStore } from './store/authStore'
 import { useUiStore } from './store/uiStore'
 import './i18n'
+import 'leaflet/dist/leaflet.css'
 import './index.css'
 
 const queryClient = new QueryClient({

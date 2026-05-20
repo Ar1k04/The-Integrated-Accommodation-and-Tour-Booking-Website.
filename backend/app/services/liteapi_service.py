@@ -401,20 +401,33 @@ async def search_hotels(
     facility_ids: list[int] | None = None,
     strict_facilities_filtering: bool = False,
     hotel_type_ids: list[int] | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    radius_km: float | None = None,
 ) -> list[dict]:
     """Search hotels via LiteAPI /data/hotels. Returns normalized hotel dicts.
 
-    LiteAPI requires countryCode. If not provided, it is inferred from the city name.
-    Raises LiteAPIError if country cannot be determined.
+    Two modes:
+    - **Geo mode** (when both `latitude` and `longitude` provided): proximity
+      search; countryCode/cityName are optional and skipped. LiteAPI's
+      `/data/hotels` accepts `radius` in metres.
+    - **City mode** (default): requires countryCode (inferred from city name
+      when omitted). Raises LiteAPIError if country can't be resolved.
     """
-    # Resolve country code — required by LiteAPI
-    resolved_cc = country_code or _infer_country_code(city) or ""
-    if not resolved_cc:
-        raise LiteAPIError(400, f"Cannot resolve country code for city '{city}'. Provide country explicitly.")
+    params: dict[str, Any] = {"limit": limit}
 
-    params: dict[str, Any] = {"countryCode": resolved_cc, "limit": limit}
-    if city:
-        params["cityName"] = city
+    if latitude is not None and longitude is not None:
+        params["latitude"] = latitude
+        params["longitude"] = longitude
+        params["radius"] = int((radius_km or 5) * 1000)
+    else:
+        resolved_cc = country_code or _infer_country_code(city) or ""
+        if not resolved_cc:
+            raise LiteAPIError(400, f"Cannot resolve country code for city '{city}'. Provide country explicitly.")
+        params["countryCode"] = resolved_cc
+        if city:
+            params["cityName"] = city
+
     if facility_ids:
         # LiteAPI expects a comma-separated string, e.g. "107,301"
         params["facilityIds"] = ",".join(str(fid) for fid in facility_ids)

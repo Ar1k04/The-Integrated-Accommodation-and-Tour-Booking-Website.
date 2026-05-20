@@ -23,6 +23,7 @@ from app.schemas.hotel import (
     HotelUpdate,
 )
 from app.services import liteapi_service, lock_service
+from app.services.geocoding_service import geocode_address
 from app.services.liteapi_service import LiteAPIError, get_min_rates_batch
 from app.services.facility_mapping import HOTEL_TYPE_SLUG_TO_ID, SLUG_TO_LITEAPI_ID
 from app.services.lock_service import RedisUnavailableError
@@ -131,6 +132,9 @@ async def list_hotels(
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    latitude: float | None = Query(None, ge=-90, le=90),
+    longitude: float | None = Query(None, ge=-180, le=180),
+    radius_km: float | None = Query(None, gt=0, le=50),
 ):
     # ── DB query ──────────────────────────────────────────────────────────────
     room_price_q = (
@@ -169,6 +173,21 @@ async def list_hotels(
         query = query.where(Hotel.city.ilike(f"%{city}%"))
     if country:
         query = query.where(Hotel.country.ilike(f"%{country}%"))
+    if latitude is not None and longitude is not None:
+        # Haversine in SQL (km). Dataset is small enough that this beats adding PostGIS.
+        r = float(radius_km or 5)
+        dist_km = 6371.0 * func.acos(
+            func.cos(func.radians(latitude))
+            * func.cos(func.radians(Hotel.latitude))
+            * func.cos(func.radians(Hotel.longitude) - func.radians(longitude))
+            + func.sin(func.radians(latitude))
+            * func.sin(func.radians(Hotel.latitude))
+        )
+        query = (
+            query.where(Hotel.latitude.is_not(None))
+            .where(Hotel.longitude.is_not(None))
+            .where(dist_km <= r)
+        )
     if star_rating:
         query = query.where(Hotel.star_rating == star_rating)
     if min_price is not None:
@@ -220,9 +239,10 @@ async def list_hotels(
         row[0].liteapi_hotel_id for row in rows if row[0].liteapi_hotel_id
     }
 
-    # ── LiteAPI hybrid search (only when city/country + dates provided, page 1, no owner filter) ──
+    # ── LiteAPI hybrid search (city/country OR coord search, page 1, no owner filter) ──
     liteapi_items: list[HotelResponse] = []
-    if (city or country) and not owner_id and not search and page == 1:
+    geo_search = latitude is not None and longitude is not None
+    if (city or country or geo_search) and not owner_id and not search and page == 1:
         redis = getattr(request.app.state, "redis", None)
         # Translate amenity slugs → LiteAPI facility IDs
         selected_slugs = [s.strip() for s in (amenities or "").split(",") if s.strip()]
@@ -234,7 +254,8 @@ async def list_hotels(
         ]
         slugs_key = ",".join(sorted(selected_slugs)) if selected_slugs else ""
         types_key = ",".join(sorted(selected_type_slugs)) if selected_type_slugs else ""
-        cache_key = f"liteapi:hotels:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}"
+        geo_key = f"{latitude}:{longitude}:{radius_km}" if geo_search else ""
+        cache_key = f"liteapi:hotels:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}"
         cached = await _get_cached_liteapi_hotels(redis, cache_key)
 
         if cached is not None:
@@ -251,6 +272,9 @@ async def list_hotels(
                     facility_ids=facility_ids or None,
                     strict_facilities_filtering=strict,
                     hotel_type_ids=hotel_type_ids or None,
+                    latitude=latitude if geo_search else None,
+                    longitude=longitude if geo_search else None,
+                    radius_km=radius_km if geo_search else None,
                 )
                 await _set_cached_liteapi_hotels(redis, cache_key, raw_hotels)
             except LiteAPIError as exc:
@@ -551,6 +575,12 @@ async def create_hotel(
     hotel_data["slug"] = slug
     if hotel_data.get("base_price") is None:
         hotel_data["base_price"] = 1
+    if hotel_data.get("latitude") is None or hotel_data.get("longitude") is None:
+        coords = await geocode_address(
+            hotel_data.get("address"), hotel_data.get("city"), hotel_data.get("country")
+        )
+        if coords:
+            hotel_data["latitude"], hotel_data["longitude"] = coords
     hotel = Hotel(**hotel_data, owner_id=current_user.id)
     db.add(hotel)
     await db.flush()
@@ -571,10 +601,15 @@ async def replace_hotel(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
     _assert_owner_or_admin(hotel, current_user)
 
-    for field, value in data.model_dump().items():
+    payload = data.model_dump()
+    for field, value in payload.items():
         if field == "base_price" and value is None:
             continue
         setattr(hotel, field, value)
+    if hotel.latitude is None or hotel.longitude is None:
+        coords = await geocode_address(hotel.address, hotel.city, hotel.country)
+        if coords:
+            hotel.latitude, hotel.longitude = coords
     await db.flush()
     await db.refresh(hotel)
     return _hotel_response(hotel, None)
@@ -593,8 +628,16 @@ async def update_hotel(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
     _assert_owner_or_admin(hotel, current_user)
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    patch = data.model_dump(exclude_unset=True)
+    for field, value in patch.items():
         setattr(hotel, field, value)
+    # If caller cleared/omitted coords but touched address fields (or coords
+    # are still missing), refresh from geocoder so the hotel stays on the map.
+    address_touched = any(k in patch for k in ("address", "city", "country"))
+    if (hotel.latitude is None or hotel.longitude is None) and address_touched:
+        coords = await geocode_address(hotel.address, hotel.city, hotel.country)
+        if coords:
+            hotel.latitude, hotel.longitude = coords
     await db.flush()
     await db.refresh(hotel)
     return _hotel_response(hotel, None)

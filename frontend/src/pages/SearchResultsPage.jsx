@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { hotelsApi } from '@/api/hotelsApi'
 import HotelCard from '@/components/hotel/HotelCard'
 import HotelFilters from '@/components/hotel/HotelFilters'
+import HotelsMapPanel from '@/components/hotel/HotelsMapPanel'
+import HotelsMapModal from '@/components/hotel/HotelsMapModal'
 import { HotelCardSkeleton } from '@/components/common/Skeleton'
 import SearchBar from '@/components/common/SearchBar'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
@@ -17,6 +19,7 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
   const { t } = useTranslation(['hotels', 'common'])
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState('created_at')
+  const [mapOpen, setMapOpen] = useState(false)
   const [filters, setFilters] = useState({
     min_price: null,
     max_price: null,
@@ -78,9 +81,19 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
       : t('hotels:search.hotelsFound', { count: total })
 
   return (
+    <>
     <div className="flex gap-6">
-      {/* Filters Sidebar */}
-      <div className={`${showFilters ? 'fixed inset-0 z-50 bg-white p-4 overflow-y-auto md:static md:bg-transparent' : 'hidden'} md:block w-full md:w-64 shrink-0`}>
+      {/* Filters Sidebar (with mini map preview on top) */}
+      <div className={`${showFilters ? 'fixed inset-0 z-50 bg-white p-4 overflow-y-auto md:static md:bg-transparent' : 'hidden'} md:block w-full md:w-64 shrink-0 space-y-4`}>
+        {!isLoading && allHotels.length > 0 && (
+          <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white">
+            <HotelsMapPanel
+              hotels={allHotels}
+              preview
+              onExpand={() => setMapOpen(true)}
+            />
+          </div>
+        )}
         <div className="flex items-center justify-between mb-4 md:hidden">
           <h2 className="font-bold text-lg">{t('hotels:search.filters')}</h2>
           <button onClick={() => setShowFilters(false)}><X className="w-5 h-5" /></button>
@@ -126,6 +139,13 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
         </div>
       </div>
     </div>
+    <HotelsMapModal
+      open={mapOpen}
+      onClose={() => setMapOpen(false)}
+      hotels={allHotels}
+      title={city ? `Hotels in ${city}` : 'All hotels'}
+    />
+    </>
   )
 }
 
