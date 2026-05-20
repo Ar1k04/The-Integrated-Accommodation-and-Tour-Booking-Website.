@@ -1,7 +1,23 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class ChildAgeTier(BaseModel):
+    min_age: int = Field(ge=0, le=17)
+    max_age: int = Field(ge=0, le=17)
+    discount_percent: int = Field(ge=0, le=100)
+
+
+def _validate_tier_list(v: list[dict] | None) -> list[dict] | None:
+    if v is None:
+        return v
+    parsed = [ChildAgeTier(**t).model_dump() for t in v]
+    for t in parsed:
+        if t["min_age"] > t["max_age"]:
+            raise ValueError("min_age must be ≤ max_age")
+    return parsed
 
 
 class RoomCreate(BaseModel):
@@ -13,6 +29,12 @@ class RoomCreate(BaseModel):
     max_guests: int = Field(default=2, ge=1)
     amenities: list | None = None
     images: list | None = None
+    child_age_tiers: list[dict] | None = None
+
+    @field_validator("child_age_tiers")
+    @classmethod
+    def _check_tiers(cls, v):
+        return _validate_tier_list(v)
 
 
 class RoomUpdate(BaseModel):
@@ -24,6 +46,12 @@ class RoomUpdate(BaseModel):
     max_guests: int | None = Field(None, ge=1)
     amenities: list | None = None
     images: list | None = None
+    child_age_tiers: list[dict] | None = None
+
+    @field_validator("child_age_tiers")
+    @classmethod
+    def _check_tiers(cls, v):
+        return _validate_tier_list(v)
 
 
 class RoomResponse(BaseModel):
@@ -37,6 +65,7 @@ class RoomResponse(BaseModel):
     max_guests: int
     amenities: list | None = None
     images: list | None = None
+    child_age_tiers: list | None = None
     created_at: datetime
     updated_at: datetime
 

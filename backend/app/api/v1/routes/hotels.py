@@ -82,6 +82,24 @@ async def _get_cached_liteapi_hotels(redis, cache_key: str) -> list[dict] | None
     return None
 
 
+def _parse_child_ages(raw: str | None) -> list[int]:
+    """Parse a `child_ages=11,8` query string into a clamped list of ints (0–17)."""
+    if not raw:
+        return []
+    ages: list[int] = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            age = int(chunk)
+        except ValueError:
+            continue
+        if 0 <= age <= 17:
+            ages.append(age)
+    return ages
+
+
 async def _set_cached_liteapi_hotels(redis, cache_key: str, data: list[dict]) -> None:
     if redis is None:
         return
@@ -100,6 +118,7 @@ async def list_hotels(
     check_in: date | None = None,
     check_out: date | None = None,
     guests: int | None = None,
+    child_ages: str | None = Query(None, description="Comma-separated child ages (0–17)"),
     min_price: float | None = None,
     max_price: float | None = None,
     star_rating: int | None = None,
@@ -262,7 +281,14 @@ async def list_hotels(
             if cached_rates is not None:
                 min_rates = {k: v for k, v in (cached_rates if isinstance(cached_rates, dict) else {}).items()}
             else:
-                min_rates = await get_min_rates_batch(no_price_ids, rate_check_in, rate_check_out, guests or 1)
+                parsed_child_ages = _parse_child_ages(child_ages)
+                min_rates = await get_min_rates_batch(
+                    no_price_ids,
+                    rate_check_in,
+                    rate_check_out,
+                    guests or 1,
+                    children_ages=parsed_child_ages,
+                )
                 if min_rates:
                     await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL) if redis else None
             for item in liteapi_items:
@@ -349,12 +375,20 @@ async def get_liteapi_rates(
     check_out: date = Query(...),
     guests: int = Query(default=1, ge=1),
     rooms: int = Query(default=1, ge=1, le=20),
+    adults: int | None = Query(default=None, ge=1),
+    child_ages: str | None = Query(default=None, description="Comma-separated child ages (0–17)"),
 ):
     """Fetch live room-type groups (each with multiple rate plans) for a LiteAPI hotel.
 
     ``rooms`` is forwarded to LiteAPI as the number of occupancy slots so the search
     natively supports multi-room queries used by the recommendation widget.
+
+    Children pricing: when ``child_ages`` is provided, each room receives a
+    proportional share of the children list so suppliers apply per-room child
+    policies (some hotels charge nothing for kids under 12, others charge a cot
+    fee, etc.).
     """
+    parsed_children = _parse_child_ages(child_ages)
     try:
         room_types = await liteapi_service.get_rates(
             liteapi_hotel_id=liteapi_hotel_id,
@@ -362,6 +396,8 @@ async def get_liteapi_rates(
             check_out=check_out,
             guests=guests,
             rooms=rooms,
+            adults=adults,
+            children_ages=parsed_children,
         )
     except LiteAPIError as exc:
         raise HTTPException(

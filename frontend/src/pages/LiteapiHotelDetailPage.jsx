@@ -15,6 +15,7 @@ import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import FacilitiesSection from '@/components/hotel/FacilitiesSection'
+import OccupancySelector from '@/components/hotel/OccupancySelector'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { MapPin, CalendarDays, Users, CheckCircle, Search, Star } from 'lucide-react'
 import { format, differenceInDays } from 'date-fns'
@@ -32,8 +33,16 @@ export default function LiteapiHotelDetailPage() {
 
   const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || '')
   const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || '')
-  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '2'))
+  const [adults, setAdults] = useState(parseInt(searchParams.get('adults') || searchParams.get('guests') || '2'))
+  const [childAges, setChildAges] = useState(() => {
+    const raw = searchParams.get('child_ages') || ''
+    return raw
+      ? raw.split(',').map((s) => parseInt(s, 10)).filter((n) => !Number.isNaN(n) && n >= 0 && n <= 17)
+      : []
+  })
   const [rooms, setRooms] = useState(parseInt(searchParams.get('rooms') || '1'))
+  const guests = adults + childAges.length
+  const childAgesParam = childAges.join(',')
   const [reviewPage, setReviewPage] = useState(1)
   const REVIEWS_PER_PAGE = 5
 
@@ -47,9 +56,16 @@ export default function LiteapiHotelDetailPage() {
 
   // Live rates with multi-rate-plan grouping (when dates picked).
   const { data: liteapiRates } = useQuery({
-    queryKey: ['liteapi-rates', liteapiId, checkIn, checkOut, guests, rooms],
+    queryKey: ['liteapi-rates', liteapiId, checkIn, checkOut, adults, childAgesParam, rooms],
     queryFn: () =>
-      hotelsApi.getRates(liteapiId, { check_in: checkIn, check_out: checkOut, guests, rooms }),
+      hotelsApi.getRates(liteapiId, {
+        check_in: checkIn,
+        check_out: checkOut,
+        adults,
+        child_ages: childAgesParam || undefined,
+        guests,
+        rooms,
+      }),
     select: (res) => res.data || [],
     enabled: datesSelected,
   })
@@ -120,7 +136,8 @@ export default function LiteapiHotelDetailPage() {
       },
       checkIn,
       checkOut,
-      guests,
+      adults,
+      childAges,
       rooms,
     })
     navigate('/bookings/new')
@@ -128,7 +145,7 @@ export default function LiteapiHotelDetailPage() {
 
   // Must be declared before any early returns to satisfy Rules of Hooks.
   const [tableSelections, setTableSelections] = useState({})
-  useEffect(() => { setTableSelections({}) }, [checkIn, checkOut, guests, rooms])
+  useEffect(() => { setTableSelections({}) }, [checkIn, checkOut, adults, childAgesParam, rooms])
 
   if (isLoading) {
     return (
@@ -245,7 +262,8 @@ export default function LiteapiHotelDetailPage() {
       },
       checkIn,
       checkOut,
-      guests,
+      adults,
+      childAges,
       rooms,
     })
     navigate('/bookings/new')
@@ -389,31 +407,20 @@ export default function LiteapiHotelDetailPage() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
                   />
                 </div>
-                <div className="sm:w-32">
+                <div className="sm:w-72">
                   <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
                     <Users className="w-3.5 h-3.5 text-gray-500" />
                     {t('hotels:detail.guests')}
                   </label>
-                  <input
-                    type="number"
-                    value={guests}
-                    min={1}
-                    max={20}
-                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                </div>
-                <div className="sm:w-28">
-                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
-                    {t('hotels:detail.roomsLabel')}
-                  </label>
-                  <input
-                    type="number"
-                    value={rooms}
-                    min={1}
-                    max={10}
-                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  <OccupancySelector
+                    adults={adults}
+                    childAges={childAges}
+                    rooms={rooms}
+                    onChange={({ adults: a, childAges: c, rooms: r }) => {
+                      setAdults(a)
+                      setChildAges(c)
+                      setRooms(r)
+                    }}
                   />
                 </div>
                 <div className="sm:w-auto">
@@ -433,6 +440,8 @@ export default function LiteapiHotelDetailPage() {
                   recommendation={recommendation}
                   nights={nights}
                   guests={guests}
+                  adults={adults}
+                  children={childAges.length}
                   fmt={fmt}
                   onReserve={handleReserveCombination}
                 />

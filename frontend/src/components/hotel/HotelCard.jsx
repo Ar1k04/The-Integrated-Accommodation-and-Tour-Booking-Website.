@@ -20,7 +20,11 @@ export default function HotelCard({ hotel }) {
     const params = new URLSearchParams()
     if (checkIn) params.set('check_in', format(checkIn, 'yyyy-MM-dd'))
     if (checkOut) params.set('check_out', format(checkOut, 'yyyy-MM-dd'))
-    const totalGuests = (guests.adults || 1) + (guests.children || 0)
+    const adults = guests.adults || 1
+    const childAges = guests.child_ages || []
+    const totalGuests = adults + childAges.length
+    params.set('adults', String(adults))
+    if (childAges.length) params.set('child_ages', childAges.join(','))
     if (totalGuests) params.set('guests', String(totalGuests))
     if (guests.rooms > 1) params.set('rooms', String(guests.rooms))
     const qs = params.toString()

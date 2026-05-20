@@ -4,7 +4,7 @@ from datetime import date as date_type, datetime
 
 import sqlalchemy as sa
 from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -70,6 +70,9 @@ class BookingItem(Base):
     viator_booking_ref: Mapped[str | None] = mapped_column(String(255), unique=True)
     supplier_status: Mapped[str | None] = mapped_column(String(40))
     supplier_status_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    adults_count: Mapped[int | None] = mapped_column(Integer)
+    children_count: Mapped[int | None] = mapped_column(Integer)
+    children_ages: Mapped[list | None] = mapped_column(JSONB)
 
     booking = relationship("Booking", back_populates="items")
     room = relationship("Room", back_populates="booking_items")

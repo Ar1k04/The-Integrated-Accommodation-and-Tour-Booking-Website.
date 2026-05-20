@@ -30,7 +30,27 @@ export default function SearchBar({ variant = 'hero' }) {
     placeholderData: [],
   })
 
+  const childAges = guests.child_ages || []
   const totalGuests = guests.adults + guests.children
+
+  // Keep child_ages array length in sync with the `children` counter.
+  const setChildrenCount = (next) => {
+    next = Math.max(0, next)
+    const prevAges = guests.child_ages || []
+    let nextAges
+    if (next > prevAges.length) {
+      nextAges = [...prevAges, ...Array(next - prevAges.length).fill(8)]
+    } else {
+      nextAges = prevAges.slice(0, next)
+    }
+    setGuests({ ...guests, children: next, child_ages: nextAges })
+  }
+
+  const setChildAge = (index, age) => {
+    const nextAges = [...(guests.child_ages || [])]
+    nextAges[index] = age
+    setGuests({ ...guests, child_ages: nextAges })
+  }
 
   const handleSearch = () => {
     setDestination(localDest)
@@ -39,6 +59,9 @@ export default function SearchBar({ variant = 'hero' }) {
       if (localDest) params.set('city', localDest)
       if (checkIn) params.set('check_in', format(checkIn, 'yyyy-MM-dd'))
       if (checkOut) params.set('check_out', format(checkOut, 'yyyy-MM-dd'))
+      params.set('adults', guests.adults)
+      if (guests.rooms > 1) params.set('rooms', guests.rooms)
+      if (childAges.length) params.set('child_ages', childAges.join(','))
       if (totalGuests) params.set('guests', totalGuests)
       navigate(`/hotels/search?${params.toString()}`)
     } else {
@@ -204,17 +227,46 @@ export default function SearchBar({ variant = 'hero' }) {
                   <span className="text-sm">{label}</span>
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => setGuests({ ...guests, [key]: Math.max(min, guests[key] - 1) })}
+                      onClick={() => {
+                        if (key === 'children') setChildrenCount(guests.children - 1)
+                        else setGuests({ ...guests, [key]: Math.max(min, guests[key] - 1) })
+                      }}
                       className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-gray-100 text-sm"
                     >-</button>
                     <span className="w-6 text-center text-sm font-medium">{guests[key]}</span>
                     <button
-                      onClick={() => setGuests({ ...guests, [key]: guests[key] + 1 })}
+                      onClick={() => {
+                        if (key === 'children') setChildrenCount(guests.children + 1)
+                        else setGuests({ ...guests, [key]: guests[key] + 1 })
+                      }}
                       className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-gray-100 text-sm"
                     >+</button>
                   </div>
                 </div>
               ))}
+
+              {childAges.length > 0 && (
+                <div className="border-t pt-2 mt-1 space-y-2">
+                  <p className="text-xs text-gray-500">{t('searchBar.childAgesHint', 'Age of each child at check-in')}</p>
+                  {childAges.map((age, idx) => (
+                    <div key={idx} className="flex items-center justify-between">
+                      <span className="text-sm">Child {idx + 1}</span>
+                      <select
+                        value={age}
+                        onChange={(e) => setChildAge(idx, parseInt(e.target.value, 10))}
+                        className="border rounded-md text-sm px-2 py-1"
+                      >
+                        {Array.from({ length: 18 }, (_, i) => i).map((a) => (
+                          <option key={a} value={a}>
+                            {a === 0 ? '< 1' : `${a}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <button onClick={() => setShowGuests(false)}
                 className="w-full mt-2 bg-primary text-white rounded-lg py-2 text-sm font-medium">
                 {t('common.done')}

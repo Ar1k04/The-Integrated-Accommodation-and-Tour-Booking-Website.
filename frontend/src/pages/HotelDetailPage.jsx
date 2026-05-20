@@ -18,6 +18,7 @@ import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
 import FacilitiesSection from '@/components/hotel/FacilitiesSection'
+import OccupancySelector from '@/components/hotel/OccupancySelector'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { MapPin, Star, CalendarDays, Users, Search } from 'lucide-react'
 import { format, addDays, differenceInDays } from 'date-fns'
@@ -35,8 +36,16 @@ export default function HotelDetailPage() {
 
   const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || '')
   const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || '')
-  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '2'))
+  const [adults, setAdults] = useState(parseInt(searchParams.get('adults') || searchParams.get('guests') || '2'))
+  const [childAges, setChildAges] = useState(() => {
+    const raw = searchParams.get('child_ages') || ''
+    return raw
+      ? raw.split(',').map((s) => parseInt(s, 10)).filter((n) => !Number.isNaN(n) && n >= 0 && n <= 17)
+      : []
+  })
   const [rooms, setRooms] = useState(parseInt(searchParams.get('rooms') || '1'))
+  const guests = adults + childAges.length
+  const childAgesParam = childAges.join(',')
   const [reviewPage, setReviewPage] = useState(1)
   const REVIEWS_PER_PAGE = 5
 
@@ -66,11 +75,13 @@ export default function HotelDetailPage() {
 
   // LiteAPI live rates (when dates picked).
   const { data: liteapiRates } = useQuery({
-    queryKey: ['liteapi-rates', liteapiHotelId, checkIn, checkOut, guests, rooms],
+    queryKey: ['liteapi-rates', liteapiHotelId, checkIn, checkOut, adults, childAgesParam, rooms],
     queryFn: () =>
       hotelsApi.getRates(liteapiHotelId, {
         check_in: checkIn,
         check_out: checkOut,
+        adults,
+        child_ages: childAgesParam || undefined,
         guests,
         rooms,
       }),
@@ -194,7 +205,8 @@ export default function HotelDetailPage() {
         : (dbRooms || []).find((r) => r.id === items[0].db_room_id) || null,
       checkIn,
       checkOut,
-      guests,
+      adults,
+      childAges,
       rooms,
     })
     navigate('/bookings/new')
@@ -301,7 +313,8 @@ export default function HotelDetailPage() {
         : (dbRooms || []).find((r) => r.id === storeItems[0].db_room_id) || null,
       checkIn,
       checkOut,
-      guests,
+      adults,
+      childAges,
       rooms,
     })
     navigate('/bookings/new')
@@ -469,34 +482,21 @@ export default function HotelDetailPage() {
                   />
                 </div>
 
-                {/* Guests */}
-                <div className="sm:w-32">
+                {/* Guests + rooms (with per-child ages) */}
+                <div className="sm:w-72">
                   <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
                     <Users className="w-3.5 h-3.5 text-gray-500" />
                     {t('hotels:detail.guests')}
                   </label>
-                  <input
-                    type="number"
-                    value={guests}
-                    min={1}
-                    max={20}
-                    onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
-                  />
-                </div>
-
-                {/* Rooms */}
-                <div className="sm:w-28">
-                  <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 mb-1">
-                    {t('hotels:detail.roomsLabel')}
-                  </label>
-                  <input
-                    type="number"
-                    value={rooms}
-                    min={1}
-                    max={10}
-                    onChange={(e) => setRooms(parseInt(e.target.value) || 1)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                  <OccupancySelector
+                    adults={adults}
+                    childAges={childAges}
+                    rooms={rooms}
+                    onChange={({ adults: a, childAges: c, rooms: r }) => {
+                      setAdults(a)
+                      setChildAges(c)
+                      setRooms(r)
+                    }}
                   />
                 </div>
 
@@ -519,6 +519,8 @@ export default function HotelDetailPage() {
                   recommendation={recommendation}
                   nights={nights}
                   guests={guests}
+                  adults={adults}
+                  children={childAges.length}
                   fmt={fmt}
                   onReserve={handleReserveCombination}
                 />

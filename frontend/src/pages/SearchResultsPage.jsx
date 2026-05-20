@@ -13,7 +13,7 @@ import { SlidersHorizontal, ArrowUpDown, X } from 'lucide-react'
 
 // Separated so that changing city/dates/guests fully remounts this component
 // (via the key prop in SearchResultsPage), clearing stale results instantly.
-function HotelResults({ city, checkIn, checkOut, guests }) {
+function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
   const { t } = useTranslation(['hotels', 'common'])
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState('created_at')
@@ -41,6 +41,7 @@ function HotelResults({ city, checkIn, checkOut, guests }) {
     check_in: checkIn || undefined,
     check_out: checkOut || undefined,
     guests: guests || undefined,
+    child_ages: childAges || undefined,
     min_price: filters.min_price || undefined,
     max_price: filters.max_price || undefined,
     star_rating: filters.star_rating || undefined,
@@ -49,7 +50,7 @@ function HotelResults({ city, checkIn, checkOut, guests }) {
     sort_by: sortBy,
     sort_order: sortOrder,
     per_page: 10,
-  }), [city, checkIn, checkOut, guests, filters, sortBy, sortOrder])
+  }), [city, checkIn, checkOut, guests, childAges, filters, sortBy, sortOrder])
 
   const {
     data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading,
@@ -135,10 +136,11 @@ export default function SearchResultsPage() {
   const checkIn = params.get('check_in') || ''
   const checkOut = params.get('check_out') || ''
   const guests = params.get('guests') || ''
+  const childAges = params.get('child_ages') || ''
 
   // Key forces HotelResults to fully remount on every new search,
   // wiping stale data and resetting filters/sort/scroll position.
-  const searchKey = `${city}|${checkIn}|${checkOut}|${guests}`
+  const searchKey = `${city}|${checkIn}|${checkOut}|${guests}|${childAges}`
 
   return (
     <>
@@ -164,6 +166,7 @@ export default function SearchResultsPage() {
             checkIn={checkIn}
             checkOut={checkOut}
             guests={guests}
+            childAges={childAges}
           />
         </div>
       </div>

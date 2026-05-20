@@ -47,6 +47,28 @@ class RoomItemCreate(BaseModel):
     check_out: date
     quantity: int = Field(default=1, ge=1)
     guests_count: int = Field(default=1, ge=1)
+    adults: int | None = Field(default=None, ge=1)
+    children_ages: list[int] | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _normalise_occupancy(self) -> "RoomItemCreate":
+        ages = self.children_ages or []
+        for age in ages:
+            if age < 0 or age > 17:
+                raise ValueError("child age must be 0–17")
+        if self.adults is None and ages:
+            # Caller sent only children; assume guests_count counts adults too.
+            self.adults = max(1, self.guests_count - len(ages))
+        if self.adults is None:
+            self.adults = self.guests_count
+        total = self.adults + len(ages)
+        if total != self.guests_count:
+            # Keep guests_count consistent with adults + children for downstream
+            # legacy consumers that still read guests_count.
+            self.guests_count = total
+        if self.children_ages is None:
+            self.children_ages = []
+        return self
 
 
 class TourItemCreate(BaseModel):
@@ -106,6 +128,9 @@ class BookingItemResponse(BaseModel):
     viator_booking_ref: str | None = None
     supplier_status: str | None = None
     supplier_status_synced_at: datetime | None = None
+    adults_count: int | None = None
+    children_count: int | None = None
+    children_ages: list[int] | None = None
     unit_price: float
     subtotal: float
     quantity: int

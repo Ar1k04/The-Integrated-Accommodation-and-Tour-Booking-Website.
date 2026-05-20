@@ -22,6 +22,7 @@ class Room(Base):
     amenities: Mapped[dict | None] = mapped_column(JSONB, default=list)
     images: Mapped[dict | None] = mapped_column(JSONB, default=list)
     liteapi_room_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    child_age_tiers: Mapped[list | None] = mapped_column(JSONB)
 
     hotel = relationship("Hotel", back_populates="rooms")
     booking_items = relationship("BookingItem", back_populates="room", lazy="selectin")

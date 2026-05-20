@@ -169,6 +169,11 @@ export default function ManageRooms() {
 function RoomModal({ room, onClose, onSave, saving }) {
   const { t } = useTranslation('admin')
   useEscapeKey(onClose)
+  const defaultTiers = [
+    { min_age: 0, max_age: 5, discount_percent: 100 },
+    { min_age: 6, max_age: 12, discount_percent: 50 },
+    { min_age: 13, max_age: 17, discount_percent: 25 },
+  ]
   const [form, setForm] = useState({
     name: room.name || '',
     room_type: room.room_type || 'double',
@@ -176,7 +181,14 @@ function RoomModal({ room, onClose, onSave, saving }) {
     total_quantity: room.total_quantity || 1,
     max_guests: room.max_guests || 2,
     description: room.description || '',
+    child_age_tiers: room.child_age_tiers || null,
   })
+  const customTiers = form.child_age_tiers !== null
+  const tiers = form.child_age_tiers || defaultTiers
+  const setTier = (idx, patch) => {
+    const next = tiers.map((t, i) => (i === idx ? { ...t, ...patch } : t))
+    setForm({ ...form, child_age_tiers: next })
+  }
 
   const modalTitle = room.id ? t('actions.editRoom') : t('actions.newRoom')
 
@@ -225,6 +237,59 @@ function RoomModal({ room, onClose, onSave, saving }) {
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full border rounded-lg px-4 py-2.5 text-sm resize-none h-20" />
           </div>
+
+          <div className="border rounded-lg p-3 bg-gray-50">
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+              <input
+                type="checkbox"
+                checked={customTiers}
+                onChange={(e) => setForm({
+                  ...form,
+                  child_age_tiers: e.target.checked ? defaultTiers : null,
+                })}
+              />
+              Custom child pricing
+            </label>
+            <p className="text-xs text-gray-500 mt-1">
+              Default: 0–5 free, 6–12 half price, 13–17 25% off.
+            </p>
+            {customTiers && (
+              <div className="space-y-2 mt-3">
+                {tiers.map((tier, idx) => (
+                  <div key={idx} className="grid grid-cols-3 gap-2 items-center text-xs">
+                    <div>
+                      <label className="text-gray-500 block mb-0.5">Min age</label>
+                      <input
+                        type="number" min={0} max={17}
+                        value={tier.min_age}
+                        onChange={(e) => setTier(idx, { min_age: Number(e.target.value) })}
+                        className="w-full border rounded px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 block mb-0.5">Max age</label>
+                      <input
+                        type="number" min={0} max={17}
+                        value={tier.max_age}
+                        onChange={(e) => setTier(idx, { max_age: Number(e.target.value) })}
+                        className="w-full border rounded px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 block mb-0.5">Discount %</label>
+                      <input
+                        type="number" min={0} max={100}
+                        value={tier.discount_percent}
+                        onChange={(e) => setTier(idx, { discount_percent: Number(e.target.value) })}
+                        className="w-full border rounded px-2 py-1 text-sm"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 border py-2.5 rounded-lg text-sm font-medium">{t('actions.cancel')}</button>
             <button type="submit" disabled={saving}

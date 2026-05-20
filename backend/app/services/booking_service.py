@@ -15,6 +15,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.pricing import compute_room_subtotal
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemStatus, BookingItemType
 from app.models.flight_booking import FlightBooking
@@ -173,6 +174,7 @@ async def _reserve_liteapi_room_item(
     subtotal = (unit_price * nights * item.quantity).quantize(Decimal("0.01"))
     supplier_discount = (supplier_discount_per_unit * nights * item.quantity).quantize(Decimal("0.01"))
 
+    children_ages = list(item.children_ages or [])
     bi = BookingItem(
         item_type=BookingItemType.room.value,
         room_id=None,
@@ -183,6 +185,9 @@ async def _reserve_liteapi_room_item(
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
         liteapi_prebook_id=result["prebook_id"],
+        adults_count=item.adults or item.guests_count,
+        children_count=len(children_ages),
+        children_ages=children_ages,
     )
     return bi, subtotal, _parse_expiry_seconds(result.get("expires_at")), supplier_discount
 
@@ -204,8 +209,13 @@ async def _reserve_room_item(
     if not room:
         raise BookingServiceError("Room not found")
 
-    if item.guests_count > room.max_guests:
-        raise BookingServiceError(f"Room allows a maximum of {room.max_guests} guests")
+    adults = item.adults or item.guests_count
+    children_ages = list(item.children_ages or [])
+    total_occupants = adults + len(children_ages)
+    if total_occupants > room.max_guests * item.quantity:
+        raise BookingServiceError(
+            f"Room allows a maximum of {room.max_guests} guests per room"
+        )
 
     overlap = (
         await db.execute(
@@ -249,7 +259,15 @@ async def _reserve_room_item(
 
     nights = (item.check_out - item.check_in).days
     unit_price = Decimal(str(room.price_per_night))
-    subtotal = (unit_price * nights * item.quantity).quantize(Decimal("0.01"))
+    subtotal = compute_room_subtotal(
+        unit_price,
+        nights=nights,
+        quantity=item.quantity,
+        adults=adults,
+        children_ages=children_ages,
+        tiers=room.child_age_tiers,
+        max_guests=room.max_guests,
+    )
 
     bi = BookingItem(
         item_type=BookingItemType.room.value,
@@ -260,6 +278,9 @@ async def _reserve_room_item(
         subtotal=subtotal,
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
+        adults_count=adults,
+        children_count=len(children_ages),
+        children_ages=children_ages,
     )
     return bi, subtotal, None, Decimal("0")
 

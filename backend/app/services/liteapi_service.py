@@ -510,6 +510,7 @@ async def get_min_rates_batch(
     check_in: date,
     check_out: date,
     guests: int = 1,
+    children_ages: list[int] | None = None,
 ) -> dict[str, float]:
     """Batch-fetch minimum room rate for multiple LiteAPI hotels.
 
@@ -517,6 +518,9 @@ async def get_min_rates_batch(
     hotel as a flat object `{hotelId, price, suggestedSellingPrice, offerId}` —
     much lighter than /hotels/rates for populating "from $X" on search cards.
     Returns {liteapi_hotel_id: min_price}; hotels with no availability are omitted.
+
+    ``children_ages`` is a list of child ages (0–17). When provided, suppliers
+    apply their own per-hotel child-pricing policy.
     """
     if not hotel_ids:
         return {}
@@ -524,7 +528,7 @@ async def get_min_rates_batch(
         "hotelIds": hotel_ids,
         "checkin": check_in.isoformat(),
         "checkout": check_out.isoformat(),
-        "occupancies": [{"adults": guests, "children": []}],
+        "occupancies": [{"adults": guests, "children": list(children_ages or [])}],
         "currency": "USD",
         "guestNationality": "US",
     }
@@ -563,18 +567,35 @@ async def get_rates(
     check_out: date,
     guests: int = 1,
     rooms: int = 1,
+    adults: int | None = None,
+    children_ages: list[int] | None = None,
 ) -> list[dict]:
     """Fetch live room rates for a hotel via POST /hotels/rates.
 
     Returns a list of room-type groups, each with a `rates[]` array of rate plans.
     When ``rooms > 1``, the request is split into multiple occupancies of
     roughly equal size so LiteAPI knows the search is for a multi-room booking.
+
+    Children pricing: each room's ``children`` slot gets an integer age list.
+    Children are distributed round-robin across rooms so supplier policies can
+    apply per-room. When only ``guests`` is provided (legacy callers) every
+    guest is sent as an adult.
     """
     rooms = max(1, rooms)
-    base = max(1, guests // rooms)
-    extras = max(0, guests - base * rooms)
+    ages = list(children_ages or [])
+    if adults is None:
+        # Legacy single-int "guests" path → treat all as adults, no children.
+        adults = guests
+    adults = max(rooms, int(adults))  # at least one adult per room
+
+    base_adults = adults // rooms
+    extra_adults = adults - base_adults * rooms
+    adults_per_room = [base_adults + (1 if i < extra_adults else 0) for i in range(rooms)]
+    children_per_room: list[list[int]] = [[] for _ in range(rooms)]
+    for idx, age in enumerate(ages):
+        children_per_room[idx % rooms].append(int(age))
     occupancies = [
-        {"adults": base + (1 if i < extras else 0), "children": []}
+        {"adults": adults_per_room[i], "children": children_per_room[i]}
         for i in range(rooms)
     ]
     body = {

@@ -14,19 +14,28 @@ import { GuestIcons, BedInfo } from './_internal'
  *   fmt:            currency formatter (useFormatCurrency hook)
  *   onReserve:      (items) => void — called with `recommendation.items`
  */
-export default function RoomRecommendation({ recommendation, nights, guests, fmt, onReserve }) {
+export default function RoomRecommendation({ recommendation, nights, guests, adults, children = 0, fmt, onReserve }) {
   const { t } = useTranslation(['hotels', 'common'])
   if (!recommendation || !recommendation.items?.length) return null
 
   const { items, totalPrice, totalTaxes } = recommendation
   const stayPrice = totalPrice * Math.max(nights, 1)
   const stayTaxes = (totalTaxes || 0) * Math.max(nights, 1)
+  // When the caller passes `adults` (new API), use it; fall back to `guests`
+  // for callers still on the legacy single-count API.
+  const adultsCount = adults != null ? adults : guests
+  const headerLabel = children > 0
+    ? t('hotels:detail.recommendedForAdultsChildren', { adults: adultsCount, count: children })
+    : t('hotels:detail.recommendedForAdults', { count: adultsCount })
+  const stayLabel = children > 0
+    ? t('hotels:detail.nightsAdultsChildren', { nights, adults: adultsCount, count: children })
+    : t('hotels:detail.nightsAdults', { nights, guests: adultsCount })
 
   return (
     <div className="rounded-xl border border-gray-200 overflow-hidden mb-6 shadow-sm">
       <div className="bg-white px-4 py-3 border-b border-gray-200">
         <h3 className="font-bold text-gray-900 text-base">
-          {t('hotels:detail.recommendedForAdults', { count: guests })}
+          {headerLabel}
         </h3>
       </div>
 
@@ -42,7 +51,7 @@ export default function RoomRecommendation({ recommendation, nights, guests, fmt
         {/* Right reserve panel */}
         <div className="col-span-3 bg-white p-5 border-l border-gray-200 flex flex-col gap-3">
           <p className="text-sm text-gray-600">
-            {t('hotels:detail.nightsAdults', { nights, guests })}
+            {stayLabel}
           </p>
           <div>
             <p className="text-2xl font-bold text-gray-900">{fmt(stayPrice)}</p>
@@ -80,7 +89,7 @@ export default function RoomRecommendation({ recommendation, nights, guests, fmt
         </div>
         <div className="bg-white p-4 border-t border-gray-200 space-y-2">
           <p className="text-sm text-gray-600">
-            {t('hotels:detail.nightsAdults', { nights, guests })}
+            {stayLabel}
           </p>
           <p className="text-2xl font-bold text-gray-900">{fmt(stayPrice)}</p>
           {stayTaxes > 0 && (

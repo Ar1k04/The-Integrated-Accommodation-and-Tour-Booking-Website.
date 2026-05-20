@@ -201,6 +201,61 @@ async def test_get_rates_distributes_remainder_when_uneven():
 
 
 @pytest.mark.asyncio
+async def test_get_rates_forwards_child_ages_round_robin():
+    """children_ages must be distributed across rooms so suppliers can price per-room."""
+    captured: dict = {}
+
+    async def _capture_post(url, json):  # noqa: ARG001
+        captured["body"] = json
+        return _mock_response(200, {"data": []})
+
+    with patch.object(liteapi_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        await liteapi_service.get_rates(
+            liteapi_hotel_id="HOTEL_X",
+            check_in=date(2026, 6, 1),
+            check_out=date(2026, 6, 3),
+            adults=4,
+            rooms=2,
+            children_ages=[11, 8, 4],
+        )
+
+    occ = captured["body"]["occupancies"]
+    assert len(occ) == 2
+    assert [o["adults"] for o in occ] == [2, 2]
+    # Round-robin: room 0 gets [11, 4], room 1 gets [8].
+    assert occ[0]["children"] == [11, 4]
+    assert occ[1]["children"] == [8]
+
+
+@pytest.mark.asyncio
+async def test_get_min_rates_batch_forwards_child_ages():
+    captured: dict = {}
+
+    async def _capture_post(url, json):  # noqa: ARG001
+        captured["body"] = json
+        return _mock_response(200, {"data": []})
+
+    with patch.object(liteapi_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        await liteapi_service.get_min_rates_batch(
+            hotel_ids=["lp1897"],
+            check_in=date(2026, 6, 1),
+            check_out=date(2026, 6, 3),
+            guests=2,
+            children_ages=[10],
+        )
+
+    assert captured["body"]["occupancies"] == [{"adults": 2, "children": [10]}]
+
+
+@pytest.mark.asyncio
 async def test_get_room_types_catalog_strips_prices():
     """The catalog endpoint returns room-type metadata with empty rates[]."""
     raw = {

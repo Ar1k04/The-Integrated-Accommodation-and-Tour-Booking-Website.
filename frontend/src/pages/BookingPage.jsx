@@ -44,10 +44,12 @@ export default function BookingPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const {
-    selectedRoom, hotel, checkIn, checkOut, guests,
+    selectedRoom, hotel, checkIn, checkOut, guests, adults, childAges,
     selectedTour, tourDate, selectedFlight, clearBooking,
     selectedItems,
   } = useBookingStore()
+  const effectiveAdults = adults || guests || 1
+  const effectiveChildAges = childAges || []
 
   const { t } = useTranslation('booking')
   const { t: tHotel } = useTranslation('hotels')
@@ -261,7 +263,9 @@ export default function BookingPage() {
               liteapi_price: selectedRoom.liteapi_price,
               check_in: effectiveCheckIn,
               check_out: effectiveCheckOut,
-              guests_count: guests || 1,
+              guests_count: effectiveAdults + effectiveChildAges.length,
+              adults: effectiveAdults,
+              children_ages: effectiveChildAges,
               quantity: 1,
             }],
             special_requests: form.special_requests || undefined,
@@ -273,7 +277,9 @@ export default function BookingPage() {
               room_id: selectedRoom.id,
               check_in: effectiveCheckIn,
               check_out: effectiveCheckOut,
-              guests_count: guests || 1,
+              guests_count: effectiveAdults + effectiveChildAges.length,
+              adults: effectiveAdults,
+              children_ages: effectiveChildAges,
               quantity: 1,
             }],
             special_requests: form.special_requests || undefined,
@@ -467,7 +473,14 @@ export default function BookingPage() {
                     <div className="flex items-center gap-2">
                       <Users className="w-4 h-4 text-gray-400" />
                       <span>
-                        {guests || 1} guest{(guests || 1) > 1 ? 's' : ''}
+                        {effectiveAdults} adult{effectiveAdults > 1 ? 's' : ''}
+                        {effectiveChildAges.length > 0 && (
+                          <>
+                            {' '}· {effectiveChildAges.length} child
+                            {effectiveChildAges.length > 1 ? 'ren' : ''}{' '}
+                            ({effectiveChildAges.join(', ')} y/o)
+                          </>
+                        )}
                       </span>
                     </div>
                   </div>

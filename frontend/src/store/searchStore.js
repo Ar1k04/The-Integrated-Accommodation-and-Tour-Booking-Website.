@@ -4,7 +4,8 @@ export const useSearchStore = create((set) => ({
   destination: '',
   checkIn: null,
   checkOut: null,
-  guests: { adults: 2, children: 0, rooms: 1 },
+  // child_ages: integer ages for each child (0–17). length === children counter.
+  guests: { adults: 2, children: 0, child_ages: [], rooms: 1 },
   searchType: 'hotels',
 
   setDestination: (destination) => set({ destination }),
@@ -16,6 +17,6 @@ export const useSearchStore = create((set) => ({
       destination: '',
       checkIn: null,
       checkOut: null,
-      guests: { adults: 2, children: 0, rooms: 1 },
+      guests: { adults: 2, children: 0, child_ages: [], rooms: 1 },
     }),
 }))
