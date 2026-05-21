@@ -35,6 +35,15 @@ async def send_email(to: str, subject: str, html_body: str) -> bool:
         return False
 
 
+async def send_admin_alert(subject: str, body: str) -> bool:
+    """Send an operations alert to STRIPE_ADMIN_ALERT_EMAIL (no-op if unset)."""
+    if not settings.STRIPE_ADMIN_ALERT_EMAIL:
+        logger.info("Admin alert (no recipient configured): %s — %s", subject, body)
+        return False
+    html = f"<p>{body}</p>"
+    return await send_email(settings.STRIPE_ADMIN_ALERT_EMAIL, f"[Alert] {subject}", html)
+
+
 def _items_html(items) -> str:
     rows = []
     for item in items:

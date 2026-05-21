@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_API_VERSION: str = "2024-11-20.acacia"
+    STRIPE_ADMIN_ALERT_EMAIL: str = ""
 
     # Cloudinary
     CLOUDINARY_CLOUD_NAME: str = ""

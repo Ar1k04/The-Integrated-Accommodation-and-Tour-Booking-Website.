@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { loadStripe } from '@stripe/stripe-js'
 import {
   Elements,
-  CardElement,
+  PaymentElement,
   useStripe,
   useElements,
 } from '@stripe/react-stripe-js'
@@ -27,18 +27,6 @@ import {
 } from 'lucide-react'
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '')
-
-const CARD_ELEMENT_OPTIONS = {
-  style: {
-    base: {
-      fontSize: '16px',
-      color: '#1a1a2e',
-      fontFamily: 'Inter, sans-serif',
-      '::placeholder': { color: '#94a3b8' },
-    },
-    invalid: { color: '#ef4444' },
-  },
-}
 
 export default function BookingPage() {
   const navigate = useNavigate()
@@ -416,13 +404,13 @@ export default function BookingPage() {
 
             {step === 'payment' && clientSecret && (
               <Elements
+                key={clientSecret}
                 stripe={stripePromise}
                 options={{ clientSecret, appearance: { theme: 'stripe' } }}
               >
                 <PaymentStep
                   paymentMethod={paymentMethod}
                   setPaymentMethod={setPaymentMethod}
-                  clientSecret={clientSecret}
                   stripePaymentId={stripePaymentId}
                   onSuccess={handlePaymentSuccess}
                   onVnpayPay={handleVnpayPay}
@@ -737,7 +725,7 @@ function DetailsStep({
 }
 
 function PaymentStep({
-  paymentMethod, setPaymentMethod, clientSecret, stripePaymentId,
+  paymentMethod, setPaymentMethod, stripePaymentId,
   onSuccess, onVnpayPay, vnpayLoading, finalTotal,
 }) {
   return (
@@ -776,7 +764,6 @@ function PaymentStep({
       {/* Stripe card form */}
       {paymentMethod === 'stripe' && (
         <StripeCardForm
-          clientSecret={clientSecret}
           stripePaymentId={stripePaymentId}
           onSuccess={onSuccess}
           finalTotal={finalTotal}
@@ -807,7 +794,7 @@ function PaymentStep({
   )
 }
 
-function StripeCardForm({ clientSecret, stripePaymentId, onSuccess, finalTotal }) {
+function StripeCardForm({ stripePaymentId, onSuccess, finalTotal }) {
   const stripe = useStripe()
   const elements = useElements()
   const fmt = useFormatCurrency()
@@ -821,15 +808,22 @@ function StripeCardForm({ clientSecret, stripePaymentId, onSuccess, finalTotal }
     setCardError('')
     setPaying(true)
 
-    const cardElement = elements.getElement(CardElement)
-    const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
-      payment_method: { card: cardElement },
+    // PaymentElement reads the client secret from <Elements options.clientSecret>,
+    // and `redirect: 'if_required'` keeps card flows in-page while still letting
+    // 3DS / redirect-based methods (Apple Pay, etc.) work.
+    const { error, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {},
+      redirect: 'if_required',
     })
 
     if (error) {
-      setCardError(error.message)
+      setCardError(error.message || 'Payment failed')
       setPaying(false)
-    } else if (paymentIntent.status === 'succeeded') {
+      return
+    }
+
+    if (paymentIntent?.status === 'succeeded') {
       // Notify backend to confirm booking + award loyalty points
       if (stripePaymentId) {
         try {
@@ -854,9 +848,7 @@ function StripeCardForm({ clientSecret, stripePaymentId, onSuccess, finalTotal }
       </div>
 
       <form onSubmit={handlePay} className="space-y-4">
-        <div className="border rounded-lg px-4 py-3">
-          <CardElement options={CARD_ELEMENT_OPTIONS} />
-        </div>
+        <PaymentElement options={{ layout: 'tabs' }} />
 
         {cardError && (
           <p className="text-sm text-error">{cardError}</p>

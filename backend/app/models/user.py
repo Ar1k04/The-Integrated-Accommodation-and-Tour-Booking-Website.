@@ -31,6 +31,7 @@ class User(Base):
     loyalty_tier_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("loyalty_tier.id", ondelete="SET NULL"), index=True
     )
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
 
     @property
     def total_points(self) -> int:

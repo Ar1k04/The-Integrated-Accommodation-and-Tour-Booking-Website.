@@ -172,21 +172,32 @@ function BookingsTab() {
   const cancelBooking = useMutation({
     mutationFn: (id) => bookingsApi.cancel(id),
     onSuccess: (res) => {
-      // Surface the supplier's refund info from the response body. For a multi-item
-      // booking we aggregate, but in practice today's bookings have a single item.
-      const items = res.data?.items || []
-      const liteapiItem = items.find((it) => it.supplier === 'liteapi')
-      if (liteapiItem) {
-        if (liteapiItem.status === 'CANCELLED_WITH_CHARGES') {
-          const fee = liteapiItem.cancellation_fee || 0
-          toast.warning(t('bookings.cancelledWithCharges', { fee: fmt(fee, liteapiItem.currency) }))
-        } else if (liteapiItem.refund_amount != null) {
-          toast.success(t('bookings.cancelledWithRefund', { amount: fmt(liteapiItem.refund_amount, liteapiItem.currency) }))
+      // Prefer the authoritative Stripe refund summary from the backend over per-item
+      // supplier hints — it reflects what actually happened on the customer's card.
+      const data = res.data?.data || res.data || {}
+      const items = data.items || []
+      const stripeAmount = data.stripe_refund_amount
+      const nonRefundable = data.non_refundable
+
+      if (stripeAmount != null && stripeAmount > 0) {
+        toast.success(t('bookings.cancelledStripeRefund', { amount: fmt(stripeAmount) }))
+      } else if (nonRefundable) {
+        toast.warning(t('bookings.cancelledNonRefundable'))
+      } else {
+        // Fallback: surface supplier-level info if the backend didn't issue a
+        // Stripe refund (e.g. VNPay payment, or no payment to refund).
+        const liteapiItem = items.find((it) => it.supplier === 'liteapi')
+        if (liteapiItem && liteapiItem.status === 'CANCELLED_WITH_CHARGES') {
+          toast.warning(t('bookings.cancelledWithCharges', {
+            fee: fmt(liteapiItem.cancellation_fee || 0, liteapiItem.currency),
+          }))
+        } else if (liteapiItem && liteapiItem.refund_amount != null) {
+          toast.success(t('bookings.cancelledWithRefund', {
+            amount: fmt(liteapiItem.refund_amount, liteapiItem.currency),
+          }))
         } else {
           toast.success(t('bookings.cancelled'))
         }
-      } else {
-        toast.success(t('bookings.cancelled'))
       }
       qc.invalidateQueries({ queryKey: ['my-bookings'] })
       setPendingCancel(null)

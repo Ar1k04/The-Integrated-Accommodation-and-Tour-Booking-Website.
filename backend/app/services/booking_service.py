@@ -799,19 +799,51 @@ async def confirm_booking(
     return booking
 
 
-async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> tuple[Booking, list[dict]]:
+def _item_refund_share(booking: Booking, item: BookingItem) -> float:
+    """USD share of booking.total_price attributable to one item.
+
+    Used when a supplier doesn't report a refund_amount but the item is fully
+    refundable (e.g. LiteAPI prebook that was never finalized). For a
+    single-item booking this returns total_price; for multi-item it
+    pro-rates by line subtotal.
+    """
+    try:
+        items = list(booking.items or [])
+        if len(items) <= 1:
+            return float(booking.total_price or 0)
+        line_total = float((item.price or 0)) * float(item.quantity or 1)
+        all_lines = sum(float((it.price or 0)) * float(it.quantity or 1) for it in items) or 1.0
+        return float(booking.total_price or 0) * (line_total / all_lines)
+    except Exception:
+        return float(booking.total_price or 0)
+
+
+async def cancel_booking(
+    db: AsyncSession, booking: Booking, redis=None
+) -> tuple[Booking, list[dict], dict]:
     """
     Cancel booking and release inventory (tour slots, room_availability rows).
 
-    Returns (booking, supplier_results) where supplier_results is a list of
-    per-item dicts capturing what each upstream supplier reported (LiteAPI's
-    refund_amount, cancellation_fee, etc.). The frontend uses this to show
-    the user whether they got a refund.
+    Returns (booking, supplier_results, stripe_refund_info) where:
+      - supplier_results is a list of per-item dicts capturing what each
+        upstream supplier reported (LiteAPI's refund_amount, cancellation_fee, etc.)
+      - stripe_refund_info is a dict shaped like:
+          {"stripe_refund_id": str | None,
+           "stripe_refund_amount": float | None,
+           "non_refundable": bool}
+        It is populated by attempting a Stripe refund for the *sum of supplier-
+        reported refundable amounts*. If every supplier reports non-refundable,
+        no Stripe refund is issued and `non_refundable=True`.
     """
 
     supplier_results: list[dict] = []
+    stripe_refund_info: dict = {
+        "stripe_refund_id": None,
+        "stripe_refund_amount": None,
+        "non_refundable": False,
+    }
     if booking.status == BookingStatus.cancelled.value:
-        return booking, supplier_results
+        return booking, supplier_results, stripe_refund_info
 
     booking.status = BookingStatus.cancelled.value
     for item in booking.items:
@@ -830,39 +862,39 @@ async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> tupl
                     "currency": result.get("currency"),
                 }
         elif item.liteapi_prebook_id:
-            # Prebook never finalized — record supplier-side as cancelled locally
+            # Prebook never finalized — never charged the supplier, so a full refund is safe.
             item.supplier_status = "CANCELLED"
             item.supplier_status_synced_at = datetime.now(timezone.utc)
             supplier_entry = {
                 "item_id": item.id,
                 "supplier": "liteapi",
                 "status": "CANCELLED",
-                "refund_amount": None,
+                "refund_amount": _item_refund_share(booking, item),
                 "cancellation_fee": 0.0,
                 "currency": None,
             }
         if item.viator_booking_ref:
-            await viator_service.cancel_booking(item.viator_booking_ref)
+            viator_result = await viator_service.cancel_booking(item.viator_booking_ref)
             supplier_entry = supplier_entry or {
                 "item_id": item.id,
                 "supplier": "viator",
-                "status": "CANCELLED",
-                "refund_amount": None,
+                "status": (viator_result or {}).get("status") or "CANCELLED",
+                "refund_amount": (viator_result or {}).get("refund_amount"),
                 "cancellation_fee": None,
-                "currency": None,
+                "currency": (viator_result or {}).get("currency"),
             }
         if item.item_type == BookingItemType.flight.value:
             flight = item.flight_booking
             if flight and flight.duffel_order_id:
-                await duffel_service.cancel_order(flight.duffel_order_id)
+                duffel_result = await duffel_service.cancel_order(flight.duffel_order_id)
                 flight.status = "cancelled"
                 supplier_entry = supplier_entry or {
                     "item_id": item.id,
                     "supplier": "duffel",
-                    "status": "CANCELLED",
-                    "refund_amount": None,
+                    "status": (duffel_result or {}).get("status") or "CANCELLED",
+                    "refund_amount": (duffel_result or {}).get("refund_amount"),
                     "cancellation_fee": None,
-                    "currency": None,
+                    "currency": (duffel_result or {}).get("currency"),
                 }
         item.status = BookingItemStatus.cancelled.value
         if supplier_entry is None:
@@ -906,6 +938,34 @@ async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> tupl
     except Exception as exc:
         logger.warning("Loyalty reversal failed for booking %s: %s", booking.id, exc)
 
+    # Stripe refund — only refund what the supplier confirmed as refundable.
+    # If every supplier reports non-refundable, no refund is issued and the
+    # money stays charged. This protects us from refunding the customer when
+    # we still owe the supplier.
+    total_refundable = 0.0
+    any_refundable = False
+    for entry in supplier_results:
+        amt = entry.get("refund_amount")
+        if amt is not None and float(amt) > 0:
+            total_refundable += float(amt)
+            any_refundable = True
+
+    if any_refundable and total_refundable > 0:
+        try:
+            from app.services import payment_service
+            refunded = await payment_service.refund_for_booking(
+                db, booking.id, refund_amount_usd=total_refundable
+            )
+            if refunded:
+                stripe_refund_info["stripe_refund_id"] = refunded.stripe_refund_id
+                stripe_refund_info["stripe_refund_amount"] = float(refunded.refunded_amount or 0)
+        except Exception as exc:
+            # Stripe outage must not block the cancellation. Admin can retry
+            # via DELETE /payments/{id}.
+            logger.exception("Stripe refund failed for booking %s: %s", booking.id, exc)
+    else:
+        stripe_refund_info["non_refundable"] = True
+
     await db.flush()
     await db.refresh(booking)
 
@@ -920,7 +980,7 @@ async def cancel_booking(db: AsyncSession, booking: Booking, redis=None) -> tupl
     except Exception as exc:
         logger.warning("Cancellation email failed for booking %s: %s", booking.id, exc)
 
-    return booking, supplier_results
+    return booking, supplier_results, stripe_refund_info
 
 
 async def sync_supplier_status(db: AsyncSession, item: BookingItem) -> str | None:

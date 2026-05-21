@@ -223,28 +223,46 @@ async def test_book_tour_returns_booking_ref():
 
 
 @pytest.mark.asyncio
-async def test_cancel_booking_returns_true():
-    # Cancel is now POST /bookings/{ref}/cancel
+async def test_cancel_booking_returns_refund_dict():
+    # Cancel is now POST /bookings/{ref}/cancel and returns a refund dict.
+    raw = {
+        "status": "ACCEPTED",
+        "refundDetails": {"refundAmount": 35.0, "currencyCode": "USD"},
+    }
     with patch.object(viator_service, "_client") as mock_client_fn:
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=_mock_response(200, {"status": "CANCELLED"}))
+        mock_client.post = AsyncMock(return_value=_mock_response(200, raw))
         mock_client_fn.return_value = mock_client
 
-        ok = await viator_service.cancel_booking("VIATOR-BR-001")
+        result = await viator_service.cancel_booking("VIATOR-BR-001")
 
-    assert ok is True
+    assert result == {"status": "ACCEPTED", "refund_amount": 35.0, "currency": "USD"}
 
 
 @pytest.mark.asyncio
-async def test_cancel_booking_returns_false_on_error():
+async def test_cancel_booking_non_refundable_returns_none_amount():
+    # Viator may return status without a refundDetails block for non-refundable bookings.
     with patch.object(viator_service, "_client") as mock_client_fn:
         mock_client = MagicMock()
-        mock_client.delete = AsyncMock(return_value=_mock_response(404, {"message": "Booking not found"}))
+        mock_client.post = AsyncMock(return_value=_mock_response(200, {"status": "ACCEPTED"}))
         mock_client_fn.return_value = mock_client
 
-        ok = await viator_service.cancel_booking("NONEXISTENT")
+        result = await viator_service.cancel_booking("VIATOR-NR-001")
 
-    assert ok is False
+    assert result is not None
+    assert result["refund_amount"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_booking_returns_none_on_error():
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(404, {"message": "Booking not found"}))
+        mock_client_fn.return_value = mock_client
+
+        result = await viator_service.cancel_booking("NONEXISTENT")
+
+    assert result is None
 
 
 @pytest.mark.asyncio

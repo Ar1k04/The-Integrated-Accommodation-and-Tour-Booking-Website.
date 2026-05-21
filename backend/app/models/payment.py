@@ -30,11 +30,19 @@ class Payment(Base):
         String(20), default=PaymentProvider.stripe.value, server_default="stripe"
     )
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    stripe_refund_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     vnpay_transaction_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    refunded_amount: Mapped[float] = mapped_column(
+        Numeric(10, 2), default=0, server_default="0", nullable=False
+    )
     currency: Mapped[str] = mapped_column(String(10), default="usd", server_default="usd")
     status: Mapped[str] = mapped_column(
         String(20), default=PaymentStatus.pending.value, server_default="pending"
     )
+    # Populated when payment_intent.payment_failed fires (decline diagnostics).
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    decline_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     booking = relationship("Booking", back_populates="payments")

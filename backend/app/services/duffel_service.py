@@ -335,21 +335,41 @@ async def get_available_services(duffel_offer_id: str) -> list[dict]:
         raise DuffelError(502, f"Duffel get_available_services failed: {exc}") from exc
 
 
-async def cancel_order(duffel_order_id: str) -> bool:
-    """Two-step Duffel cancellation: create then confirm."""
+async def cancel_order(duffel_order_id: str) -> dict | None:
+    """Two-step Duffel cancellation. Returns supplier refund info.
+
+    Shape: {"status": "cancelled", "refund_amount": float | None, "currency": str | None}
+    or None on failure. Non-refundable fares return `refund_amount=None`.
+
+    Duffel's order_cancellation object includes a `refund_amount` and
+    `refund_currency` that reflect what's refundable per the fare rules.
+    """
     try:
         resp = await _client().post(
             "/air/order_cancellations",
             json={"data": {"order_id": duffel_order_id}},
         )
         if resp.status_code >= 400:
-            return False
-        cancellation_id = resp.json()["data"]["id"]
+            return None
+        cancellation = resp.json()["data"]
+        cancellation_id = cancellation["id"]
 
         confirm_resp = await _client().post(
             f"/air/order_cancellations/{cancellation_id}/actions/confirm"
         )
-        return confirm_resp.status_code < 400
+        if confirm_resp.status_code >= 400:
+            return None
+        confirmed = confirm_resp.json().get("data") or cancellation
+        refund_amount_raw = confirmed.get("refund_amount")
+        try:
+            refund_amount = float(refund_amount_raw) if refund_amount_raw is not None else None
+        except (TypeError, ValueError):
+            refund_amount = None
+        return {
+            "status": "cancelled",
+            "refund_amount": refund_amount,
+            "currency": confirmed.get("refund_currency"),
+        }
     except Exception as exc:
         logger.warning("Duffel cancel_order failed for %s: %s", duffel_order_id, exc)
-        return False
+        return None

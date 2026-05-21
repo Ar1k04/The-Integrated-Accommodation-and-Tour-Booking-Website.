@@ -17,6 +17,7 @@ from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.schemas.payment import PaymentCreate, PaymentResponse, VnpayCreateRequest
 from app.services import vnpay_service
 from app.services.payment_service import (
+    _to_cents,
     create_payment_intent,
     handle_webhook_event,
     refund_payment,
@@ -111,6 +112,13 @@ async def confirm_stripe_payment(
     intent = stripe.PaymentIntent.retrieve(payment.stripe_payment_intent_id)
     if intent.status != "succeeded":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Payment not succeeded: {intent.status}")
+
+    # Defense-in-depth: ensure the succeeded intent is for THIS booking at the right amount.
+    expected_cents = _to_cents(payment.amount)
+    if intent.amount != expected_cents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="PaymentIntent amount does not match booking")
+    if (intent.metadata or {}).get("booking_id") != str(payment.booking_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="PaymentIntent does not belong to this booking")
 
     payment.status = PaymentStatus.succeeded.value
 

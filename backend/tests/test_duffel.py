@@ -336,9 +336,16 @@ async def test_get_available_services_returns_list():
 
 
 @pytest.mark.asyncio
-async def test_cancel_order_returns_true():
+async def test_cancel_order_returns_refund_dict():
     cancel_raw = {"data": {"id": "oca_001"}}
-    confirm_raw = {"data": {"id": "oca_001", "confirmed_at": "2026-07-01T12:00:00Z"}}
+    confirm_raw = {
+        "data": {
+            "id": "oca_001",
+            "confirmed_at": "2026-07-01T12:00:00Z",
+            "refund_amount": "120.50",
+            "refund_currency": "USD",
+        }
+    }
 
     with patch.object(duffel_service, "_client") as mock_client_fn:
         mock_client = MagicMock()
@@ -350,21 +357,42 @@ async def test_cancel_order_returns_true():
         )
         mock_client_fn.return_value = mock_client
 
-        ok = await duffel_service.cancel_order("ord_0000test")
+        result = await duffel_service.cancel_order("ord_0000test")
 
-    assert ok is True
+    assert result == {"status": "cancelled", "refund_amount": 120.5, "currency": "USD"}
 
 
 @pytest.mark.asyncio
-async def test_cancel_order_returns_false_on_error():
+async def test_cancel_order_non_refundable():
+    cancel_raw = {"data": {"id": "oca_002"}}
+    confirm_raw = {"data": {"id": "oca_002", "confirmed_at": "2026-07-01T12:00:00Z"}}
+
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(
+            side_effect=[
+                _mock_response(201, cancel_raw),
+                _mock_response(200, confirm_raw),
+            ]
+        )
+        mock_client_fn.return_value = mock_client
+
+        result = await duffel_service.cancel_order("ord_nonrefundable")
+
+    assert result is not None
+    assert result["refund_amount"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_none_on_error():
     with patch.object(duffel_service, "_client") as mock_client_fn:
         mock_client = MagicMock()
         mock_client.post = AsyncMock(return_value=_mock_response(404, {"errors": [{"message": "Not found"}]}))
         mock_client_fn.return_value = mock_client
 
-        ok = await duffel_service.cancel_order("ord_nonexistent")
+        result = await duffel_service.cancel_order("ord_nonexistent")
 
-    assert ok is False
+    assert result is None
 
 
 @pytest.mark.asyncio

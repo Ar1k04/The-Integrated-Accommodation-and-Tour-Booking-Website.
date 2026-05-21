@@ -769,8 +769,21 @@ async def get_product_reviews(product_code: str, page: int = 1, per_page: int = 
         raise ViatorError(502, f"Viator unavailable: {exc}")
 
 
-async def cancel_booking(viator_booking_ref: str) -> bool:
-    """Cancel a Viator booking. Returns True on success."""
+async def cancel_booking(viator_booking_ref: str) -> dict | None:
+    """Cancel a Viator booking and return supplier refund info.
+
+    Returns a dict shaped like:
+        {"status": "ACCEPTED" | "REJECTED" | "CANCELLED",
+         "refund_amount": float | None,   # None means non-refundable / no info
+         "currency": str | None}
+
+    Returns None on transport/auth errors so the caller can decide
+    whether to fall back to a "cancelled, no refund" state.
+
+    Viator's POST /bookings/{ref}/cancel response includes `refundDetails`
+    (since v2.0): {"refundAmount": x.xx, "currencyCode": "USD"} when the
+    booking is refundable per the product's cancellation policy.
+    """
     try:
         resp = await _client().post(
             f"/bookings/{viator_booking_ref}/cancel",
@@ -778,10 +791,23 @@ async def cancel_booking(viator_booking_ref: str) -> bool:
             headers=_JSON_HEADERS,
         )
         _raise_for_status(resp)
-        return True
+        data = resp.json() if resp.content else {}
+        status_value = (data.get("status") or "ACCEPTED").upper()
+        refund_details = data.get("refundDetails") or {}
+        refund_amount = refund_details.get("refundAmount")
+        if refund_amount is not None:
+            try:
+                refund_amount = float(refund_amount)
+            except (TypeError, ValueError):
+                refund_amount = None
+        return {
+            "status": status_value,
+            "refund_amount": refund_amount,
+            "currency": refund_details.get("currencyCode"),
+        }
     except ViatorError as exc:
         logger.warning("Viator cancel failed for %s: %s", viator_booking_ref, exc.message)
-        return False
+        return None
     except Exception as exc:
         logger.warning("Viator cancel error: %s", exc)
-        return False
+        return None

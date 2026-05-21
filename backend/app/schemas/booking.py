@@ -66,3 +66,8 @@ class CancellationResponse(BaseModel):
     booking_id: uuid.UUID
     status: str
     items: list[SupplierCancellationInfo] = []
+    # Stripe refund summary (populated only when an actual refund was issued)
+    stripe_refund_id: str | None = None
+    stripe_refund_amount: float | None = None
+    # True when the booking was fully non-refundable per supplier policy
+    non_refundable: bool = False

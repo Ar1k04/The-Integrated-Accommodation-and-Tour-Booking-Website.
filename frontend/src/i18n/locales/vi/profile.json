@@ -28,7 +28,9 @@
     "confirmCancel": "Có, hủy",
     "cancelling": "Đang hủy…",
     "cancelledWithRefund": "Đã hủy đặt phòng — sẽ hoàn {{amount}}",
-    "cancelledWithCharges": "Đã hủy đặt phòng — phí hủy {{fee}} được áp dụng"
+    "cancelledWithCharges": "Đã hủy đặt phòng — phí hủy {{fee}} được áp dụng",
+    "cancelledStripeRefund": "Đã hủy đặt — đã hoàn {{amount}} về thẻ của bạn (xuất hiện sau 5–10 ngày)",
+    "cancelledNonRefundable": "Đã hủy đặt. Gói này không hoàn tiền, sẽ không có khoản hoàn nào."
   },
   "loyalty": {
     "title": "Điểm thưởng",

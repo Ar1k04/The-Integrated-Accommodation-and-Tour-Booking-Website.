@@ -178,9 +178,14 @@ async def cancel_booking(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already cancelled")
 
     redis = getattr(request.app.state, "redis", None)
-    booking, supplier_results = await booking_service.cancel_booking(db, booking, redis=redis)
+    booking, supplier_results, stripe_refund_info = await booking_service.cancel_booking(
+        db, booking, redis=redis
+    )
     return CancellationResponse(
         booking_id=booking.id,
         status=booking.status,
         items=supplier_results,
+        stripe_refund_id=stripe_refund_info.get("stripe_refund_id"),
+        stripe_refund_amount=stripe_refund_info.get("stripe_refund_amount"),
+        non_refundable=stripe_refund_info.get("non_refundable", False),
     )

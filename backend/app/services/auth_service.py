@@ -40,6 +40,12 @@ async def register_user(db: AsyncSession, data: UserCreate) -> User:
     db.add(user)
     await db.flush()
     await db.refresh(user)
+
+    # Best-effort Stripe Customer creation. Outage must not block signup —
+    # the customer will be created lazily on first PaymentIntent.
+    from app.services.payment_service import get_or_create_stripe_customer
+    await get_or_create_stripe_customer(user)
+    await db.flush()
     return user
 
 
