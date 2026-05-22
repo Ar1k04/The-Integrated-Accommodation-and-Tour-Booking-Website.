@@ -314,7 +314,17 @@ export default function BookingPage() {
 
       setStep('payment')
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to create booking')
+      // 409 with offer_no_longer_available = Duffel offer expired before we
+      // could create the Stripe intent. Send the user back to search instead
+      // of charging them.
+      const detail = err.response?.data?.detail
+      if (err.response?.status === 409 && detail?.error_code === 'offer_no_longer_available') {
+        toast.error(detail.message || 'Flight offer expired — please search again')
+        navigate('/flights')
+        return
+      }
+      const msg = typeof detail === 'string' ? detail : (detail?.message || 'Failed to create booking')
+      toast.error(msg)
     } finally {
       setProceeding(false)
     }
@@ -340,8 +350,14 @@ export default function BookingPage() {
     }
   }
 
-  const handlePaymentSuccess = () => {
+  const handlePaymentSuccess = (failure = null) => {
     clearBooking()
+    if (failure) {
+      // Payment captured but supplier booking failed — the backend has already
+      // attempted a refund. Route to the failure page so the user understands.
+      navigate(`/bookings/${bookingId}/failure`, { state: { failure } })
+      return
+    }
     toast.success('Payment successful!')
     navigate(`/bookings/${bookingId}/confirmation`)
   }
@@ -840,12 +856,22 @@ function StripeCardForm({ stripePaymentId, onSuccess, finalTotal }) {
     }
 
     if (paymentIntent?.status === 'succeeded') {
-      // Notify backend to confirm booking + award loyalty points
+      // Notify backend to confirm booking + award loyalty points. The backend
+      // returns success=false when a supplier (e.g. Duffel) rejected the order
+      // — in that case we route to the failure page so the user sees that
+      // their payment was refunded.
       if (stripePaymentId) {
         try {
-          await paymentsApi.confirmStripe(stripePaymentId)
+          const res = await paymentsApi.confirmStripe(stripePaymentId)
+          const payload = res?.data?.data ?? res?.data
+          const succeeded = res?.data?.success !== false
+          if (!succeeded && payload) {
+            onSuccess(payload)
+            return
+          }
         } catch {
-          // Non-fatal — booking still succeeded, webhook will retry
+          // Non-fatal — webhook will eventually retry. Treat as success
+          // locally; the confirmation page can re-read the booking.
         }
       }
       onSuccess()

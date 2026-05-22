@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     DUFFEL_TOKEN: str = ""
     DUFFEL_BASE_URL: str = "https://api.duffel.com"
     DUFFEL_VERSION: str = "v2"
+    # In sandbox, real-airline integrations (VJ, VN, W2, ...) can return
+    # `airline_error: offer_no_longer_available` non-deterministically when
+    # you actually try to book — Duffel docs flag Duffel Airways (ZZ) as the
+    # only fully stable test carrier. Default OFF so users see the full
+    # airline list (varies between sandbox and live). Flip to true via .env
+    # if you want test-mode bookings to be reliably bookable end-to-end.
+    DUFFEL_TEST_RELIABLE_ONLY: bool = False
 
     # VNPay
     VNPAY_TMN_CODE: str = ""

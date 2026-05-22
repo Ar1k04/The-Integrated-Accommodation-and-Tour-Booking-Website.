@@ -11,7 +11,13 @@ export const emptyPassenger = () => ({
 })
 
 export function isPassengerComplete(p) {
-  return !!(p?.first_name && p?.last_name && p?.email && p?.born_on)
+  return !!(
+    p?.first_name &&
+    p?.last_name &&
+    p?.email &&
+    p?.born_on &&
+    p?.phone_number && p.phone_number.trim().length >= 5
+  )
 }
 
 export function arePassengersComplete(passengers, count) {

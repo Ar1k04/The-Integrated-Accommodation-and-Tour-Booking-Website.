@@ -18,6 +18,8 @@ httpx==0.27.0
 python-dotenv==1.0.1
 aiofiles==23.2.1
 Jinja2==3.1.3
+# ASCII transliteration for Duffel/IATA passenger names (handles all scripts).
+Unidecode==1.3.8
 
 # Testing
 pytest==8.1.1

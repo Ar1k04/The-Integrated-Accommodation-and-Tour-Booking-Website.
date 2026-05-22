@@ -110,6 +110,59 @@ async def test_get_offer_normalizes_response():
     assert offer["cabin_class"] == "economy"
 
 
+def test_name_normalizer_strips_diacritics():
+    from app.services.duffel_service import _normalize_name_for_duffel as n
+    # Vietnamese
+    assert n("Nguyễn") == "Nguyen"
+    assert n("nguyễn") == "nguyen"
+    assert n("Bảo Long") == "Bao Long"
+    assert n("Đào") == "Dao"
+    # Other Latin scripts
+    assert n("José") == "Jose"
+    assert n("Müller") == "Muller"
+    assert n("Łukasz") == "Lukasz"
+    # Greek
+    assert n("Σωκράτης") == "Sokrates"
+    # Non-Latin punctuation / hyphens-apostrophes are preserved
+    assert n("O'Brien") == "O'Brien"
+    assert n("Mary-Jane") == "Mary-Jane"
+    # Empty / None
+    assert n("") == ""
+    assert n(None) == ""
+    # Anything outside ASCII letters/space/hyphen/apostrophe gets dropped.
+    assert n("Long 123!") == "Long"
+
+
+@pytest.mark.asyncio
+async def test_create_order_normalizes_vietnamese_name():
+    """Names with diacritics must be transliterated before being sent to Duffel."""
+    offer_raw = {"data": _OFFER_RAW}
+    order_raw = {"data": {
+        "id": "ord_vn", "booking_reference": "VN001",
+        "status": "confirmed", "total_amount": "123.45", "total_currency": "USD",
+    }}
+
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, offer_raw))
+        mock_client.post = AsyncMock(return_value=_mock_response(200, order_raw))
+        mock_client_fn.return_value = mock_client
+
+        await duffel_service.create_order(
+            duffel_offer_id="off_0000test",
+            passengers=[{
+                "first_name": "Bảo Long", "last_name": "Nguyễn",
+                "email": "long@example.com", "gender": "M",
+                "born_on": "1990-01-01", "title": "mr",
+            }],
+            amount="123.45", currency="USD",
+        )
+        body = mock_client.post.call_args.kwargs["json"]
+        pax = body["data"]["passengers"][0]
+        assert pax["given_name"] == "Bao Long"
+        assert pax["family_name"] == "Nguyen"
+
+
 @pytest.mark.asyncio
 async def test_create_order_returns_order_id():
     offer_raw = {"data": _OFFER_RAW}

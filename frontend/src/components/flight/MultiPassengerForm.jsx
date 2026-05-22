@@ -10,6 +10,12 @@ const GENDER_OPTIONS = [
   { value: 'F', label: 'Female' },
 ]
 
+// IATA / Duffel only accept ASCII letters, space, hyphen and apostrophe in
+// passenger names. The backend transliterates via `unidecode` so users CAN
+// type their real name in any script — we only need to warn them that the
+// printed ticket will be ASCII (same as their passport MRZ).
+const hasNonAscii = (s) => Boolean(s) && /[^\x00-\x7F]/.test(String(s))
+
 /**
  * MultiPassengerForm — renders N collapsible passenger cards.
  *
@@ -100,6 +106,11 @@ export default function MultiPassengerForm({ passengers, onChange, count, labels
                     placeholder={t('flights:detail.passenger.firstNamePlaceholder')}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
+                  {hasNonAscii(pax.first_name) && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Vé bay in tên bằng chữ Latin không dấu theo chuẩn IATA (giống như trên hộ chiếu của bạn).
+                    </p>
+                  )}
                 </Field>
                 <Field label={t('flights:detail.passenger.lastName')}>
                   <input
@@ -108,6 +119,11 @@ export default function MultiPassengerForm({ passengers, onChange, count, labels
                     placeholder={t('flights:detail.passenger.lastNamePlaceholder')}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
+                  {hasNonAscii(pax.last_name) && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Vé bay in họ bằng chữ Latin không dấu theo chuẩn IATA.
+                    </p>
+                  )}
                 </Field>
                 <Field label={t('flights:detail.passenger.email')}>
                   <input
@@ -128,14 +144,18 @@ export default function MultiPassengerForm({ passengers, onChange, count, labels
                   />
                 </Field>
                 <div className="col-span-2">
-                  <Field label={t('flights:detail.passenger.phoneOptional')}>
+                  <Field label={t('flights:detail.passenger.phone', { defaultValue: 'Phone number' })}>
                     <input
                       type="tel"
+                      required
                       value={pax.phone_number || ''}
                       onChange={(e) => setField(i, 'phone_number', e.target.value)}
-                      placeholder={t('flights:detail.passenger.phonePlaceholder')}
+                      placeholder={t('flights:detail.passenger.phonePlaceholder', { defaultValue: '+84...' })}
                       className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Hãng bay yêu cầu số điện thoại liên lạc cho mọi vé (bao gồm mã quốc gia, ví dụ +84...).
+                    </p>
                   </Field>
                 </div>
               </div>

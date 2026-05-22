@@ -11,7 +11,11 @@ class PassengerInfo(BaseModel):
     gender: Literal["M", "F", "m", "f"]
     born_on: date
     title: Literal["mr", "mrs", "ms", "dr"]
-    phone_number: str | None = None
+    # Duffel / airlines reject orders with blank phone numbers (e.g. Vietnam
+    # Airlines returns `validation_required: Field 'phone_number' can't be
+    # blank`). We require it at our boundary so the error surfaces in the
+    # form instead of after Stripe charges and we have to refund.
+    phone_number: str = Field(min_length=5, max_length=30)
     # Optional age + type for child / infant pricing. When `age` is set,
     # Duffel + the airline decide whether the passenger maps to child or
     # infant_without_seat (we do not pre-classify on our side).

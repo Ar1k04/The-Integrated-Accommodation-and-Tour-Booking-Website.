@@ -1,15 +1,50 @@
 """Duffel flight search, offer retrieval, booking, and cancellation."""
 import logging
+import re
 from datetime import date
 from typing import Any
 
 import httpx
+from unidecode import unidecode
 
 from app.core.config import settings
+
+
+# Duffel / IATA name rules: ASCII letters, spaces, hyphens, apostrophes only.
+# We transliterate via the `unidecode` library so users can type their real
+# name in any script (Vietnamese, German, Greek, CJK, ...) without getting the
+# booking rejected at /air/orders. This matches what airlines print on
+# tickets — passport MRZ is ASCII-only by ICAO standard.
+_NAME_ALLOWED_CHARS = re.compile(r"[^A-Za-z \-']+")
+
+
+def _normalize_name_for_duffel(name: str) -> str:
+    """Transliterate to ASCII letters / space / hyphen / apostrophe.
+
+    Examples:
+      ``"Nguyễn"``   → ``"Nguyen"``
+      ``"Müller"``   → ``"Muller"``
+      ``"O'Brien"``  → ``"O'Brien"``
+      ``"Σωκράτης"`` → ``"Sokrates"``
+
+    Returns an empty string for empty / None input — never None.
+    """
+    if not name:
+        return ""
+    # `unidecode` handles every Unicode block with maintained transliteration
+    # tables — far more correct than NFD-only stripping.
+    transliterated = unidecode(str(name))
+    # Drop anything still outside the IATA alphabet (digits, punctuation, …).
+    return _NAME_ALLOWED_CHARS.sub("", transliterated).strip()
 
 logger = logging.getLogger(__name__)
 
 _CLIENT: httpx.AsyncClient | None = None
+
+
+def _is_test_mode() -> bool:
+    """True when the configured Duffel token is a sandbox key."""
+    return (settings.DUFFEL_TOKEN or "").startswith("duffel_test_")
 
 
 def _client() -> httpx.AsyncClient:
@@ -29,21 +64,76 @@ def _client() -> httpx.AsyncClient:
 
 
 class DuffelError(Exception):
-    def __init__(self, status_code: int, message: str):
+    def __init__(
+        self,
+        status_code: int,
+        message: str,
+        *,
+        error_type: str | None = None,
+        error_code: str | None = None,
+        raw: dict | None = None,
+    ):
         self.status_code = status_code
         self.message = message
+        self.error_type = error_type
+        self.error_code = error_code
+        self.raw = raw
         super().__init__(message)
+
+
+# Transient HTTP statuses worth retrying. The 502 we wrap around network
+# exceptions also lands here.
+RETRYABLE_DUFFEL_STATUS = {429, 500, 502, 503, 504}
+
+# Duffel error codes that will keep failing on retry — usually offer-related.
+PERMANENT_DUFFEL_ERROR_CODES = {
+    "offer_no_longer_available",
+    "duplicate_order",
+}
+
+# Duffel error types that are permanent (payload, auth, balance, airline reject).
+PERMANENT_DUFFEL_ERROR_TYPES = {
+    "airline_error",
+    "validation_error",
+    "authentication_error",
+    "insufficient_balance",
+}
+
+
+def is_retryable_duffel_error(exc: "DuffelError") -> bool:
+    """True if the failure is likely transient — safe to retry."""
+    if exc.error_code in PERMANENT_DUFFEL_ERROR_CODES:
+        return False
+    if exc.error_type in PERMANENT_DUFFEL_ERROR_TYPES:
+        return False
+    return exc.status_code in RETRYABLE_DUFFEL_STATUS or exc.status_code >= 500
 
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if resp.status_code >= 400:
+        body: dict | None = None
+        detail: str | None = None
+        error_type: str | None = None
+        error_code: str | None = None
         try:
             body = resp.json()
-            errors = body.get("errors", [])
-            detail = errors[0].get("message") if errors else body.get("message") or resp.text
+            errors = body.get("errors") or []
+            if errors:
+                first = errors[0] or {}
+                detail = first.get("message")
+                error_type = first.get("type")
+                error_code = first.get("code")
+            else:
+                detail = body.get("message") or resp.text
         except Exception:
             detail = resp.text
-        raise DuffelError(resp.status_code, detail or f"HTTP {resp.status_code}")
+        raise DuffelError(
+            resp.status_code,
+            detail or f"HTTP {resp.status_code}",
+            error_type=error_type,
+            error_code=error_code,
+            raw=body,
+        )
 
 
 def _parse_duration(iso: str | None) -> str | None:
@@ -201,6 +291,15 @@ async def search_offers(
         _raise_for_status(resp)
         data = resp.json().get("data", {})
         offers_raw = data.get("offers", [])
+        # In sandbox, only Duffel Airways (ZZ) is a documented stable test
+        # airline — others (VJ/VN/W2/...) reject bookings non-deterministically
+        # with `airline_error`. Filter them out so test-mode bookings actually
+        # complete end-to-end.
+        if _is_test_mode() and settings.DUFFEL_TEST_RELIABLE_ONLY:
+            offers_raw = [
+                o for o in offers_raw
+                if ((o.get("owner") or {}).get("iata_code") or "").upper() == "ZZ"
+            ]
         return [_normalize_offer(o) for o in offers_raw[:50]]
     except DuffelError:
         raise
@@ -265,12 +364,14 @@ async def create_order(
         pax_age = pax.get("age")
         # Minors: send age (born_on still required by Duffel for identity check).
         # Adults: send no age — born_on alone is enough.
+        # Names go through _normalize_name_for_duffel to strip diacritics that
+        # Duffel/IATA will reject ("Nguyễn" → "Nguyen").
         entry = {
             "id": pax_id,
             "title": pax.get("title", "mr"),
             "gender": (pax.get("gender") or "M").lower(),
-            "given_name": pax.get("first_name", ""),
-            "family_name": pax.get("last_name", ""),
+            "given_name": _normalize_name_for_duffel(pax.get("first_name", "")),
+            "family_name": _normalize_name_for_duffel(pax.get("last_name", "")),
             "born_on": str(pax.get("born_on", "1990-01-01")),
             "email": pax.get("email", ""),
         }

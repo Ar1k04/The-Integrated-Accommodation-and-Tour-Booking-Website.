@@ -164,3 +164,95 @@ async def send_booking_cancellation(booking, user_email: str) -> bool:
         f"Booking Cancelled — #{str(booking.id)[:8].upper()}",
         html,
     )
+
+
+async def send_flight_booking_failed(
+    booking, user_email: str, failure: dict, refund: dict | None
+) -> bool:
+    """Sent when a flight booking failed AFTER payment was captured (e.g. Duffel
+    rejected the order). The user is told the payment was refunded and asked
+    to re-search.
+    """
+    user_message = (failure or {}).get("user_message") or (
+        "Your flight booking could not be completed. Your payment has been refunded."
+    )
+    refund_amount = (refund or {}).get("amount_usd")
+    refund_issued = bool((refund or {}).get("issued"))
+    refund_block = (
+        f"<p><strong>Refund:</strong> ${float(refund_amount):.2f} returned to your "
+        f"original payment method (allow 5-7 business days).</p>"
+        if refund_issued and refund_amount is not None
+        else (
+            "<p><strong>Refund:</strong> A refund is being processed manually by our "
+            "support team. You'll receive a confirmation within 24 hours.</p>"
+        )
+    )
+    html = f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:0">
+<div style="background:#ef4444;color:white;padding:24px;border-radius:8px 8px 0 0">
+  <h1 style="margin:0;font-size:22px">We couldn't book your flight</h1>
+  <p style="margin:4px 0 0;opacity:0.7;font-size:13px">TravelBooking</p>
+</div>
+<div style="padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+  <p>We're sorry — your flight booking did not go through.</p>
+  <p><strong>What happened:</strong> {user_message}</p>
+  {refund_block}
+  <p><strong>Booking reference:</strong> <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">{str(booking.id)[:8].upper()}</code></p>
+  <p>Please search again — fares change quickly and a fresh offer should be bookable.</p>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
+  <p style="font-size:12px;color:#9ca3af">If you have any questions, reply to this email or contact our support team and quote the booking reference above.</p>
+</div>
+</body></html>
+"""
+    return await send_email(
+        user_email,
+        f"Flight booking failed — refund issued — #{str(booking.id)[:8].upper()}",
+        html,
+    )
+
+
+async def send_booking_partial_failure(
+    booking, user_email: str, failed_items: list[dict], refund: dict | None
+) -> bool:
+    """Sent when SOME items in a multi-item booking succeeded but others
+    (typically the flight) failed. The user is told what's confirmed, what
+    wasn't, and that a partial refund has been issued.
+    """
+    failed_rows = "".join(
+        f"<li><strong>{(it or {}).get('type','item').title()}:</strong> "
+        f"{(it or {}).get('user_message','could not be booked')}</li>"
+        for it in (failed_items or [])
+    )
+    refund_amount = (refund or {}).get("amount_usd")
+    refund_issued = bool((refund or {}).get("issued"))
+    refund_block = (
+        f"<p><strong>Partial refund:</strong> ${float(refund_amount):.2f} returned to your "
+        f"original payment method (allow 5-7 business days).</p>"
+        if refund_issued and refund_amount is not None
+        else (
+            "<p><strong>Partial refund:</strong> A refund for the failed item is being "
+            "processed manually by our support team.</p>"
+        )
+    )
+    html = f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:0">
+<div style="background:#f59e0b;color:white;padding:24px;border-radius:8px 8px 0 0">
+  <h1 style="margin:0;font-size:22px">Booking partially completed</h1>
+  <p style="margin:4px 0 0;opacity:0.7;font-size:13px">TravelBooking</p>
+</div>
+<div style="padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+  <p>Part of your booking was confirmed, but the following item(s) could not be completed:</p>
+  <ul>{failed_rows}</ul>
+  {refund_block}
+  <p><strong>Booking ID:</strong> <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">{booking.id}</code></p>
+  <p>Items that were successfully booked remain confirmed — check "My Bookings" for full details.</p>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
+  <p style="font-size:12px;color:#9ca3af">Reply to this email if you'd like our support team to rebook the failed item for you.</p>
+</div>
+</body></html>
+"""
+    return await send_email(
+        user_email,
+        f"Booking partially completed — #{str(booking.id)[:8].upper()}",
+        html,
+    )

@@ -4,7 +4,9 @@ Input: a BookingCreate with items[] (each item is a room, tour, or flight).
 Output: a Booking row + one BookingItem per cart entry, with vouchers/loyalty
 points applied and inventory locked atomically.
 """
+import asyncio
 import logging
+import random
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -32,10 +34,30 @@ from app.schemas.booking_item import (
     TourItemCreate,
 )
 from app.services import duffel_service, email_service, liteapi_service, lock_service, loyalty_service, viator_service, voucher_service
-from app.services.duffel_service import DuffelError
+from app.services.duffel_service import DuffelError, is_retryable_duffel_error
 from app.services.liteapi_service import LiteAPIError
 from app.services.lock_service import LockCollisionError
 from app.services.viator_service import ViatorError
+
+
+# User-friendly messages for the most common Duffel failures. Generic fallback
+# is used when the error code isn't mapped.
+DUFFEL_USER_MESSAGES = {
+    "offer_no_longer_available": "This flight offer expired before we could book it. Please search again.",
+    "airline_error": "The airline rejected this booking. Your payment has been refunded.",
+    "insufficient_balance": "We could not complete your flight booking right now. Your payment has been refunded.",
+    "validation_error": "There was a problem with the passenger information. Your payment has been refunded.",
+}
+DUFFEL_USER_MESSAGE_FALLBACK = "Your flight booking could not be completed. Your payment has been refunded."
+
+
+def _duffel_user_message(error_code: str | None, error_type: str | None) -> str:
+    """Pick a user-friendly explanation. Never returns raw Duffel internals."""
+    if error_code and error_code in DUFFEL_USER_MESSAGES:
+        return DUFFEL_USER_MESSAGES[error_code]
+    if error_type and error_type in DUFFEL_USER_MESSAGES:
+        return DUFFEL_USER_MESSAGES[error_type]
+    return DUFFEL_USER_MESSAGE_FALLBACK
 
 
 class BookingServiceError(ValueError):
@@ -707,6 +729,137 @@ async def create_booking(
     return booking
 
 
+async def _finalize_duffel_flight(
+    db: AsyncSession,
+    booking: Booking,
+    item: BookingItem,
+    flight: FlightBooking,
+    *,
+    max_attempts: int = 3,
+) -> tuple[bool, DuffelError | None]:
+    """Try to create the Duffel order for a pending FlightBooking.
+
+    Retries transient failures up to ``max_attempts`` with jittered backoff.
+    Permanent failures (expired offer, validation, balance) skip retries.
+
+    On success: mutates ``flight`` (duffel_order_id, status, booking_ref) and
+    clears any previous ``last_error`` on ``passenger_details``. Caller should
+    set ``item.status`` to confirmed.
+
+    On failure: persists a structured error blob on
+    ``flight.passenger_details['last_error']`` for diagnostics and admin retry.
+    Caller MUST NOT mark ``item.status`` as confirmed.
+    """
+    details = flight.passenger_details or {}
+    offer_id = details.get("offer_id")
+    if not offer_id:
+        # Nothing to do — no offer snapshot. Treat as permanent failure with a
+        # synthetic error so the caller still routes through the failure path.
+        err = DuffelError(422, "Flight booking has no associated Duffel offer")
+        flight.passenger_details = {
+            **details,
+            "last_error": {
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+                "status_code": 422,
+                "error_type": None,
+                "error_code": "missing_offer",
+                "message": err.message,
+                "attempts": 0,
+                "offer_id": None,
+                "amount": str(flight.total_amount),
+                "currency": flight.currency,
+                "passenger_count": 0,
+            },
+        }
+        return False, err
+
+    pax_list = details.get("passengers") or (
+        [details["passenger"]] if details.get("passenger") else []
+    )
+    amount = str(flight.total_amount)
+    currency = flight.currency
+
+    # [0.5s, 2.0s] base delays — short enough to keep total worst-case under
+    # ~3s on top of the Stripe-confirm latency budget.
+    base_delays = [0.5, 2.0]
+    last_error: DuffelError | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await duffel_service.create_order(
+                duffel_offer_id=offer_id,
+                passengers=pax_list,
+                amount=amount,
+                currency=currency,
+                services=details.get("selected_services") or None,
+                selected_seats=details.get("selected_seats") or None,
+            )
+        except DuffelError as exc:
+            last_error = exc
+            retryable = is_retryable_duffel_error(exc)
+            if attempt < max_attempts and retryable:
+                logger.warning(
+                    "Duffel create_order retryable failure booking=%s flight=%s "
+                    "offer=%s attempt=%d/%d status=%s code=%s message=%s",
+                    booking.id, flight.id, offer_id, attempt, max_attempts,
+                    exc.status_code, exc.error_code, exc.message,
+                )
+                delay = base_delays[attempt - 1] + random.uniform(0, 0.5)
+                await asyncio.sleep(delay)
+                continue
+            # Either retries exhausted, or permanent failure → break to record.
+            break
+        else:
+            # Success path
+            flight.duffel_order_id = result["duffel_order_id"]
+            flight.duffel_booking_ref = result.get("duffel_booking_ref")
+            flight.status = "confirmed"
+            # Clear any cached error from a previous failed attempt.
+            cleaned = {k: v for k, v in (flight.passenger_details or {}).items() if k != "last_error"}
+            flight.passenger_details = cleaned
+            return True, None
+
+    # All attempts exhausted (or permanent error on attempt 1).
+    assert last_error is not None
+    logger.error(
+        "Duffel create_order failed permanently booking=%s flight=%s offer=%s "
+        "amount=%s %s pax=%d status=%s type=%s code=%s message=%s attempts=%d",
+        booking.id, flight.id, offer_id, amount, currency, len(pax_list),
+        last_error.status_code, last_error.error_type, last_error.error_code,
+        last_error.message, attempt,
+    )
+    flight.passenger_details = {
+        **(flight.passenger_details or {}),
+        "last_error": {
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "status_code": last_error.status_code,
+            "error_type": last_error.error_type,
+            "error_code": last_error.error_code,
+            "message": last_error.message,
+            "attempts": attempt,
+            "offer_id": offer_id,
+            "amount": amount,
+            "currency": currency,
+            "passenger_count": len(pax_list),
+        },
+    }
+    return False, last_error
+
+
+def _build_failed_item_entry(item: BookingItem, flight: FlightBooking, exc: DuffelError | None) -> dict:
+    """Serialize a failed-flight outcome for the API response."""
+    err_code = exc.error_code if exc else None
+    err_type = exc.error_type if exc else None
+    return {
+        "item_id": str(item.id),
+        "type": "flight",
+        "error_code": err_code,
+        "error_type": err_type,
+        "message": exc.message if exc else None,
+        "user_message": _duffel_user_message(err_code, err_type),
+    }
+
+
 async def confirm_booking(
     db: AsyncSession,
     booking: Booking,
@@ -715,13 +868,37 @@ async def confirm_booking(
     guest_email: str = "guest@example.com",
     guest_phone: str | None = None,
     redis=None,
-) -> Booking:
-    """Mark booking + items confirmed and award loyalty points based on final total."""
+) -> tuple[Booking, dict]:
+    """Finalize each item with its supplier and decide the booking outcome.
 
-    booking.status = BookingStatus.confirmed.value
+    Returns ``(booking, outcome)``. ``outcome`` shape:
+      {
+        "status": "confirmed" | "partial" | "failed" | "failed_refund_pending",
+        "confirmed_items": [{"item_id", "type"}],
+        "failed_items": [{"item_id", "type", "error_code", "user_message", ...}],
+        "refund": None | {"issued": bool, "amount_usd": float, "currency": str,
+                          "stripe_refund_id": str | None, "partial": bool,
+                          "reason": str | None},
+      }
+
+    Idempotent: a second call once the booking has reached a terminal state
+    (confirmed or cancelled) returns the cached outcome derived from the
+    persisted state without re-running supplier calls.
+    """
+
+    # Idempotency: terminal-state short-circuit. Re-derive the outcome from
+    # what's already persisted so the caller can render the same response.
+    if booking.status in (BookingStatus.confirmed.value, BookingStatus.cancelled.value):
+        return booking, _outcome_from_persisted_state(booking)
+
+    failed_flight_entries: list[dict] = []
+    confirmed_items: list[dict] = []
+
     for item in booking.items:
-        item.status = BookingItemStatus.confirmed.value
-        # Finalize any LiteAPI prebook → real booking
+        # ─── LiteAPI rooms ────────────────────────────────────────────
+        # Existing silent-warning pattern kept as-is — out of scope for this
+        # bug fix. Item is marked confirmed regardless so the user sees the
+        # local booking (LiteAPI failures surface via `supplier_status`).
         if item.liteapi_prebook_id and not item.liteapi_booking_id:
             holder = {
                 "firstName": guest_first_name,
@@ -730,7 +907,6 @@ async def confirm_booking(
             }
             if guest_phone:
                 holder["phoneNumber"] = guest_phone
-            # One guest entry per room (occupancyNumber starts at 1 per LiteAPI spec)
             guests_payload = [
                 {
                     "occupancyNumber": i + 1,
@@ -759,12 +935,10 @@ async def confirm_booking(
                 item.supplier_status = "BOOK_FAILED"
                 item.supplier_status_synced_at = datetime.now(timezone.utc)
 
-        # Finalize any Viator tour → real booking
+        # ─── Viator tours ─────────────────────────────────────────────
         if item.viator_product_code and not item.viator_booking_ref:
             try:
                 tour_date_val = item.check_in or date.today()
-                # Pull stored adult/child breakdown so the booking call uses
-                # the same paxMix Viator priced for at availability time.
                 adults_at_book = item.adults_count or item.quantity
                 child_ages_at_book = list(item.children_ages or [])
                 result = await viator_service.book_tour(
@@ -784,58 +958,254 @@ async def confirm_booking(
                     exc.message,
                 )
 
-        # Finalize any pending Duffel flight → real order
+        # ─── Duffel flights ───────────────────────────────────────────
+        # Real fix: retry transient failures, persist permanent ones, and
+        # propagate the outcome so the caller can refund + notify.
         if item.item_type == BookingItemType.flight.value:
             flight = item.flight_booking
             if flight and flight.status == "pending" and not flight.duffel_order_id:
-                details = flight.passenger_details or {}
-                if details.get("offer_id"):
-                    pax_list = details.get("passengers") or (
-                        [details["passenger"]] if details.get("passenger") else []
-                    )
-                    try:
-                        result = await duffel_service.create_order(
-                            duffel_offer_id=details["offer_id"],
-                            passengers=pax_list,
-                            amount=str(flight.total_amount),
-                            currency=flight.currency,
-                            services=details.get("selected_services") or None,
-                            selected_seats=details.get("selected_seats") or None,
-                        )
-                        flight.duffel_order_id = result["duffel_order_id"]
-                        flight.duffel_booking_ref = result.get("duffel_booking_ref")
-                        flight.status = "confirmed"
-                    except DuffelError as exc:
-                        logger.warning(
-                            "Duffel order failed for offer %s: %s — booking recorded locally",
-                            details.get("offer_id"),
-                            exc.message,
-                        )
+                success, last_error = await _finalize_duffel_flight(
+                    db, booking, item, flight, max_attempts=3,
+                )
+                if success:
+                    item.status = BookingItemStatus.confirmed.value
+                    confirmed_items.append({"item_id": str(item.id), "type": "flight"})
+                else:
+                    # Leave item.status as pending and skip to next item.
+                    failed_flight_entries.append(_build_failed_item_entry(item, flight, last_error))
+                    continue
+            else:
+                item.status = BookingItemStatus.confirmed.value
+                confirmed_items.append({"item_id": str(item.id), "type": "flight"})
+        else:
+            # Non-flight items (room/tour) — keep the existing
+            # mark-as-confirmed-even-if-supplier-warned behavior.
+            item.status = BookingItemStatus.confirmed.value
+            confirmed_items.append({
+                "item_id": str(item.id),
+                "type": "room" if item.item_type == BookingItemType.room.value else item.item_type,
+            })
 
-    points = int(Decimal(str(booking.total_price)))
-    if points > 0:
-        await loyalty_service.award_points(
-            db,
-            user_id=booking.user_id,
-            booking_id=booking.id,
-            amount=points,
-            description=f"Earned from booking {booking.id}",
+    # ─── Booking-level outcome ────────────────────────────────────────────
+    if not failed_flight_entries:
+        # Happy path — every item finalized successfully.
+        booking.status = BookingStatus.confirmed.value
+        points = int(Decimal(str(booking.total_price)))
+        if points > 0:
+            await loyalty_service.award_points(
+                db,
+                user_id=booking.user_id,
+                booking_id=booking.id,
+                amount=points,
+                description=f"Earned from booking {booking.id}",
+            )
+            booking.points_earned = points
+        await db.flush()
+        await db.refresh(booking)
+        await lock_service.release_booking_locks(redis, booking.id)
+        try:
+            await email_service.send_booking_confirmation(booking, guest_email)
+        except Exception as exc:
+            logger.warning("Confirmation email failed for booking %s: %s", booking.id, exc)
+        return booking, {
+            "status": "confirmed",
+            "confirmed_items": confirmed_items,
+            "failed_items": [],
+            "refund": None,
+        }
+
+    # At least one flight failed. Decide between partial vs total failure.
+    has_any_confirmed = len(confirmed_items) > 0
+
+    if has_any_confirmed:
+        # Partial — confirm what worked, refund pro-rata share of failed items.
+        booking.status = BookingStatus.confirmed.value
+        refund_amount = sum(
+            _failed_flight_refund_share(booking, item_id=entry["item_id"])
+            for entry in failed_flight_entries
         )
-        booking.points_earned = points
+        refund_info = await _attempt_stripe_refund(
+            db, booking, amount=refund_amount, partial=True
+        )
+        net_total = float(booking.total_price) - (refund_info.get("amount_usd") or 0.0)
+        points = max(0, int(Decimal(str(net_total))))
+        if points > 0:
+            await loyalty_service.award_points(
+                db,
+                user_id=booking.user_id,
+                booking_id=booking.id,
+                amount=points,
+                description=f"Earned from booking {booking.id} (partial)",
+            )
+            booking.points_earned = points
+        await db.flush()
+        await db.refresh(booking)
+        await lock_service.release_booking_locks(redis, booking.id)
+        try:
+            await email_service.send_booking_partial_failure(
+                booking, guest_email, failed_flight_entries, refund_info,
+            )
+        except Exception as exc:
+            logger.warning("Partial-failure email failed for booking %s: %s", booking.id, exc)
+        status_str = "partial" if refund_info.get("issued") else "failed_refund_pending"
+        return booking, {
+            "status": status_str,
+            "confirmed_items": confirmed_items,
+            "failed_items": failed_flight_entries,
+            "refund": refund_info,
+        }
 
+    # Total failure — cancel the booking and refund in full.
+    booking.status = BookingStatus.cancelled.value
+    for item in booking.items:
+        if item.status != BookingItemStatus.confirmed.value:
+            item.status = BookingItemStatus.cancelled.value
+    refund_info = await _attempt_stripe_refund(db, booking, amount=None, partial=False)
     await db.flush()
     await db.refresh(booking)
-
-    # Release soft-locks — booking is now confirmed, inventory is committed.
     await lock_service.release_booking_locks(redis, booking.id)
-
-    # Non-blocking confirmation email
+    primary_failure = failed_flight_entries[0] if failed_flight_entries else {}
     try:
-        await email_service.send_booking_confirmation(booking, guest_email)
+        await email_service.send_flight_booking_failed(
+            booking, guest_email, primary_failure, refund_info,
+        )
     except Exception as exc:
-        logger.warning("Confirmation email failed for booking %s: %s", booking.id, exc)
+        logger.warning("Failure email failed for booking %s: %s", booking.id, exc)
+    status_str = "failed" if refund_info.get("issued") else "failed_refund_pending"
+    return booking, {
+        "status": status_str,
+        "confirmed_items": [],
+        "failed_items": failed_flight_entries,
+        "refund": refund_info,
+    }
 
-    return booking
+
+def _failed_flight_refund_share(booking: Booking, *, item_id: str) -> float:
+    """Pro-rata USD share of booking.total_price owed back for one failed item.
+
+    Uses the persisted ``subtotal`` per item so we refund what was actually
+    charged for the failed line, not the whole booking. Single-item bookings
+    fall back to total_price.
+    """
+    items = list(booking.items or [])
+    if len(items) <= 1:
+        return float(booking.total_price or 0)
+    target = next((it for it in items if str(it.id) == str(item_id)), None)
+    if target is None:
+        return 0.0
+    sum_subtotals = sum(float(it.subtotal or 0) for it in items) or 0.0
+    if sum_subtotals <= 0:
+        return float(booking.total_price or 0)
+    share = float(booking.total_price or 0) * (float(target.subtotal or 0) / sum_subtotals)
+    return round(share, 2)
+
+
+async def _attempt_stripe_refund(
+    db: AsyncSession,
+    booking: Booking,
+    *,
+    amount: float | None,
+    partial: bool,
+) -> dict:
+    """Issue a Stripe refund through payment_service. Always returns a dict
+    describing the outcome — never raises into the caller. ``amount=None``
+    means full refund.
+    """
+    from app.services import payment_service  # avoid circular import at module load
+
+    refund_payload: dict = {
+        "issued": False,
+        "amount_usd": None,
+        "currency": "usd",
+        "stripe_refund_id": None,
+        "partial": partial,
+        "reason": None,
+    }
+    try:
+        payment = await payment_service.refund_for_booking(
+            db, booking.id, refund_amount_usd=amount
+        )
+        if payment is None:
+            refund_payload["reason"] = "no_refundable_payment"
+            return refund_payload
+        # `refund_for_booking` returns the updated Payment row. Stripe-side
+        # amount we just issued = either the explicit `amount` or the full
+        # booking total when amount was None.
+        issued_amount = float(amount) if amount is not None else float(booking.total_price or 0)
+        refund_payload.update(
+            issued=True,
+            amount_usd=round(issued_amount, 2),
+            stripe_refund_id=getattr(payment, "stripe_refund_id", None),
+            currency=getattr(payment, "currency", None) or "usd",
+        )
+        return refund_payload
+    except Exception:
+        logger.exception(
+            "Auto-refund FAILED for booking %s — manual intervention required",
+            booking.id,
+        )
+        # Alert ops so a human can issue the refund manually.
+        try:
+            await email_service.send_admin_alert(
+                subject=f"URGENT: Auto-refund failed for booking {booking.id}",
+                body=(
+                    f"Booking {booking.id} had a supplier failure and the automatic "
+                    f"Stripe refund ALSO failed. The customer has been charged but "
+                    f"no flight is booked. Refund manually NOW."
+                ),
+            )
+        except Exception:
+            pass
+        refund_payload["reason"] = "stripe_refund_error"
+        return refund_payload
+
+
+def _outcome_from_persisted_state(booking: Booking) -> dict:
+    """Reconstruct the response outcome for an already-finalized booking.
+
+    Used when /confirm-stripe is re-called after a previous run already
+    confirmed-or-cancelled the booking. We read ``flight.passenger_details``
+    to recover the supplier error that was persisted.
+    """
+    confirmed_items: list[dict] = []
+    failed_flight_entries: list[dict] = []
+    for item in booking.items or []:
+        item_type = item.item_type
+        if item_type == BookingItemType.flight.value:
+            flight = item.flight_booking
+            err = ((flight.passenger_details or {}).get("last_error") if flight else None) or {}
+            if flight and flight.duffel_order_id:
+                confirmed_items.append({"item_id": str(item.id), "type": "flight"})
+            elif err:
+                failed_flight_entries.append({
+                    "item_id": str(item.id),
+                    "type": "flight",
+                    "error_code": err.get("error_code"),
+                    "error_type": err.get("error_type"),
+                    "message": err.get("message"),
+                    "user_message": _duffel_user_message(
+                        err.get("error_code"), err.get("error_type"),
+                    ),
+                })
+        else:
+            if item.status == BookingItemStatus.confirmed.value:
+                confirmed_items.append({
+                    "item_id": str(item.id),
+                    "type": "room" if item_type == BookingItemType.room.value else item_type,
+                })
+
+    if booking.status == BookingStatus.cancelled.value:
+        status_str = "failed"
+    elif failed_flight_entries:
+        status_str = "partial"
+    else:
+        status_str = "confirmed"
+    return {
+        "status": status_str,
+        "confirmed_items": confirmed_items,
+        "failed_items": failed_flight_entries,
+        "refund": None,  # caller can re-read the Payment row if needed
+    }
 
 
 def _item_refund_share(booking: Booking, item: BookingItem) -> float:

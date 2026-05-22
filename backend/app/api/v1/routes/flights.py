@@ -7,13 +7,17 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.core.dependencies import CurrentUser
+import uuid as _uuid
+
+from app.core.dependencies import CurrentUser, StaffUser
 from app.data.airports import search_airports
 from app.db.session import get_db
-from app.models.booking import Booking
-from app.models.booking_item import BookingItem
+from app.models.booking import Booking, BookingStatus
+from app.models.booking_item import BookingItem, BookingItemStatus, BookingItemType
 from app.models.flight_booking import FlightBooking
+from app.models.payment import Payment, PaymentStatus
 from app.services import duffel_service
 from app.services.duffel_service import DuffelError
 
@@ -403,4 +407,113 @@ async def sync_flight_order(
         },
         "status": "success",
         "message": "Synced",
+    }
+
+
+@router.post("/bookings/{booking_item_id}/retry-duffel-order")
+async def admin_retry_duffel_order(
+    booking_item_id: _uuid.UUID,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: StaffUser,
+):
+    """Admin/partner action: retry a stuck Duffel order.
+
+    Use when a booking succeeded on the payment side but the supplier call
+    failed (transient Duffel error, etc.). Pre-checks that the offer is still
+    alive at Duffel — if it isn't, the only remedy is a refund + re-book.
+
+    Rejects the retry once the booking has been auto-refunded into the
+    cancelled state (status=cancelled AND payment refunded): admin must
+    refund/re-book manually instead.
+    """
+    item = (
+        await db.execute(
+            select(BookingItem)
+            .options(
+                selectinload(BookingItem.flight_booking),
+                selectinload(BookingItem.booking).selectinload(Booking.items),
+            )
+            .where(BookingItem.id == booking_item_id)
+        )
+    ).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking item not found")
+    if item.item_type != BookingItemType.flight.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a flight item")
+    flight = item.flight_booking
+    if not flight:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No flight booking attached")
+    if flight.duffel_order_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order already exists at Duffel")
+
+    booking = item.booking
+    payment = (
+        await db.execute(
+            select(Payment)
+            .where(Payment.booking_id == booking.id)
+            .order_by(Payment.created_at.desc())
+        )
+    ).scalars().first()
+    if booking.status == BookingStatus.cancelled.value and payment and payment.status == PaymentStatus.refunded.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Booking was already refunded — the customer must search and book a new offer.",
+        )
+
+    offer_id = (flight.passenger_details or {}).get("offer_id")
+    if not offer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Flight has no stored offer_id — cannot retry. Customer must re-search.",
+        )
+
+    # Verify the offer is still alive — saves us a guaranteed retry-and-fail.
+    try:
+        await duffel_service.get_offer(offer_id)
+    except DuffelError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Offer is no longer valid at Duffel ({exc.error_code or exc.status_code}): {exc.message}. Customer must re-search.",
+        )
+
+    from app.services.booking_service import _finalize_duffel_flight, _build_failed_item_entry
+    success, last_error = await _finalize_duffel_flight(db, booking, item, flight, max_attempts=3)
+    if success:
+        item.status = BookingItemStatus.confirmed.value
+        # If the booking was previously stuck pending, promote it back to confirmed.
+        if booking.status == BookingStatus.pending.value:
+            booking.status = BookingStatus.confirmed.value
+        await db.flush()
+        return {
+            "data": {
+                "booking_id": str(booking.id),
+                "item_id": str(item.id),
+                "duffel_order_id": flight.duffel_order_id,
+                "duffel_booking_ref": flight.duffel_booking_ref,
+                "status": "confirmed",
+            },
+            "status": "success",
+            "message": "Duffel order created on retry",
+        }
+
+    # Retry exhausted again. Persist the new last_error (already done inside
+    # the helper) and surface a 200 with the structured failure.
+    await db.flush()
+    failed_entry = _build_failed_item_entry(item, flight, last_error)
+    return {
+        "data": {
+            "booking_id": str(booking.id),
+            "item_id": str(item.id),
+            "status": "failed",
+            "failed_items": [failed_entry],
+            "supplier_error": {
+                "supplier": "duffel",
+                "error_code": failed_entry.get("error_code"),
+                "error_type": failed_entry.get("error_type"),
+                "message": failed_entry.get("user_message"),
+            },
+        },
+        "status": "error",
+        "message": "Duffel still rejecting the order",
     }

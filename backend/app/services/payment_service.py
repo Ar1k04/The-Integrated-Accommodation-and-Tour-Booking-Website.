@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.booking import Booking
+from app.models.booking_item import BookingItem, BookingItemType
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.models.user import User
 
@@ -19,6 +20,71 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 # Pin the Stripe API version so Stripe rolling out a breaking change
 # can't silently affect this integration.
 stripe.api_version = settings.STRIPE_API_VERSION
+
+
+class OfferExpiredError(ValueError):
+    """The Duffel offer is no longer valid — payment must not proceed."""
+
+    def __init__(self, message: str, *, offer_id: str | None = None):
+        super().__init__(message)
+        self.offer_id = offer_id
+
+
+async def _validate_flight_offers_alive(booking: Booking) -> None:
+    """Re-fetch every Duffel offer on the booking right before we charge the
+    card. If any offer is expired (or expires within 60s), abort.
+
+    Without this guard, we'd take payment, then fail at create_order, then
+    auto-refund — wasting the customer's time and a Stripe roundtrip.
+
+    Imported lazily to keep payment_service free of supplier deps at module
+    load (search/flights flow doesn't need Stripe at import).
+    """
+    from app.services import duffel_service
+    from app.services.duffel_service import DuffelError
+    from datetime import datetime, timezone
+
+    flight_items = [
+        item for item in (booking.items or [])
+        if item.item_type == BookingItemType.flight.value and item.flight_booking
+    ]
+    for item in flight_items:
+        flight = item.flight_booking
+        offer_id = (flight.passenger_details or {}).get("offer_id")
+        if not offer_id:
+            # No offer to validate — order creation will fail with a clear
+            # error later, but no need to block payment now.
+            continue
+        try:
+            offer = await duffel_service.get_offer(offer_id)
+        except DuffelError as exc:
+            if exc.error_code == "offer_no_longer_available" or exc.status_code == 404:
+                raise OfferExpiredError(
+                    "Flight offer is no longer available. Please search again.",
+                    offer_id=offer_id,
+                )
+            # Other transient errors → let payment proceed; create_order will
+            # retry. Logging at warning level so this is still visible.
+            logger.warning(
+                "Pre-payment offer check failed for %s (%s): %s",
+                offer_id, exc.status_code, exc.message,
+            )
+            continue
+        expires_iso = offer.get("expires_at")
+        if expires_iso:
+            try:
+                expires_at = datetime.fromisoformat(expires_iso.replace("Z", "+00:00"))
+                seconds_left = (expires_at - datetime.now(timezone.utc)).total_seconds()
+                if seconds_left < 60:
+                    raise OfferExpiredError(
+                        "Flight offer is about to expire. Please search again.",
+                        offer_id=offer_id,
+                    )
+            except OfferExpiredError:
+                raise
+            except (TypeError, ValueError):
+                # Bad timestamp — don't block payment over a parsing issue.
+                pass
 
 
 def _to_cents(amount) -> int:
@@ -58,15 +124,30 @@ async def create_payment_intent(
     booking_id=None,
     currency: str = "usd",
 ) -> tuple[Payment, str]:
-    """Create a Stripe PaymentIntent and store the local Payment record."""
+    """Create a Stripe PaymentIntent and store the local Payment record.
+
+    For flight bookings: refuses to take payment if the Duffel offer has
+    already expired (or is < 60s from expiry) — preventing the charge-then-
+    refund roundtrip when we know booking is doomed.
+    """
     if not booking_id:
         raise ValueError("Provide booking_id")
 
-    booking = (await db.execute(select(Booking).where(Booking.id == booking_id))).scalar_one_or_none()
+    booking = (
+        await db.execute(
+            select(Booking)
+            .options(selectinload(Booking.items).selectinload(BookingItem.flight_booking))
+            .where(Booking.id == booking_id)
+        )
+    ).scalar_one_or_none()
     if not booking:
         raise ValueError("Booking not found")
     if str(booking.user_id) != str(user_id):
         raise ValueError("Not your booking")
+
+    # Fail-fast: if any flight item's Duffel offer has expired, don't charge
+    # the card. The customer needs to re-search before they pay.
+    await _validate_flight_offers_alive(booking)
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     amount_cents = _to_cents(booking.total_price)
@@ -111,10 +192,13 @@ async def _confirm_succeeded_payment(db: AsyncSession, payment: Payment, redis=N
     if not payment.booking_id:
         return
 
+    from app.models.booking_item import BookingItem  # local import to avoid cycle
     booking = (
         await db.execute(
             select(Booking)
-            .options(selectinload(Booking.items))
+            .options(
+                selectinload(Booking.items).selectinload(BookingItem.flight_booking)
+            )
             .where(Booking.id == payment.booking_id)
         )
     ).scalar_one_or_none()

@@ -54,6 +54,60 @@ async def booking_with_stripe_payment(db_session, test_user):
     return booking, payment
 
 
+@pytest.mark.asyncio
+async def test_create_payment_intent_blocks_expired_offer(db_session, test_user):
+    """Pre-payment guard: if a flight booking's Duffel offer is expired, we
+    must NOT create a Stripe PaymentIntent — the customer would otherwise
+    pay, then get refunded after create_order fails.
+    """
+    from unittest.mock import AsyncMock, patch
+    from datetime import datetime, timezone, timedelta
+    from app.models.booking_item import BookingItem, BookingItemType
+    from app.models.flight_booking import FlightBooking
+    from app.services.duffel_service import DuffelError
+    from app.services import payment_service
+
+    booking = Booking(
+        id=uuid.uuid4(),
+        user_id=test_user.id,
+        total_price=Decimal("100.00"),
+        status="pending",
+    )
+    db_session.add(booking)
+    await db_session.flush()
+    flight = FlightBooking(
+        id=uuid.uuid4(),
+        airline_name="X", flight_number="X1",
+        departure_airport="HAN", arrival_airport="SGN",
+        departure_at=datetime.now(timezone.utc) + timedelta(days=30),
+        arrival_at=datetime.now(timezone.utc) + timedelta(days=30, hours=2),
+        passenger_name="A B", passenger_email="a@b.com",
+        base_amount=Decimal("100"), total_amount=Decimal("100"),
+        currency="USD", status="pending",
+        passenger_details={"offer_id": "off_dead_123"},
+    )
+    db_session.add(flight)
+    await db_session.flush()
+    db_session.add(BookingItem(
+        id=uuid.uuid4(), booking_id=booking.id,
+        item_type=BookingItemType.flight.value,
+        flight_booking_id=flight.id,
+        unit_price=Decimal("100"), subtotal=Decimal("100"), quantity=1,
+        status="pending",
+    ))
+    await db_session.flush()
+
+    # Duffel says the offer is dead
+    async def raise_expired(*_a, **_k):
+        raise DuffelError(422, "Offer expired", error_code="offer_no_longer_available")
+
+    with patch.object(payment_service, "_validate_flight_offers_alive", new=AsyncMock(side_effect=payment_service.OfferExpiredError("Flight offer is no longer available. Please search again.", offer_id="off_dead_123"))):
+        with pytest.raises(payment_service.OfferExpiredError):
+            await payment_service.create_payment_intent(
+                db_session, user_id=test_user.id, booking_id=booking.id,
+            )
+
+
 def test_to_cents_no_truncation():
     """19.99 must round to 1999 cents, not truncate to 1998."""
     assert _to_cents(Decimal("19.99")) == 1999

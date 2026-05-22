@@ -14,6 +14,7 @@ import LiteapiHotelDetailPage from '@/pages/LiteapiHotelDetailPage'
 import ViatorTourDetailPage from '@/pages/ViatorTourDetailPage'
 import BookingPage from '@/pages/BookingPage'
 import BookingConfirmationPage from '@/pages/BookingConfirmationPage'
+import BookingFailurePage from '@/pages/BookingFailurePage'
 import ToursPage from '@/pages/ToursPage'
 import TourDetailPage from '@/pages/TourDetailPage'
 import ProfilePage from '@/pages/ProfilePage'
@@ -49,6 +50,10 @@ export const router = createBrowserRouter([
       {
         path: '/bookings/:id/confirmation',
         element: <ProtectedRoute userOnly><BookingConfirmationPage /></ProtectedRoute>,
+      },
+      {
+        path: '/bookings/:id/failure',
+        element: <ProtectedRoute userOnly><BookingFailurePage /></ProtectedRoute>,
       },
       { path: '/flights', element: <RedirectIfAdmin><FlightsSearchPage /></RedirectIfAdmin> },
       { path: '/flights/offers/:offerId', element: <RedirectIfAdmin><FlightOfferDetailPage /></RedirectIfAdmin> },

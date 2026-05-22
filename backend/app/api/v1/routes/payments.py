@@ -21,6 +21,7 @@ from app.services.payment_service import (
     create_payment_intent,
     handle_webhook_event,
     refund_payment,
+    OfferExpiredError,
 )
 
 
@@ -64,6 +65,18 @@ async def create_payment(
             booking_id=data.booking_id,
             currency=data.currency,
         )
+    except OfferExpiredError as exc:
+        # 409 Conflict — semantically correct for "the resource you're trying to
+        # pay for is no longer in a payable state." Frontend reads error_code
+        # to show a "search again" CTA instead of a generic toast.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "offer_no_longer_available",
+                "message": str(exc),
+                "offer_id": exc.offer_id,
+            },
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -87,6 +100,70 @@ async def get_payment(
     return await _load_payment_for_user(db, payment_id, current_user)
 
 
+def _confirm_response_body(payment: Payment, booking: Booking | None, outcome: dict) -> dict:
+    """Shape the JSON body returned to the client after confirm-stripe / vnpay-return.
+
+    For all-success outcomes returns ``success: true`` with a confirmed status.
+    Anything else returns ``success: false`` plus failure_reason / supplier_error
+    / refund blocks so the frontend can route to the failure page.
+    """
+    status_str = outcome.get("status") or "confirmed"
+    booking_id = str(payment.booking_id) if payment and payment.booking_id else (str(booking.id) if booking else None)
+    if status_str == "confirmed":
+        return {
+            "success": True,
+            "data": {"booking_id": booking_id, "status": "confirmed"},
+        }
+    failed_items = outcome.get("failed_items") or []
+    primary = failed_items[0] if failed_items else {}
+    body = {
+        "success": False,
+        "data": {
+            "booking_id": booking_id,
+            "status": status_str,
+            "failure_reason": "flight_booking_failed",
+            "failed_items": failed_items,
+            "confirmed_items": outcome.get("confirmed_items") or [],
+            "refund": outcome.get("refund"),
+            "supplier_error": {
+                "supplier": "duffel",
+                "error_code": primary.get("error_code"),
+                "error_type": primary.get("error_type"),
+                "message": primary.get("user_message"),
+            } if primary else None,
+        },
+    }
+    return body
+
+
+async def _load_booking_with_items(db: AsyncSession, booking_id) -> Booking | None:
+    """Eager-load booking with items AND each item's flight_booking — needed
+    because confirm_booking() touches `item.flight_booking` and lazy-loading
+    inside async + autoflush blows up with MissingGreenlet / 500."""
+    from app.models.booking_item import BookingItem
+    return (
+        await db.execute(
+            select(Booking)
+            .options(
+                selectinload(Booking.items).selectinload(BookingItem.flight_booking)
+            )
+            .where(Booking.id == booking_id)
+        )
+    ).scalar_one_or_none()
+
+
+def _split_name(user: User | None) -> tuple[str, str, str, str | None]:
+    if not user:
+        return "Guest", "Guest", "guest@example.com", None
+    full = (user.full_name or "Guest").strip()
+    parts = full.split(" ") if full else ["Guest"]
+    fn = parts[0] or "Guest"
+    ln = " ".join(parts[1:]) or "Guest"
+    email = user.email or "guest@example.com"
+    phone = user.phone if getattr(user, "phone", None) else None
+    return fn, ln, email, phone
+
+
 @router.post("/{payment_id}/confirm-stripe", status_code=status.HTTP_200_OK)
 async def confirm_stripe_payment(
     payment_id: uuid.UUID,
@@ -95,15 +172,26 @@ async def confirm_stripe_payment(
     current_user: CurrentUser,
 ):
     """Called by the frontend after Stripe confirms client-side.
-    Verifies the PaymentIntent is succeeded directly with Stripe,
-    then calls confirm_booking() to award loyalty points and send email.
-    Idempotent — safe to call multiple times.
+    Verifies the PaymentIntent is succeeded directly with Stripe, then calls
+    confirm_booking() to finalize the supplier side (Duffel order, LiteAPI
+    booking, etc.).
+
+    Returns 200 in all outcomes. When a supplier fails AFTER payment, the body
+    has ``success: false`` with failure_reason/supplier_error/refund — the
+    frontend reads these to route to the failure page.
+
+    Idempotent — re-calls after a prior succeeded/refunded run return the
+    same outcome without re-running supplier calls.
     """
     payment = await _load_payment_for_user(db, payment_id, current_user)
 
-    # Already confirmed — nothing to do
-    if payment.status == PaymentStatus.succeeded.value:
-        return {"success": True, "data": {"booking_id": str(payment.booking_id), "status": "confirmed"}}
+    # Idempotent re-calls after the booking already finalized (either as
+    # confirmed or refunded due to supplier failure).
+    if payment.status in (PaymentStatus.succeeded.value, PaymentStatus.refunded.value):
+        booking = await _load_booking_with_items(db, payment.booking_id)
+        from app.services.booking_service import _outcome_from_persisted_state
+        outcome = _outcome_from_persisted_state(booking) if booking else {"status": "confirmed"}
+        return _confirm_response_body(payment, booking, outcome)
 
     if not payment.stripe_payment_intent_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a Stripe payment")
@@ -122,30 +210,23 @@ async def confirm_stripe_payment(
 
     payment.status = PaymentStatus.succeeded.value
 
+    outcome: dict = {"status": "confirmed", "confirmed_items": [], "failed_items": [], "refund": None}
+    booking: Booking | None = None
     if payment.booking_id:
         from app.services.booking_service import confirm_booking
-        booking = (
-            await db.execute(
-                select(Booking)
-                .options(selectinload(Booking.items))
-                .where(Booking.id == payment.booking_id)
-            )
-        ).scalar_one_or_none()
+        booking = await _load_booking_with_items(db, payment.booking_id)
         if booking:
             redis = request.app.state.redis
             user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
-            fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
-            ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
-            email = user.email if user else "guest@example.com"
-            phone = user.phone if user and user.phone else None
-            await confirm_booking(
+            fn, ln, email, phone = _split_name(user)
+            booking, outcome = await confirm_booking(
                 db, booking,
                 guest_first_name=fn, guest_last_name=ln,
                 guest_email=email, guest_phone=phone, redis=redis,
             )
 
     await db.flush()
-    return {"success": True, "data": {"booking_id": str(payment.booking_id), "status": "confirmed"}}
+    return _confirm_response_body(payment, booking, outcome)
 
 
 @router.post("/webhooks", status_code=status.HTTP_200_OK)
@@ -283,30 +364,19 @@ async def vnpay_return(
         if payment:
             payment.status = PaymentStatus.succeeded.value
             payment.vnpay_transaction_id = txn_no
-        booking_with_items = (
-            await db.execute(
-                select(Booking)
-                .options(selectinload(Booking.items))
-                .where(Booking.id == booking.id)
-            )
-        ).scalar_one()
+        booking_with_items = await _load_booking_with_items(db, booking.id)
         user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
-        fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
-        ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
-        email = user.email if user else "guest@example.com"
-        phone = user.phone if user and user.phone else None
+        fn, ln, email, phone = _split_name(user)
         redis = getattr(request.app.state, "redis", None)
-        await confirm_booking(
+        confirmed_booking, outcome = await confirm_booking(
             db, booking_with_items,
             guest_first_name=fn, guest_last_name=ln,
             guest_email=email, guest_phone=phone, redis=redis,
         )
         await db.flush()
-        return {
-            "success": True,
-            "data": {"booking_id": booking_id, "status": "confirmed"},
-            "message": "Payment successful",
-        }
+        body = _confirm_response_body(payment, confirmed_booking, outcome)
+        body["message"] = "Payment successful" if outcome.get("status") == "confirmed" else "Payment captured, booking finalization issue"
+        return body
     else:
         if payment:
             payment.status = PaymentStatus.failed.value
@@ -369,13 +439,7 @@ async def vnpay_ipn(
         if payment:
             payment.status = PaymentStatus.succeeded.value
             payment.vnpay_transaction_id = txn_no
-        booking_with_items = (
-            await db.execute(
-                select(Booking)
-                .options(selectinload(Booking.items))
-                .where(Booking.id == booking.id)
-            )
-        ).scalar_one()
+        booking_with_items = await _load_booking_with_items(db, booking.id)
         user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
         fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
         ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
