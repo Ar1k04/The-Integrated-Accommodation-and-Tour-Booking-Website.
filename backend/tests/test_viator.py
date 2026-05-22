@@ -222,6 +222,150 @@ async def test_book_tour_returns_booking_ref():
     assert result["status"] == "CONFIRMED"
 
 
+def test_map_ages_to_paxmix_splits_child_and_infant():
+    bands = [
+        {"age_band": "ADULT", "start_age": 13, "end_age": 99},
+        {"age_band": "CHILD", "start_age": 4, "end_age": 12},
+        {"age_band": "INFANT", "start_age": 0, "end_age": 3},
+    ]
+    result = viator_service._map_ages_to_paxmix([2, 8, 11], bands)
+    # Aggregated: 1 INFANT (age 2) + 2 CHILD (8, 11). ADULT is never returned
+    # from this helper — adults are added at the call site separately.
+    by_band = {entry["ageBand"]: entry["numberOfTravelers"] for entry in result}
+    assert by_band == {"INFANT": 1, "CHILD": 2}
+
+
+def test_map_ages_to_paxmix_uses_supplier_specific_ranges():
+    # A supplier where YOUTH covers 8–17 — age 8 must NOT map to CHILD.
+    bands = [
+        {"age_band": "ADULT", "start_age": 18, "end_age": 99},
+        {"age_band": "YOUTH", "start_age": 8, "end_age": 17},
+        {"age_band": "CHILD", "start_age": 3, "end_age": 7},
+    ]
+    result = viator_service._map_ages_to_paxmix([8], bands)
+    assert result == [{"ageBand": "YOUTH", "numberOfTravelers": 1}]
+
+
+def test_map_ages_to_paxmix_rejects_unmatched_age():
+    bands = [
+        {"age_band": "ADULT", "start_age": 18, "end_age": 99},
+        {"age_band": "CHILD", "start_age": 6, "end_age": 12},
+    ]
+    # Age 3 doesn't fit any child band — supplier doesn't accept toddlers.
+    with pytest.raises(ViatorError) as exc:
+        viator_service._map_ages_to_paxmix([3], bands)
+    assert "outside this tour's accepted age bands" in exc.value.message
+
+
+def test_map_ages_to_paxmix_rejects_adults_only_tour():
+    bands = [{"age_band": "ADULT", "start_age": 18, "end_age": 99}]
+    with pytest.raises(ViatorError) as exc:
+        viator_service._map_ages_to_paxmix([8], bands)
+    assert "only accepts adults" in exc.value.message
+
+
+@pytest.mark.asyncio
+async def test_check_availability_sends_multi_band_paxmix():
+    raw = {
+        "bookableItems": [
+            {
+                "available": True,
+                "totalPrice": {
+                    "price": {"recommendedRetailPrice": {"price": 90.0}}
+                },
+            }
+        ],
+        "currency": "USD",
+    }
+    captured: dict = {}
+
+    async def _capture_post(url, json, headers=None):
+        captured["body"] = json
+        return _mock_response(200, raw)
+
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        await viator_service.check_availability(
+            "TOUR_VN_001",
+            date(2026, 6, 1),
+            adults=2,
+            children_ages=[8],
+            age_bands=[
+                {"age_band": "ADULT", "start_age": 13, "end_age": 99},
+                {"age_band": "CHILD", "start_age": 4, "end_age": 12},
+            ],
+        )
+
+    paxmix = captured["body"]["paxMix"]
+    by_band = {entry["ageBand"]: entry["numberOfTravelers"] for entry in paxmix}
+    assert by_band == {"ADULT": 2, "CHILD": 1}
+
+
+@pytest.mark.asyncio
+async def test_check_availability_back_compat_with_guests_kw():
+    raw = {
+        "bookableItems": [
+            {
+                "available": True,
+                "totalPrice": {
+                    "price": {"recommendedRetailPrice": {"price": 100.0}}
+                },
+            }
+        ],
+        "currency": "USD",
+    }
+    captured: dict = {}
+
+    async def _capture_post(url, json, headers=None):
+        captured["body"] = json
+        return _mock_response(200, raw)
+
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        # Legacy callers (booking_service before the migration) still pass guests=N.
+        await viator_service.check_availability(
+            "TOUR_VN_001", date(2026, 6, 1), guests=3,
+        )
+
+    paxmix = captured["body"]["paxMix"]
+    assert paxmix == [{"ageBand": "ADULT", "numberOfTravelers": 3}]
+
+
+@pytest.mark.asyncio
+async def test_book_tour_sends_multi_band_paxmix():
+    raw = {"bookingRef": "VIATOR-BR-002", "bookingStatus": "CONFIRMED"}
+    captured: dict = {}
+
+    async def _capture_post(url, json, headers=None):
+        captured["body"] = json
+        return _mock_response(200, raw)
+
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        await viator_service.book_tour(
+            "TOUR_VN_001",
+            date(2026, 6, 1),
+            adults=2,
+            children_ages=[10],
+            age_bands=[
+                {"age_band": "ADULT", "start_age": 13, "end_age": 99},
+                {"age_band": "CHILD", "start_age": 4, "end_age": 12},
+            ],
+        )
+
+    by_band = {e["ageBand"]: e["numberOfTravelers"] for e in captured["body"]["paxMix"]}
+    assert by_band == {"ADULT": 2, "CHILD": 1}
+
+
 @pytest.mark.asyncio
 async def test_cancel_booking_returns_refund_dict():
     # Cancel is now POST /bookings/{ref}/cancel and returns a refund dict.

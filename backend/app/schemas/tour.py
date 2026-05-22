@@ -38,6 +38,20 @@ class TourUpdate(BaseModel):
     images: list | None = None
 
 
+class TourAgeBand(BaseModel):
+    """Supplier-defined age band for a Viator product.
+
+    Each Viator supplier publishes its own age ranges in
+    ``pricingInfo.ageBands[]``; the frontend uses this list to validate
+    child age input and to render "Children 4-12 yrs only" hints.
+    """
+    age_band: str
+    start_age: int = 0
+    end_age: int = 99
+    min_travelers: int = 0
+    max_travelers: int = 99
+
+
 class TourResponse(BaseModel):
     id: uuid.UUID | None = None
     name: str
@@ -62,6 +76,7 @@ class TourResponse(BaseModel):
     updated_at: datetime | None = None
     source: Literal["local", "viator"] = "local"
     viator_product_code: str | None = None
+    age_bands: list[TourAgeBand] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -71,6 +86,7 @@ class TourAvailabilityResponse(BaseModel):
     price: float
     currency: str
     tour_date: str
+    paxmix_used: list[dict] | None = None
 
 
 class TourListResponse(BaseModel):

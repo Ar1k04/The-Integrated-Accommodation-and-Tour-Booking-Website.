@@ -109,6 +109,18 @@ def _normalize_offer(raw: dict) -> dict:
             if has_baggage:
                 break
 
+    # Per-passenger breakdown so the booking UI can label each form
+    # ("Adult passenger 1", "Child age 8 — passenger 2") and so the
+    # FlightItemCreate validator can ensure submitted info matches the
+    # offer's expected adults/children composition.
+    breakdown: list[dict] = []
+    for p in raw_passengers:
+        breakdown.append({
+            "passenger_id": p.get("id"),
+            "type": p.get("type"),
+            "age": p.get("age"),
+        })
+
     return {
         "duffel_offer_id": raw.get("id") or "",
         "total_amount": float(raw.get("total_amount") or 0),
@@ -119,6 +131,7 @@ def _normalize_offer(raw: dict) -> dict:
         "airline_iata": owner.get("iata_code") or "",
         "slices": slices,
         "passengers": len(raw_passengers),
+        "passenger_breakdown": breakdown,
         "cabin_class": raw.get("cabin_class"),
         "expires_at": raw.get("expires_at"),
         "conditions": raw.get("conditions") or {},
@@ -127,15 +140,46 @@ def _normalize_offer(raw: dict) -> dict:
     }
 
 
+def _build_passengers_payload(adults: int, child_ages: list[int] | None) -> list[dict]:
+    """Build the `passengers` array Duffel expects on /air/offer_requests.
+
+    Per Duffel docs each passenger may have either ``type`` OR ``age`` (not
+    both). We send ``type: "adult"`` for grown-ups and ``age: N`` for anyone
+    < 18 — Duffel + the airline decide whether age-N maps to child or
+    infant_without_seat based on the airline's own policy.
+    """
+    adults = max(0, int(adults or 0))
+    ages = [int(a) for a in (child_ages or []) if a is not None]
+    payload: list[dict] = [{"type": "adult"} for _ in range(adults)]
+    payload.extend({"age": age} for age in ages)
+    if not payload:
+        # Duffel rejects empty passenger lists — fall back to a single adult.
+        payload = [{"type": "adult"}]
+    return payload
+
+
 async def search_offers(
     origin: str,
     destination: str,
     depart_date: date,
     return_date: date | None = None,
-    passengers: int = 1,
+    adults: int | None = None,
+    child_ages: list[int] | None = None,
     cabin_class: str = "economy",
+    *,
+    passengers: int | None = None,
 ) -> list[dict]:
-    """Create an offer_request and return normalized offers list."""
+    """Create an offer_request and return normalized offers list.
+
+    Pass ``adults`` (and optionally ``child_ages``) for accurate per-age
+    pricing. Legacy callers that still pass ``passengers=N`` are treated as
+    ``adults=N`` with no children.
+    """
+    if adults is None:
+        adults = passengers if passengers is not None else 1
+    adults = max(1, int(adults))
+    child_ages = list(child_ages or [])
+
     slices: list[dict] = [
         {"origin": origin.upper(), "destination": destination.upper(), "departure_date": str(depart_date)}
     ]
@@ -147,7 +191,7 @@ async def search_offers(
     body = {
         "data": {
             "slices": slices,
-            "passengers": [{"type": "adult"} for _ in range(passengers)],
+            "passengers": _build_passengers_payload(adults, child_ages),
             "cabin_class": cabin_class,
         }
     }
@@ -210,8 +254,17 @@ async def create_order(
             f"Passenger count mismatch: offer expects {len(pax_ids)}, got {len(passengers)}",
         )
 
+    # Pull offer-side passenger metadata so we can match our submitted passenger
+    # order to the right Duffel passenger ID (offer might list adults first,
+    # children second — we mirror that order on the frontend).
+    offer_passengers = offer_data.get("passengers", [])
+
     passengers_payload = []
-    for idx, (pax_id, pax) in enumerate(zip(pax_ids, passengers)):
+    for idx, (pax_meta, pax) in enumerate(zip(offer_passengers, passengers)):
+        pax_id = pax_meta["id"]
+        pax_age = pax.get("age")
+        # Minors: send age (born_on still required by Duffel for identity check).
+        # Adults: send no age — born_on alone is enough.
         entry = {
             "id": pax_id,
             "title": pax.get("title", "mr"),
@@ -221,6 +274,8 @@ async def create_order(
             "born_on": str(pax.get("born_on", "1990-01-01")),
             "email": pax.get("email", ""),
         }
+        if pax_age is not None and int(pax_age) < 18:
+            entry["age"] = int(pax_age)
         phone = pax.get("phone_number")
         if phone:
             entry["phone_number"] = phone

@@ -204,6 +204,16 @@ export default function BookingPage() {
       const flightPaxList = selectedFlight?.passengers
         || (selectedFlight?.passenger ? [selectedFlight.passenger] : [])
       const flightPaxCount = selectedFlight?.quantity || flightPaxList.length || 1
+      // Tour + flight occupancy: prefer the explicit adults/childAges set by
+      // the detail page; fall back to (guests, 0) for older stored values.
+      const tourAdults = effectiveAdults || guests || 1
+      const tourChildren = effectiveChildAges
+      const flightAdultsFromOffer = selectedFlight?.adults
+      const flightAdults = flightAdultsFromOffer != null
+        ? flightAdultsFromOffer
+        : (flightPaxList.filter((p) => p.age == null).length || flightPaxCount)
+      const flightChildren = selectedFlight?.childAges
+        || flightPaxList.filter((p) => p.age != null).map((p) => Number(p.age))
       const bookingPayload = isFlightBooking
         ? {
             items: [{
@@ -213,6 +223,8 @@ export default function BookingPage() {
               selected_services: selectedFlight.selected_services || undefined,
               selected_seats: selectedFlight.selected_seats || undefined,
               quantity: flightPaxCount,
+              adults: flightAdults,
+              children_ages: flightChildren,
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
@@ -225,7 +237,9 @@ export default function BookingPage() {
               viator_price: selectedTour.viator_price || selectedTour.price_per_person,
               viator_tour_name: selectedTour.name,
               tour_date: tourDate,
-              quantity: guests || 1,
+              quantity: tourAdults + tourChildren.length,
+              adults: tourAdults,
+              children_ages: tourChildren,
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
@@ -236,7 +250,9 @@ export default function BookingPage() {
               item_type: 'tour',
               tour_id: selectedTour.id,
               tour_date: tourDate,
-              quantity: guests || 1,
+              quantity: tourAdults + tourChildren.length,
+              adults: tourAdults,
+              children_ages: tourChildren,
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,

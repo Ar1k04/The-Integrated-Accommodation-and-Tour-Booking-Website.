@@ -15,7 +15,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.pricing import compute_room_subtotal
+from app.core.pricing import compute_room_subtotal, compute_tour_subtotal
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemStatus, BookingItemType
 from app.models.flight_booking import FlightBooking
@@ -289,13 +289,22 @@ async def _reserve_viator_tour_item(
     item: TourItemCreate,
 ) -> tuple[BookingItem, Decimal]:
     """Reserve a Viator tour by checking availability; no local DB locking needed."""
+    adults = item.adults or item.quantity
+    children_ages = list(item.children_ages or [])
+
     try:
         avail = await viator_service.check_availability(
-            item.viator_product_code, item.tour_date, guests=item.quantity
+            item.viator_product_code,
+            item.tour_date,
+            adults=adults,
+            children_ages=children_ages,
         )
     except ViatorError as exc:
         raise BookingServiceError(f"Viator availability check failed: {exc.message}")
 
+    # Average per-person price returned by Viator already reflects per-band
+    # discounts. We persist unit_price as that average so the BookingItem
+    # subtotal stays consistent with what we showed the user at quote time.
     price = item.viator_price if item.viator_price else avail.get("price", 0)
     unit_price = Decimal(str(price)).quantize(Decimal("0.01"))
     subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
@@ -309,6 +318,9 @@ async def _reserve_viator_tour_item(
         subtotal=subtotal,
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
+        adults_count=adults,
+        children_count=len(children_ages),
+        children_ages=children_ages,
     )
     return bi, subtotal
 
@@ -348,8 +360,17 @@ async def _reserve_tour_item(
 
     schedule.booked_slots += item.quantity
 
+    # Partner tours mirror hotel child pricing: adults full rate, children
+    # pay the default tier fraction (0–5 free, 6–12 50% off, 13–17 25% off).
+    adults = item.adults or item.quantity
+    children_ages = list(item.children_ages or [])
+
     unit_price = Decimal(str(tour.price_per_person))
-    subtotal = (unit_price * item.quantity).quantize(Decimal("0.01"))
+    subtotal = compute_tour_subtotal(
+        unit_price,
+        adults=adults,
+        children_ages=children_ages,
+    )
 
     bi = BookingItem(
         item_type=BookingItemType.tour.value,
@@ -358,6 +379,9 @@ async def _reserve_tour_item(
         subtotal=subtotal,
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
+        adults_count=adults,
+        children_count=len(children_ages),
+        children_ages=children_ages,
     )
     return bi, subtotal
 
@@ -457,6 +481,13 @@ async def _reserve_duffel_flight_item(
     unit_price = (Decimal(str(total_amount)) / Decimal(pax_count)).quantize(Decimal("0.01"))
     subtotal = Decimal(str(total_amount)).quantize(Decimal("0.01"))
 
+    # Track adult/child split for audit + so confirm_booking sends the
+    # right per-passenger fields to /air/orders. Child ages live on each
+    # PassengerInfo (.age) too, but the BookingItem-level summary is
+    # cheaper to read for analytics / display.
+    adults_count = item.adults if item.adults is not None else pax_count
+    children_ages_snapshot = list(item.children_ages or [])
+
     bi = BookingItem(
         item_type=BookingItemType.flight.value,
         flight_booking_id=flight.id,
@@ -464,6 +495,9 @@ async def _reserve_duffel_flight_item(
         subtotal=subtotal,
         quantity=pax_count,
         status=BookingItemStatus.pending.value,
+        adults_count=adults_count,
+        children_count=len(children_ages_snapshot),
+        children_ages=children_ages_snapshot,
     )
     return bi, subtotal
 
@@ -729,10 +763,15 @@ async def confirm_booking(
         if item.viator_product_code and not item.viator_booking_ref:
             try:
                 tour_date_val = item.check_in or date.today()
+                # Pull stored adult/child breakdown so the booking call uses
+                # the same paxMix Viator priced for at availability time.
+                adults_at_book = item.adults_count or item.quantity
+                child_ages_at_book = list(item.children_ages or [])
                 result = await viator_service.book_tour(
                     viator_product_code=item.viator_product_code,
                     tour_date=tour_date_val,
-                    guests=item.quantity,
+                    adults=adults_at_book,
+                    children_ages=child_ages_at_book,
                     guest_first_name=guest_first_name,
                     guest_last_name=guest_last_name,
                     guest_email=guest_email,

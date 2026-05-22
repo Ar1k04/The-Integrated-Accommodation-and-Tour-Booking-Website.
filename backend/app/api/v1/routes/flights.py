@@ -111,6 +111,24 @@ async def list_airports(
     return {"data": results, "status": "success", "count": len(results), "message": "OK"}
 
 
+def _parse_child_ages_csv(raw: str | None) -> list[int]:
+    """Parse `child_ages=11,8` into a clamped list of ints (0–17)."""
+    if not raw:
+        return []
+    ages: list[int] = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            age = int(chunk)
+        except ValueError:
+            continue
+        if 0 <= age <= 17:
+            ages.append(age)
+    return ages
+
+
 @router.get("/search")
 async def search_flights(
     request: Request,
@@ -118,7 +136,17 @@ async def search_flights(
     destination: str = Query(..., min_length=3, max_length=3, description="IATA destination code e.g. SGN"),
     depart_date: date = Query(..., alias="depart_date"),
     return_date: date | None = Query(None, alias="return_date"),
-    passengers: int = Query(default=1, ge=1, le=9),
+    adults: int = Query(default=1, ge=1, le=9, description="Number of adult passengers"),
+    child_ages: str | None = Query(
+        default=None,
+        description="Comma-separated child ages (0–17), e.g. '8,11'",
+    ),
+    passengers: int | None = Query(
+        default=None,
+        ge=1,
+        le=9,
+        description="Deprecated. Use adults + child_ages instead.",
+    ),
     cabin_class: str = Query(default="economy"),
     max_connections: int | None = Query(None, ge=0, le=3),
     max_price: float | None = Query(None, gt=0),
@@ -126,10 +154,17 @@ async def search_flights(
     sort_by: Literal["price", "duration", "departure_time"] = Query("price"),
     sort_order: Literal["asc", "desc"] = Query("asc"),
 ):
+    parsed_children = _parse_child_ages_csv(child_ages)
+    effective_adults = adults
+    if passengers is not None and child_ages is None:
+        # Legacy callers: pre-children search bar passed only `passengers`.
+        effective_adults = passengers
+    total_pax = effective_adults + len(parsed_children)
     airlines_norm = ",".join(sorted([a.upper() for a in (airlines or [])]))
+    child_ages_norm = ",".join(str(a) for a in parsed_children)
     cache_key = (
         f"duffel:search:{origin.upper()}:{destination.upper()}:{depart_date}:{return_date}:"
-        f"{passengers}:{cabin_class}"
+        f"a{effective_adults}:c{child_ages_norm}:{cabin_class}"
     )
     filter_key = f"{cache_key}:flt:{max_connections}:{max_price}:{airlines_norm}:{sort_by}:{sort_order}"
     redis = _cache(request)
@@ -150,7 +185,8 @@ async def search_flights(
             destination=destination,
             depart_date=depart_date,
             return_date=return_date,
-            passengers=passengers,
+            adults=effective_adults,
+            child_ages=parsed_children,
             cabin_class=cabin_class,
         )
     except DuffelError as exc:

@@ -9,6 +9,7 @@ import { useBookingStore } from '@/store/bookingStore'
 import { useAuth } from '@/hooks/useAuth'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import ImageGallery from '@/components/hotel/ImageGallery'
+import OccupancySelector from '@/components/common/OccupancySelector'
 import ReviewCard from '@/components/review/ReviewCard'
 import ReviewForm from '@/components/review/ReviewForm'
 import Pagination from '@/components/common/Pagination'
@@ -18,7 +19,7 @@ import { format, addDays } from 'date-fns'
 import { toast } from 'sonner'
 import {
   MapPin, Clock, Users, Star, Calendar, CheckCircle, X as XIcon,
-  Minus, Plus,
+  AlertCircle,
 } from 'lucide-react'
 
 export default function ViatorTourDetailPage() {
@@ -32,7 +33,15 @@ export default function ViatorTourDetailPage() {
 
   const today = format(new Date(), 'yyyy-MM-dd')
   const [tourDate, setTourDate] = useState(searchParams.get('tour_date') || format(addDays(new Date(), 7), 'yyyy-MM-dd'))
-  const [participants, setParticipants] = useState(parseInt(searchParams.get('guests') || '1'))
+  const [adults, setAdults] = useState(parseInt(searchParams.get('adults') || searchParams.get('guests') || '1'))
+  const [childAges, setChildAges] = useState(() => {
+    const raw = searchParams.get('child_ages') || ''
+    return raw
+      ? raw.split(',').map((s) => parseInt(s, 10)).filter((n) => !Number.isNaN(n) && n >= 0 && n <= 17)
+      : []
+  })
+  const participants = adults + childAges.length
+  const childAgesParam = childAges.join(',')
   const [showAvailability, setShowAvailability] = useState(false)
   const [reviewPage, setReviewPage] = useState(1)
   const REVIEWS_PER_PAGE = 5
@@ -43,13 +52,29 @@ export default function ViatorTourDetailPage() {
     select: (res) => res.data,
   })
 
+  // Surface a friendly hint when the supplier's age bands exclude some ages.
+  // Child bands (anything that isn't ADULT) define the accepted range.
+  const childBands = (tour?.age_bands || []).filter(
+    (b) => String(b.age_band || '').toUpperCase() !== 'ADULT',
+  )
+  const childAgeHint = childBands.length
+    ? `This tour accepts children ages ${Math.min(...childBands.map((b) => b.start_age))}–${Math.max(...childBands.map((b) => b.end_age))}.`
+    : null
+  const unmatchedChildAges = childAges.filter(
+    (age) => !childBands.some((b) => age >= b.start_age && age <= b.end_age),
+  )
+
   const {
     data: availability,
     isLoading: availLoading,
     refetch: fetchAvailability,
   } = useQuery({
-    queryKey: ['viator-availability', code, tourDate, participants],
-    queryFn: () => toursApi.getViatorAvailability(code, { tour_date: tourDate, guests: participants }),
+    queryKey: ['viator-availability', code, tourDate, adults, childAgesParam],
+    queryFn: () => toursApi.getViatorAvailability(code, {
+      tour_date: tourDate,
+      adults,
+      child_ages: childAgesParam || undefined,
+    }),
     select: (res) => res.data,
     enabled: showAvailability,
   })
@@ -63,6 +88,10 @@ export default function ViatorTourDetailPage() {
 
   const handleCheckAvailability = () => {
     if (!tourDate) { toast.error(t('tours:errors.selectDate')); return }
+    if (unmatchedChildAges.length > 0) {
+      toast.error(`Ages ${unmatchedChildAges.join(', ')} aren't accepted on this tour.`)
+      return
+    }
     setShowAvailability(true)
     fetchAvailability()
   }
@@ -73,6 +102,10 @@ export default function ViatorTourDetailPage() {
       return
     }
     if (!tourDate) { toast.error(t('tours:errors.selectDate')); return }
+    if (unmatchedChildAges.length > 0) {
+      toast.error(`Ages ${unmatchedChildAges.join(', ')} aren't accepted on this tour.`)
+      return
+    }
     const price = availability?.price || tour?.price_per_person || 0
     setBookingData({
       selectedTour: {
@@ -85,7 +118,8 @@ export default function ViatorTourDetailPage() {
         source: 'viator',
       },
       tourDate,
-      guests: participants,
+      adults,
+      childAges,
     })
     navigate('/bookings/new?type=tour')
   }
@@ -292,21 +326,16 @@ export default function ViatorTourDetailPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">{t('tours:detail.participantsLabel')}</label>
-                  <div className="flex items-center border rounded-lg overflow-hidden">
-                    <button
-                      onClick={() => setParticipants(Math.max(1, participants - 1))}
-                      className="px-3 py-2 hover:bg-gray-100 transition-colors"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <span className="flex-1 text-center text-sm font-medium py-2">{participants}</span>
-                    <button
-                      onClick={() => setParticipants(Math.min(tour.max_participants, participants + 1))}
-                      className="px-3 py-2 hover:bg-gray-100 transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
+                  <OccupancySelector
+                    mode="tour"
+                    adults={adults}
+                    childAges={childAges}
+                    onChange={({ adults: a, childAges: c }) => {
+                      setAdults(a)
+                      setChildAges(c)
+                    }}
+                    maxAdults={tour.max_participants}
+                  />
                 </div>
                 <div className="flex items-end">
                   <button
@@ -317,6 +346,13 @@ export default function ViatorTourDetailPage() {
                   </button>
                 </div>
               </div>
+
+              {childAgeHint && childAges.length > 0 && unmatchedChildAges.length > 0 && (
+                <div className="mt-2 flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>{childAgeHint}</span>
+                </div>
+              )}
 
               {showAvailability && !availLoading && availability && (
                 <div className={`mt-3 p-4 rounded-xl border ${availability.available ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
@@ -379,23 +415,16 @@ export default function ViatorTourDetailPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('tours:detail.participantsLabel')}</label>
-                <div className="flex items-center border rounded-lg">
-                  <button
-                    onClick={() => setParticipants(Math.max(1, participants - 1))}
-                    className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                    aria-label={t('tours:detail.participantsLabel')}
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <span className="flex-1 text-center font-semibold">{participants}</span>
-                  <button
-                    onClick={() => setParticipants(Math.min(tour.max_participants, participants + 1))}
-                    className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                    aria-label={t('tours:detail.participantsLabel')}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
+                <OccupancySelector
+                  mode="tour"
+                  adults={adults}
+                  childAges={childAges}
+                  onChange={({ adults: a, childAges: c }) => {
+                    setAdults(a)
+                    setChildAges(c)
+                  }}
+                  maxAdults={tour.max_participants}
+                />
               </div>
 
               <hr />

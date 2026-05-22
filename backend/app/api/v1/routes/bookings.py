@@ -59,10 +59,15 @@ async def create_booking(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    # Reload with eager room relationship to avoid lazy-load failure during serialization
+    # Reload with eager relationships to avoid lazy-load failures during
+    # serialization. Flight bookings populate `BookingItem.flight_booking`;
+    # without this option Pydantic triggers MissingGreenlet on serialize.
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.items).selectinload(BookingItem.room))
+        .options(
+            selectinload(Booking.items).selectinload(BookingItem.room),
+            selectinload(Booking.items).selectinload(BookingItem.flight_booking),
+        )
         .where(Booking.id == booking.id)
     )
     return result.scalar_one()

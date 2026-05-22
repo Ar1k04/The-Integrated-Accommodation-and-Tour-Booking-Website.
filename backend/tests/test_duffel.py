@@ -199,6 +199,129 @@ async def test_create_order_multi_passenger_assigns_distinct_names():
 
 
 @pytest.mark.asyncio
+async def test_search_offers_mixes_adult_type_and_child_age():
+    """search_offers builds passengers payload with type:adult + age:N for kids."""
+    raw = {"data": {"id": "orq_kids", "offers": []}}
+    captured: dict = {}
+
+    async def _capture_post(url, json):
+        captured["body"] = json
+        return _mock_response(200, raw)
+
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        await duffel_service.search_offers(
+            origin="HAN", destination="SGN",
+            depart_date=date(2026, 7, 1),
+            adults=2,
+            child_ages=[8],
+        )
+
+    pax = captured["body"]["data"]["passengers"]
+    # Two {type:adult} + one {age:8} — Duffel + the airline decide the
+    # child vs infant_without_seat mapping themselves.
+    assert pax == [
+        {"type": "adult"},
+        {"type": "adult"},
+        {"age": 8},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_offers_back_compat_with_passengers_kw():
+    """Old callsites that still send passengers=N keep working."""
+    raw = {"data": {"id": "orq_legacy", "offers": []}}
+    captured: dict = {}
+
+    async def _capture_post(url, json):
+        captured["body"] = json
+        return _mock_response(200, raw)
+
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=_capture_post)
+        mock_client_fn.return_value = mock_client
+
+        await duffel_service.search_offers(
+            origin="HAN", destination="SGN",
+            depart_date=date(2026, 7, 1),
+            passengers=3,
+        )
+
+    pax = captured["body"]["data"]["passengers"]
+    assert pax == [{"type": "adult"}] * 3
+
+
+@pytest.mark.asyncio
+async def test_create_order_attaches_age_for_minors_only():
+    """Adults submit born_on; minors also submit `age`."""
+    offer_raw_with_minor = {
+        "data": {
+            **_OFFER_RAW,
+            "passengers": [
+                {"id": "pas_a1", "type": "adult"},
+                {"id": "pas_c1", "age": 8},
+            ],
+        }
+    }
+    order_raw = {
+        "data": {
+            "id": "ord_minor",
+            "booking_reference": "MINOR1",
+            "status": "confirmed",
+            "total_amount": "200.00",
+            "total_currency": "USD",
+        }
+    }
+    with patch.object(duffel_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=_mock_response(200, offer_raw_with_minor))
+        mock_client.post = AsyncMock(return_value=_mock_response(200, order_raw))
+        mock_client_fn.return_value = mock_client
+
+        await duffel_service.create_order(
+            duffel_offer_id="off_0000test",
+            passengers=[
+                {"first_name": "Alice", "last_name": "Doe", "email": "a@x.com",
+                 "gender": "F", "born_on": "1990-01-01", "title": "ms"},
+                {"first_name": "Bobby", "last_name": "Doe", "email": "b@x.com",
+                 "gender": "M", "born_on": "2018-03-15", "title": "mr", "age": 8},
+            ],
+            amount="200.00",
+            currency="USD",
+        )
+
+    body = mock_client.post.call_args.kwargs.get("json") or mock_client.post.call_args.args[1]
+    sent_pax = body["data"]["passengers"]
+    # Adult: no age field
+    assert "age" not in sent_pax[0]
+    # Child: age forwarded
+    assert sent_pax[1]["age"] == 8
+
+
+def test_normalize_offer_exposes_passenger_breakdown():
+    """_normalize_offer surfaces per-pax type/age so the frontend can label
+    each form field correctly."""
+    raw = {
+        **_OFFER_RAW,
+        "passengers": [
+            {"id": "pas_a1", "type": "adult"},
+            {"id": "pas_c1", "age": 8},
+        ],
+    }
+    offer = duffel_service._normalize_offer(raw)
+    assert offer["passengers"] == 2
+    breakdown = offer["passenger_breakdown"]
+    assert len(breakdown) == 2
+    assert breakdown[0]["type"] == "adult"
+    assert breakdown[0]["age"] is None
+    assert breakdown[1]["age"] == 8
+
+
+@pytest.mark.asyncio
 async def test_create_order_passenger_count_mismatch_raises_422():
     """Mismatch between offer pax_ids and provided passenger list must raise 422."""
     offer_raw_2pax = {

@@ -17,8 +17,11 @@ const GENDER_OPTIONS = [
  *   passengers: PassengerInfo[]   — controlled array (length === count)
  *   onChange(passengers)
  *   count: number
+ *   labels?: [{ kind: 'adult'|'child'|'infant', text: string, age: number|null }, ...]
+ *     When supplied each card shows the passenger type ("Adult", "Child age 8")
+ *     under the title — matches the offer's passenger_breakdown ordering.
  */
-export default function MultiPassengerForm({ passengers, onChange, count }) {
+export default function MultiPassengerForm({ passengers, onChange, count, labels }) {
   const { t } = useTranslation(['flights', 'common'])
   const [openIdx, setOpenIdx] = useState(0)
 
@@ -36,9 +39,12 @@ export default function MultiPassengerForm({ passengers, onChange, count }) {
         const pax = passengers[i] || emptyPassenger()
         const open = openIdx === i
         const done = isPassengerComplete(pax)
-        const label = i === 0
+        const meta = labels?.[i]
+        const isMinor = meta && (meta.kind === 'child' || meta.kind === 'infant')
+        const baseLabel = i === 0
           ? t('flights:passengers.leadPassenger')
           : t('flights:passengers.passenger_n', { n: i + 1 })
+        const label = isMinor ? `${baseLabel} · ${meta.text}` : baseLabel
 
         return (
           <div key={i} className="bg-white border rounded-xl overflow-hidden">

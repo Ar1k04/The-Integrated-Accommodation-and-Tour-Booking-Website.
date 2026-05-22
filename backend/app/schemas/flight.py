@@ -12,6 +12,19 @@ class PassengerInfo(BaseModel):
     born_on: date
     title: Literal["mr", "mrs", "ms", "dr"]
     phone_number: str | None = None
+    # Optional age + type for child / infant pricing. When `age` is set,
+    # Duffel + the airline decide whether the passenger maps to child or
+    # infant_without_seat (we do not pre-classify on our side).
+    age: int | None = Field(default=None, ge=0, le=120)
+    passenger_type: Literal["adult", "child", "infant_without_seat"] | None = None
+
+
+class PassengerBreakdown(BaseModel):
+    """One row in the offer's passenger list — used by the frontend to label
+    each passenger form ("Adult passenger 1", "Child age 8 — passenger 2")."""
+    passenger_id: str | None = None
+    type: str | None = None
+    age: int | None = None
 
 
 class FlightSegmentResponse(BaseModel):
@@ -43,6 +56,7 @@ class FlightOfferResponse(BaseModel):
     airline_iata: str
     slices: list[FlightSliceResponse]
     passengers: int = 1
+    passenger_breakdown: list[PassengerBreakdown] | None = None
     cabin_class: str | None = None
     expires_at: str | None = None
     source: str = "duffel"

@@ -304,12 +304,41 @@ def _normalize_product(raw: dict) -> dict:
 
     # Inclusions/exclusions — detail has {otherDescription, type} items; search has simple list
     def _text(item):
-        if isinstance(item, str): return item
-        return item.get("otherDescription") or item.get("description") or item.get("text") or str(item)
+        if isinstance(item, str):
+            return item
+        if not isinstance(item, dict):
+            return str(item)
+        text = item.get("otherDescription") or item.get("description") or item.get("text")
+        if text:
+            return text
+        # Viator structured inclusion: combine quantity + typeDescription/categoryDescription
+        type_desc = item.get("typeDescription") or item.get("categoryDescription")
+        if type_desc:
+            qty = item.get("quantity")
+            return f"{qty} {type_desc}" if qty and int(qty) > 1 else str(type_desc)
+        return ""
 
-    highlights = [_text(i) for i in (raw.get("highlights") or raw.get("inclusions") or [])][:5]
-    includes = [_text(i) for i in (raw.get("inclusions") or [])]
-    excludes = [_text(i) for i in (raw.get("exclusions") or [])]
+    highlights = [h for h in (_text(i) for i in (raw.get("highlights") or raw.get("inclusions") or [])) if h][:5]
+    includes = [h for h in (_text(i) for i in (raw.get("inclusions") or [])) if h]
+    excludes = [h for h in (_text(i) for i in (raw.get("exclusions") or [])) if h]
+
+    # Age bands: supplier-defined age ranges per Viator product.
+    # Shape: pricingInfo.ageBands = [{ageBand, startAge, endAge, minTravelersPerBooking, maxTravelersPerBooking, ...}]
+    # We expose a normalized list so frontend can validate child age input
+    # and so booking_service can map our age list → Viator paxMix entries.
+    raw_bands = (raw.get("pricingInfo") or {}).get("ageBands") or []
+    age_bands: list[dict] = []
+    for band in raw_bands:
+        name = band.get("ageBand") or band.get("name")
+        if not name:
+            continue
+        age_bands.append({
+            "age_band": str(name),
+            "start_age": int(band.get("startAge") or band.get("ageFrom") or 0),
+            "end_age": int(band.get("endAge") or band.get("ageTo") or 99),
+            "min_travelers": int(band.get("minTravelersPerBooking") or 0),
+            "max_travelers": int(band.get("maxTravelersPerBooking") or 99),
+        })
 
     return {
         "viator_product_code": product_code,
@@ -328,6 +357,7 @@ def _normalize_product(raw: dict) -> dict:
         "highlights": highlights,
         "includes": includes,
         "excludes": excludes,
+        "age_bands": age_bands,
         "source": "viator",
     }
 
@@ -562,17 +592,111 @@ async def _check_availability_via_schedules(
         return {"available": True, "price": 0.0, "currency": "USD", "tour_date": tour_date.isoformat()}
 
 
+def _map_ages_to_paxmix(
+    children_ages: list[int] | None,
+    product_age_bands: list[dict] | None,
+) -> list[dict]:
+    """Map a list of child ages to Viator paxMix entries by the product's own
+    age-band definitions.
+
+    Viator suppliers each define their own age ranges per product
+    (``pricingInfo.ageBands[]``); a child age 8 might be CHILD for one tour
+    and YOUTH for another. The function aggregates ages into per-band counts
+    and raises ViatorError(400) when an age does not fall into any defined
+    band (or when the product has no child band at all).
+    """
+    ages = [int(a) for a in (children_ages or []) if a is not None]
+    if not ages:
+        return []
+    bands = list(product_age_bands or [])
+    if not bands:
+        raise ViatorError(
+            400,
+            "This tour does not publish child age bands. Book with adults only.",
+        )
+
+    # Sort bands so the most specific (lowest startAge) match first; ADULT
+    # remains the catch-all upper range — exclude it from child mapping so a
+    # mis-specified ADULT band doesn't swallow infant ages.
+    child_bands = [
+        b for b in bands if str(b.get("age_band") or b.get("ageBand")).upper() != "ADULT"
+    ]
+    if not child_bands:
+        raise ViatorError(
+            400,
+            "This tour only accepts adults. Remove children to continue.",
+        )
+    child_bands.sort(key=lambda b: int(b.get("start_age") or b.get("startAge") or 0))
+
+    counts: dict[str, int] = {}
+    for age in ages:
+        matched = None
+        for band in child_bands:
+            start = int(band.get("start_age") or band.get("startAge") or 0)
+            end = int(band.get("end_age") or band.get("endAge") or 99)
+            if start <= age <= end:
+                matched = str(band.get("age_band") or band.get("ageBand"))
+                break
+        if not matched:
+            raise ViatorError(
+                400,
+                f"Age {age} is outside this tour's accepted age bands.",
+            )
+        counts[matched] = counts.get(matched, 0) + 1
+
+    return [
+        {"ageBand": band, "numberOfTravelers": n}
+        for band, n in counts.items()
+    ]
+
+
+async def _resolve_age_bands(
+    viator_product_code: str,
+    cached: list[dict] | None = None,
+) -> list[dict]:
+    """Return age_bands for a product. Caller may pass them in to skip the fetch."""
+    if cached:
+        return cached
+    try:
+        product = await get_product(viator_product_code)
+    except ViatorError:
+        return []
+    return list(product.get("age_bands") or [])
+
+
 async def check_availability(
     viator_product_code: str,
     tour_date: date,
-    guests: int = 1,
+    adults: int | None = None,
+    children_ages: list[int] | None = None,
+    age_bands: list[dict] | None = None,
+    *,
+    guests: int | None = None,
 ) -> dict:
-    """Check availability and live price for a product on a specific date."""
+    """Check availability and live price for a product on a specific date.
+
+    Pass ``adults`` + ``children_ages`` for accurate per-age pricing. Legacy
+    callers that still pass ``guests=N`` are treated as ``adults=N`` with no
+    children.
+    """
+    if adults is None:
+        adults = guests if guests is not None else 1
+    adults = max(1, int(adults))
+    children_ages = list(children_ages or [])
+    total_travelers = adults + len(children_ages)
+
+    paxmix: list[dict] = []
+    if adults > 0:
+        paxmix.append({"ageBand": "ADULT", "numberOfTravelers": adults})
+    if children_ages:
+        resolved_bands = await _resolve_age_bands(viator_product_code, age_bands)
+        paxmix.extend(_map_ages_to_paxmix(children_ages, resolved_bands))
+
     body: dict[str, Any] = {
         "productCode": viator_product_code,
         "travelDate": tour_date.isoformat(),
         "currency": "USD",
-        "paxMix": [{"ageBand": "ADULT", "numberOfTravelers": guests}],
+        "paxMix": paxmix,
     }
     try:
         resp = await _client().post("/availability/check", json=body, headers=_JSON_HEADERS)
@@ -603,19 +727,24 @@ async def check_availability(
                     unit_price += float(sp_rrp.get("price") or 0)
                 elif sp_rrp:
                     unit_price += float(sp_rrp)
-        # Convert total → per-person
-        if unit_price > 0 and guests > 1:
-            unit_price = unit_price / guests
+        # Convert total → per-person (averages across adults + children).
+        if unit_price > 0 and total_travelers > 1:
+            unit_price = unit_price / total_travelers
         return {
             "available": True,
             "price": round(unit_price, 2),
             "currency": data.get("currency") or "USD",
             "tour_date": tour_date.isoformat(),
+            "paxmix_used": paxmix,
         }
     except ViatorError as exc:
         if exc.status_code in (401, 403):
-            # Affiliate tier — use schedules endpoint for availability + price
-            return await _check_availability_via_schedules(viator_product_code, tour_date, guests)
+            # Affiliate tier — use schedules endpoint for availability + price.
+            # Schedules endpoint doesn't support per-band pricing; fall back
+            # to total-traveler headcount.
+            return await _check_availability_via_schedules(
+                viator_product_code, tour_date, total_travelers,
+            )
         raise
     except Exception as exc:
         logger.warning("Viator availability check failed: %s", exc)
@@ -625,16 +754,35 @@ async def check_availability(
 async def book_tour(
     viator_product_code: str,
     tour_date: date,
-    guests: int,
+    adults: int | None = None,
+    children_ages: list[int] | None = None,
+    age_bands: list[dict] | None = None,
     guest_first_name: str = "Guest",
     guest_last_name: str = "Guest",
     guest_email: str = "guest@example.com",
+    *,
+    guests: int | None = None,
 ) -> dict:
-    """Book a Viator product. Returns viator_booking_ref."""
+    """Book a Viator product. Returns viator_booking_ref.
+
+    See ``check_availability`` for the ``adults``/``children_ages`` contract.
+    """
+    if adults is None:
+        adults = guests if guests is not None else 1
+    adults = max(1, int(adults))
+    children_ages = list(children_ages or [])
+
+    paxmix: list[dict] = []
+    if adults > 0:
+        paxmix.append({"ageBand": "ADULT", "numberOfTravelers": adults})
+    if children_ages:
+        resolved_bands = await _resolve_age_bands(viator_product_code, age_bands)
+        paxmix.extend(_map_ages_to_paxmix(children_ages, resolved_bands))
+
     body: dict[str, Any] = {
         "productCode": viator_product_code,
         "travelDate": tour_date.isoformat(),
-        "paxMix": [{"ageBand": "ADULT", "numberOfTravelers": guests}],
+        "paxMix": paxmix,
         "bookerInfo": {
             "firstName": guest_first_name,
             "lastName": guest_last_name,

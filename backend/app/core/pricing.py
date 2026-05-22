@@ -80,3 +80,25 @@ def compute_room_subtotal(
         child_surcharge += price * child_price_multiplier(age, tiers) * Decimal(nights)
 
     return (base + adult_surcharge + child_surcharge).quantize(Decimal("0.01"))
+
+
+def compute_tour_subtotal(
+    price_per_person,
+    adults: int,
+    children_ages: list[int] | None,
+    tiers: list[dict] | None = None,
+) -> Decimal:
+    """Compute booking subtotal for a local (partner) tour.
+
+    Adults pay full ``price_per_person``; each child pays the tier fraction
+    (default: 0–5 free, 6–12 50% off, 13–17 25% off). Used by
+    ``_reserve_tour_item`` so partner tours mirror the hotel child-pricing
+    behaviour. External suppliers (Viator) trust the supplier-quoted price.
+    """
+    price = Decimal(str(price_per_person))
+    adults = max(1, int(adults))
+    adult_total = price * Decimal(adults)
+    child_total = Decimal("0")
+    for age in children_ages or []:
+        child_total += price * child_price_multiplier(age, tiers)
+    return (adult_total + child_total).quantize(Decimal("0.01"))

@@ -79,6 +79,26 @@ class TourItemCreate(BaseModel):
     viator_tour_name: str | None = None
     tour_date: date
     quantity: int = Field(default=1, ge=1)
+    adults: int | None = Field(default=None, ge=1)
+    children_ages: list[int] | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _normalise_occupancy(self) -> "TourItemCreate":
+        ages = self.children_ages or []
+        for age in ages:
+            if age < 0 or age > 17:
+                raise ValueError("child age must be 0–17")
+        if self.adults is None:
+            # Fallback: legacy callers send only `quantity` — treat as all adults.
+            self.adults = max(1, self.quantity - len(ages))
+        total = self.adults + len(ages)
+        # Keep `quantity` in sync with the total head count so downstream
+        # availability and pricing math stay consistent.
+        if total != self.quantity:
+            self.quantity = total
+        if self.children_ages is None:
+            self.children_ages = []
+        return self
 
 
 class FlightItemCreate(BaseModel):
@@ -90,6 +110,8 @@ class FlightItemCreate(BaseModel):
     selected_services: list[dict] | None = None
     selected_seats: dict[str, str] | None = None
     quantity: int = Field(default=1, ge=1)
+    adults: int | None = Field(default=None, ge=1)
+    children_ages: list[int] | None = Field(default=None)
 
     @model_validator(mode="after")
     def check_flight_source(self) -> "FlightItemCreate":
@@ -104,6 +126,21 @@ class FlightItemCreate(BaseModel):
                 raise ValueError(
                     f"passengers count ({len(self.passengers)}) must equal quantity ({self.quantity})"
                 )
+        # Adults/children breakdown: validate ages, default to all-adults when
+        # the caller didn't split. Adults appear first in the passengers list,
+        # children appear after — keep the same order on the frontend.
+        ages = self.children_ages or []
+        for age in ages:
+            if age < 0 or age > 17:
+                raise ValueError("child age must be 0–17")
+        if self.adults is None:
+            self.adults = max(1, self.quantity - len(ages))
+        if self.adults + len(ages) != self.quantity:
+            raise ValueError(
+                f"adults ({self.adults}) + children ({len(ages)}) must equal quantity ({self.quantity})"
+            )
+        if self.children_ages is None:
+            self.children_ages = []
         return self
 
 

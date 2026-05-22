@@ -8,6 +8,7 @@ import { reviewsApi } from '@/api/reviewsApi'
 import { useAuth } from '@/hooks/useAuth'
 import { useBookingStore } from '@/store/bookingStore'
 import ImageGallery from '@/components/hotel/ImageGallery'
+import OccupancySelector from '@/components/common/OccupancySelector'
 import ReviewCard from '@/components/review/ReviewCard'
 import ReviewForm from '@/components/review/ReviewForm'
 import Breadcrumb from '@/components/common/Breadcrumb'
@@ -19,8 +20,23 @@ import { format } from 'date-fns'
 import Pagination from '@/components/common/Pagination'
 import {
   MapPin, Clock, Users, Star, Calendar, ChevronDown, ChevronUp,
-  Check, X as XIcon, Minus, Plus,
+  Check, X as XIcon,
 } from 'lucide-react'
+
+// Default child pricing tiers (mirror backend `DEFAULT_CHILD_AGE_TIERS`).
+// Used only for the right-hand price preview; real subtotal comes from
+// the backend's compute_tour_subtotal at booking time.
+const CHILD_TIERS = [
+  { min: 0, max: 5, discount: 1.0 },
+  { min: 6, max: 12, discount: 0.5 },
+  { min: 13, max: 17, discount: 0.25 },
+]
+function childMultiplier(age) {
+  for (const t of CHILD_TIERS) {
+    if (age >= t.min && age <= t.max) return 1 - t.discount
+  }
+  return 1
+}
 
 export default function TourDetailPage() {
   const { id } = useParams()
@@ -29,7 +45,9 @@ export default function TourDetailPage() {
   const { setBookingData } = useBookingStore()
   const { t } = useTranslation(['common', 'tours'])
   const fmt = useFormatCurrency()
-  const [participants, setParticipants] = useState(1)
+  const [adults, setAdults] = useState(1)
+  const [childAges, setChildAges] = useState([])
+  const participants = adults + childAges.length
   const [tourDate, setTourDate] = useState('')
   const [expandedDay, setExpandedDay] = useState(0)
   const [booking, setBooking] = useState(false)
@@ -54,7 +72,8 @@ export default function TourDetailPage() {
     setBookingData({
       selectedTour: tour,
       tourDate,
-      guests: participants,
+      adults,
+      childAges,
     })
     navigate('/bookings/new?type=tour')
   }
@@ -78,7 +97,15 @@ export default function TourDetailPage() {
   const highlights = tour.highlights || []
   const includes = tour.includes || []
   const excludes = tour.excludes || []
-  const totalPrice = tour.price_per_person * participants
+  // Mirror backend `compute_tour_subtotal`: adults full price, children pay
+  // the default tier fraction. Display-only — booking_service recomputes
+  // server-side at checkout.
+  const adultsTotal = tour.price_per_person * adults
+  const childrenTotal = childAges.reduce(
+    (sum, age) => sum + tour.price_per_person * childMultiplier(age),
+    0,
+  )
+  const totalPrice = adultsTotal + childrenTotal
 
   return (
     <>
@@ -242,32 +269,33 @@ export default function TourDetailPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('tours:detail.participants')}</label>
-                <div className="flex items-center border rounded-lg">
-                  <button
-                    onClick={() => setParticipants(Math.max(1, participants - 1))}
-                    className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                    aria-label={t('tours:detail.participants')}
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <span className="flex-1 text-center font-semibold">{participants}</span>
-                  <button
-                    onClick={() => setParticipants(Math.min(tour.max_participants, participants + 1))}
-                    className="px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                    aria-label={t('tours:detail.participants')}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
+                <OccupancySelector
+                  mode="tour"
+                  adults={adults}
+                  childAges={childAges}
+                  maxAdults={tour.max_participants}
+                  onChange={({ adults: a, childAges: c }) => {
+                    setAdults(a)
+                    setChildAges(c)
+                  }}
+                />
               </div>
 
               <hr />
 
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-500">{fmt(tour.price_per_person)} x {participants}</span>
-                  <span className="font-semibold">{fmt(totalPrice)}</span>
+                  <span className="text-gray-500">{fmt(tour.price_per_person)} × {adults} {adults > 1 ? 'adults' : 'adult'}</span>
+                  <span className="font-semibold">{fmt(adultsTotal)}</span>
                 </div>
+                {childAges.length > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">
+                      {childAges.length} {childAges.length > 1 ? 'children' : 'child'} ({childAges.join(', ')} y/o)
+                    </span>
+                    <span className="font-semibold">{fmt(childrenTotal)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-base font-bold pt-2 border-t">
                   <span>Total</span>
                   <span className="text-primary">{fmt(totalPrice)}</span>

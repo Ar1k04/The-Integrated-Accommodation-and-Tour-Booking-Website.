@@ -13,6 +13,7 @@ import { flightsApi } from '@/api/flightsApi'
 import FlightOfferCard from '@/components/flight/FlightOfferCard'
 import FlightFilters from '@/components/flight/FlightFilters'
 import AirportSearchInput from '@/components/flight/AirportSearchInput'
+import OccupancySelector from '@/components/common/OccupancySelector'
 import Skeleton from '@/components/common/Skeleton'
 
 const EMPTY_FILTERS = {
@@ -64,7 +65,10 @@ export default function FlightsSearchPage() {
   const [destination, setDestination] = useState({ iata: 'SGN', label: 'Ho Chi Minh City (SGN)', city: 'Ho Chi Minh City' })
   const [departDate, setDepartDate] = useState(format(addDays(new Date(), 7), 'yyyy-MM-dd'))
   const [returnDate, setReturnDate] = useState(format(addDays(new Date(), 14), 'yyyy-MM-dd'))
-  const [passengers, setPassengers] = useState(1)
+  const [adults, setAdults] = useState(1)
+  const [childAges, setChildAges] = useState([])
+  const passengers = adults + childAges.length
+  const childAgesParam = childAges.join(',')
   const [cabinClass, setCabinClass] = useState('economy')
 
   // ── Result-list state ───────────────────────────────────────────────────
@@ -104,7 +108,8 @@ export default function FlightsSearchPage() {
       destination: destination.iata,
       depart_date: departDate,
       return_date: tripType === 'round-trip' ? returnDate : undefined,
-      passengers,
+      adults,
+      child_ages: childAgesParam || undefined,
       cabin_class: cabinClass,
     })
   }
@@ -168,7 +173,11 @@ export default function FlightsSearchPage() {
   }, [offers])
 
   const handleSelectOffer = (offer) => {
-    navigate(`/flights/offers/${offer.duffel_offer_id}?pax=${passengers}`)
+    // Carry both the adult count and per-child ages forward so the offer
+    // detail page renders one form per passenger with the right label.
+    const params = new URLSearchParams({ adults: String(adults) })
+    if (childAgesParam) params.set('child_ages', childAgesParam)
+    navigate(`/flights/offers/${offer.duffel_offer_id}?${params.toString()}`)
   }
 
   return (
@@ -266,13 +275,15 @@ export default function FlightsSearchPage() {
               <label className="block text-xs font-medium text-gray-500 mb-1">
                 {t('flights:page.passengers')}
               </label>
-              <input
-                type="number"
-                value={passengers}
-                min={1}
-                max={9}
-                onChange={(e) => setPassengers(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              <OccupancySelector
+                mode="flight"
+                adults={adults}
+                childAges={childAges}
+                maxAdults={9}
+                onChange={({ adults: a, childAges: c }) => {
+                  setAdults(a)
+                  setChildAges(c)
+                }}
               />
             </div>
             <div>

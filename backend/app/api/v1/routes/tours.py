@@ -61,7 +61,26 @@ def _viator_tour_to_response(raw: dict) -> TourResponse:
         total_reviews=int(raw.get("total_reviews") or 0),
         source="viator",
         viator_product_code=raw.get("viator_product_code"),
+        age_bands=raw.get("age_bands") or None,
     )
+
+
+def _parse_child_ages_csv(raw: str | None) -> list[int]:
+    """Parse `child_ages=11,8` query string into a clamped list of ints (0–17)."""
+    if not raw:
+        return []
+    ages: list[int] = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            age = int(chunk)
+        except ValueError:
+            continue
+        if 0 <= age <= 17:
+            ages.append(age)
+    return ages
 
 
 async def _get_cached(redis, key: str) -> list[dict] | None:
@@ -152,11 +171,30 @@ async def get_viator_tour(viator_product_code: str, request: Request):
 async def get_viator_availability(
     viator_product_code: str,
     tour_date: date = Query(...),
-    guests: int = Query(default=1, ge=1),
+    adults: int = Query(default=1, ge=1),
+    child_ages: str | None = Query(
+        default=None,
+        description="Comma-separated child ages (0–17), e.g. '8,11'",
+    ),
+    guests: int | None = Query(
+        default=None,
+        ge=1,
+        description="Deprecated. Use adults + child_ages instead.",
+    ),
 ):
-    """Check live availability for a Viator product on a specific date."""
+    """Check live availability + per-band-aware price for a Viator product."""
+    parsed_children = _parse_child_ages_csv(child_ages)
+    effective_adults = adults
+    if guests is not None and child_ages is None:
+        # Legacy callers: keep behaviour identical to the old guests=N path.
+        effective_adults = guests
     try:
-        result = await viator_service.check_availability(viator_product_code, tour_date, guests)
+        result = await viator_service.check_availability(
+            viator_product_code,
+            tour_date,
+            adults=effective_adults,
+            children_ages=parsed_children,
+        )
     except ViatorError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,

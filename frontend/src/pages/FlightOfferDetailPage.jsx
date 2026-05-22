@@ -31,7 +31,17 @@ export default function FlightOfferDetailPage() {
   const { t } = useTranslation(['common', 'flights'])
   const fmt = useFormatCurrency()
 
-  const requestedPax = Math.max(1, parseInt(searchParams.get('pax')) || 1)
+  // Pull the search-page composition off the URL so we can render adult-vs-child
+  // labels even before the offer fetch resolves. Once the offer arrives, its
+  // `passenger_breakdown` is authoritative.
+  const requestedAdults = Math.max(1, parseInt(searchParams.get('adults')) || parseInt(searchParams.get('pax')) || 1)
+  const requestedChildAges = useMemo(() => {
+    const raw = searchParams.get('child_ages') || ''
+    return raw
+      ? raw.split(',').map((s) => parseInt(s, 10)).filter((n) => !Number.isNaN(n) && n >= 0 && n <= 17)
+      : []
+  }, [searchParams])
+  const requestedPax = requestedAdults + requestedChildAges.length
 
   const { data: offer, isLoading } = useQuery({
     queryKey: ['duffel-offer', offerId],
@@ -41,21 +51,62 @@ export default function FlightOfferDetailPage() {
 
   const paxCount = offer?.passengers || requestedPax
 
-  const [passengers, setPassengers] = useState(() =>
-    Array.from({ length: requestedPax }).map(emptyPassenger),
-  )
+  // Adult-first ordering matches both the search payload we sent to Duffel
+  // (_build_passengers_payload) and the offer.passenger_breakdown the API
+  // returns — passenger form #N maps to passenger_breakdown[N].
+  const buildInitialPassengers = () => {
+    const list = []
+    for (let i = 0; i < requestedAdults; i += 1) {
+      list.push({ ...emptyPassenger(), age: null })
+    }
+    for (const age of requestedChildAges) {
+      list.push({ ...emptyPassenger(), age })
+    }
+    return list
+  }
+
+  const [passengers, setPassengers] = useState(buildInitialPassengers)
 
   const [trackedPaxCount, setTrackedPaxCount] = useState(requestedPax)
   if (offer && trackedPaxCount !== paxCount) {
     setTrackedPaxCount(paxCount)
+    // Reconcile against the offer's authoritative passenger_breakdown so each
+    // form is bound to the right Duffel passenger record (adult vs child).
+    const breakdown = offer.passenger_breakdown || []
     setPassengers((prev) => {
-      if (prev.length === paxCount) return prev
-      if (prev.length < paxCount) {
-        return [...prev, ...Array.from({ length: paxCount - prev.length }).map(emptyPassenger)]
+      const next = []
+      for (let i = 0; i < paxCount; i += 1) {
+        const existing = prev[i] || emptyPassenger()
+        const meta = breakdown[i] || {}
+        const isChild = (meta.type && meta.type !== 'adult') || meta.age != null
+        next.push({
+          ...existing,
+          age: isChild ? (meta.age ?? existing.age ?? null) : null,
+        })
       }
-      return prev.slice(0, paxCount)
+      return next
     })
   }
+
+  // Per-form labels surface the passenger type so users see "Adult #1" vs
+  // "Child (age 8) #2" — matches Booking.com / Skyscanner UX.
+  const passengerLabels = useMemo(() => {
+    const breakdown = offer?.passenger_breakdown
+    const labels = []
+    for (let i = 0; i < paxCount; i += 1) {
+      const meta = breakdown?.[i]
+      if (meta?.type === 'infant_without_seat') {
+        labels.push({ kind: 'infant', text: `Infant (lap)`, age: meta.age })
+      } else if (meta?.age != null) {
+        labels.push({ kind: 'child', text: `Child (age ${meta.age})`, age: meta.age })
+      } else if ((meta?.type || 'adult') === 'adult') {
+        labels.push({ kind: 'adult', text: 'Adult', age: null })
+      } else {
+        labels.push({ kind: meta.type, text: meta.type, age: meta.age })
+      }
+    }
+    return labels
+  }, [offer, paxCount])
 
   // ── Seat + ancillary state ──────────────────────────────────────────
   const [seatModalOpen, setSeatModalOpen] = useState(false)
@@ -107,7 +158,11 @@ export default function FlightOfferDetailPage() {
 
   const handleBook = () => {
     if (!isAuthenticated) {
-      navigate(`/login?redirect=/flights/offers/${offerId}?pax=${paxCount}`)
+      // Preserve adults + child ages so post-login the form keeps the right
+      // composition (would otherwise default to all-adults on return).
+      const params = new URLSearchParams({ adults: String(requestedAdults) })
+      if (requestedChildAges.length) params.set('child_ages', requestedChildAges.join(','))
+      navigate(`/login?redirect=/flights/offers/${offerId}?${params.toString()}`)
       return
     }
     if (!arePassengersComplete(passengers, paxCount)) {
@@ -120,6 +175,13 @@ export default function FlightOfferDetailPage() {
       if (v) seatsForBooking[k] = v
     }
 
+    // Split passengers list into adult count + child ages so the booking
+    // payload mirrors what we sent Duffel at search time.
+    const adultsInForm = passengers.filter((p) => p.age == null).length
+    const childAgesInForm = passengers
+      .filter((p) => p.age != null)
+      .map((p) => Number(p.age))
+
     setBookingData({
       selectedFlight: {
         duffel_offer_id: offerId,
@@ -131,6 +193,8 @@ export default function FlightOfferDetailPage() {
         slices: offer.slices,
         passengers,
         quantity: paxCount,
+        adults: adultsInForm,
+        childAges: childAgesInForm,
         selected_services: selectedServices,
         selected_seats: seatsForBooking,
       },
@@ -259,6 +323,7 @@ export default function FlightOfferDetailPage() {
                 passengers={passengers}
                 onChange={setPassengers}
                 count={paxCount}
+                labels={passengerLabels}
               />
             </div>
           </div>
