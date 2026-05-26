@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import {
-  CreditCard, CheckCircle, User, PlaneTakeoff, PlaneLanding, Armchair, Briefcase,
+  CreditCard, CheckCircle, User, PlaneTakeoff, PlaneLanding, Armchair, Briefcase, Clock,
 } from 'lucide-react'
 
 import { flightsApi } from '@/api/flightsApi'
@@ -48,6 +48,42 @@ export default function FlightOfferDetailPage() {
     queryFn: () => flightsApi.getOffer(offerId),
     select: (res) => res.data?.data,
   })
+
+  // Live countdown to offer expiry so users see how much time they have left
+  // before the airline rejects the booking with `offer_no_longer_available`.
+  // Anything under ~3 minutes won't survive the Stripe + Duffel round-trip
+  // — we proactively redirect rather than let the user spend time filling
+  // forms only to get charged-then-refunded at the airline rejection.
+  const [secondsLeft, setSecondsLeft] = useState(null)
+  useEffect(() => {
+    if (!offer?.expires_at) return undefined
+    const compute = () => {
+      try {
+        const left = Math.floor((new Date(offer.expires_at).getTime() - Date.now()) / 1000)
+        setSecondsLeft(left)
+      } catch {
+        setSecondsLeft(null)
+      }
+    }
+    compute()
+    const id = setInterval(compute, 1000)
+    return () => clearInterval(id)
+  }, [offer?.expires_at])
+
+  useEffect(() => {
+    if (secondsLeft == null) return
+    // Hard fail at expiry, soft fail < 3 min so user has time to pay.
+    if (secondsLeft <= 0) {
+      toast.error(t('flights:detail.offerExpired', 'This offer has expired. Please search again.'))
+      navigate('/flights')
+    } else if (secondsLeft < 180 && secondsLeft >= 0) {
+      // Show a sticky warning toast but don't kick them out yet.
+      toast.warning(
+        t('flights:detail.offerExpiringSoon', 'This offer is expiring soon — complete your booking quickly.'),
+        { id: 'offer-expiring', duration: 8000 },
+      )
+    }
+  }, [secondsLeft, navigate, t])
 
   const paxCount = offer?.passengers || requestedPax
 
@@ -191,6 +227,7 @@ export default function FlightOfferDetailPage() {
         airline_iata: offer.airline_iata,
         cabin_class: offer.cabin_class,
         slices: offer.slices,
+        expires_at: offer.expires_at,
         passengers,
         quantity: paxCount,
         adults: adultsInForm,
@@ -199,7 +236,7 @@ export default function FlightOfferDetailPage() {
         selected_seats: seatsForBooking,
       },
     })
-    navigate('/bookings/new?type=flight')
+    navigate('/flights/checkout')
   }
 
   const handleSeatApply = (mapByPax) => {
@@ -345,6 +382,20 @@ export default function FlightOfferDetailPage() {
                     </p>
                   )}
                 </div>
+
+                {secondsLeft != null && secondsLeft > 0 && (
+                  <div className={`flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg ${
+                    secondsLeft < 180
+                      ? 'bg-error/10 text-error'
+                      : secondsLeft < 300
+                        ? 'bg-amber-50 text-amber-700'
+                        : 'bg-gray-50 text-gray-500'
+                  }`}>
+                    <Clock className="w-3.5 h-3.5" />
+                    {t('flights:detail.offerExpiresIn', 'Offer expires in')}{' '}
+                    {Math.floor(secondsLeft / 60)}m {secondsLeft % 60}s
+                  </div>
+                )}
 
                 <div className="text-sm space-y-2 text-gray-600">
                   <div className="flex items-center gap-2">

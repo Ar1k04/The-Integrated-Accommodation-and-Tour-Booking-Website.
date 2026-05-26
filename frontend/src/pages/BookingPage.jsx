@@ -23,7 +23,7 @@ import { nightsBetween, formatDate } from '@/utils/formatters'
 import { format } from 'date-fns'
 import {
   Calendar, Users, CreditCard, Tag, Award, ChevronRight,
-  ArrowLeft, CheckCircle, PlaneTakeoff,
+  ArrowLeft, CheckCircle,
 } from 'lucide-react'
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '')
@@ -33,7 +33,7 @@ export default function BookingPage() {
   const { user } = useAuth()
   const {
     selectedRoom, hotel, checkIn, checkOut, guests, adults, childAges,
-    selectedTour, tourDate, selectedFlight, clearBooking,
+    selectedTour, tourDate, clearBooking,
     selectedItems,
   } = useBookingStore()
   const effectiveAdults = adults || guests || 1
@@ -44,7 +44,8 @@ export default function BookingPage() {
   const fmt = useFormatCurrency()
   const isViatorTour = Boolean(selectedTour?.viator_product_code)
   const isRegularTour = Boolean(selectedTour && !selectedTour.viator_product_code)
-  const isFlightBooking = Boolean(selectedFlight?.duffel_offer_id)
+  // Flights use their own checkout (see FlightCheckoutPage). This page only
+  // handles hotels + tours; if a flight ever lands here it's a routing bug.
   const isMultiRoom = Array.isArray(selectedItems) && selectedItems.length > 1
 
   // Multi-room reservations from the recommendation widget aren't supported yet.
@@ -106,9 +107,7 @@ export default function BookingPage() {
     ? selectedItems.reduce((sum, it) => sum + (it.price || 0) * (it.quantity || 1), 0)
     : (selectedRoom?.price_per_night || 0)
 
-  const subtotal = isFlightBooking
-    ? (selectedFlight?.total_amount || 0)
-    : (isViatorTour || isRegularTour)
+  const subtotal = (isViatorTour || isRegularTour)
     ? (selectedTour?.price_per_person || 0) * (guests || 1)
     : roomRateTotal * nights
   const taxes = Math.round(subtotal * 0.1 * 100) / 100
@@ -117,11 +116,11 @@ export default function BookingPage() {
   const totalDiscount = tierDiscount + (appliedVoucher?.discount_amount || 0) + loyaltyDiscount
   const finalTotal = Math.max(0, subtotal + taxes - totalDiscount)
 
-  if (!isFlightBooking && !isViatorTour && !isRegularTour && (!selectedRoom || !hotel)) {
+  if (!isViatorTour && !isRegularTour && (!selectedRoom || !hotel)) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-20 text-center">
         <h2 className="text-xl font-bold text-gray-900 mb-2">No booking selected</h2>
-        <p className="text-gray-500 mb-6">Please select a room, tour, or flight first.</p>
+        <p className="text-gray-500 mb-6">Please select a room or tour first.</p>
         <button
           onClick={() => navigate('/hotels/search')}
           className="bg-primary text-white px-6 py-2 rounded-lg"
@@ -189,7 +188,7 @@ export default function BookingPage() {
   }
 
   const handleProceedToPayment = async () => {
-    if (!isFlightBooking && !isViatorTour && !isRegularTour && (!effectiveCheckIn || !effectiveCheckOut)) {
+    if (!isViatorTour && !isRegularTour && (!effectiveCheckIn || !effectiveCheckOut)) {
       toast.error('Please select check-in and check-out dates')
       return
     }
@@ -200,36 +199,12 @@ export default function BookingPage() {
     setProceeding(true)
     try {
       // 1. Create booking
-      const isLiteapi = !isViatorTour && !isRegularTour && !isFlightBooking && Boolean(selectedRoom?.liteapi_rate_id)
-      const flightPaxList = selectedFlight?.passengers
-        || (selectedFlight?.passenger ? [selectedFlight.passenger] : [])
-      const flightPaxCount = selectedFlight?.quantity || flightPaxList.length || 1
-      // Tour + flight occupancy: prefer the explicit adults/childAges set by
-      // the detail page; fall back to (guests, 0) for older stored values.
+      const isLiteapi = !isViatorTour && !isRegularTour && Boolean(selectedRoom?.liteapi_rate_id)
+      // Tour occupancy: prefer the explicit adults/childAges set by the
+      // detail page; fall back to (guests, 0) for older stored values.
       const tourAdults = effectiveAdults || guests || 1
       const tourChildren = effectiveChildAges
-      const flightAdultsFromOffer = selectedFlight?.adults
-      const flightAdults = flightAdultsFromOffer != null
-        ? flightAdultsFromOffer
-        : (flightPaxList.filter((p) => p.age == null).length || flightPaxCount)
-      const flightChildren = selectedFlight?.childAges
-        || flightPaxList.filter((p) => p.age != null).map((p) => Number(p.age))
-      const bookingPayload = isFlightBooking
-        ? {
-            items: [{
-              item_type: 'flight',
-              duffel_offer_id: selectedFlight.duffel_offer_id,
-              passengers: flightPaxList,
-              selected_services: selectedFlight.selected_services || undefined,
-              selected_seats: selectedFlight.selected_seats || undefined,
-              quantity: flightPaxCount,
-              adults: flightAdults,
-              children_ages: flightChildren,
-            }],
-            special_requests: form.special_requests || undefined,
-            voucher_code: appliedVoucher?.code || undefined,
-          }
-        : isViatorTour
+      const bookingPayload = isViatorTour
         ? {
             items: [{
               item_type: 'tour',
@@ -314,15 +289,7 @@ export default function BookingPage() {
 
       setStep('payment')
     } catch (err) {
-      // 409 with offer_no_longer_available = Duffel offer expired before we
-      // could create the Stripe intent. Send the user back to search instead
-      // of charging them.
       const detail = err.response?.data?.detail
-      if (err.response?.status === 409 && detail?.error_code === 'offer_no_longer_available') {
-        toast.error(detail.message || 'Flight offer expired — please search again')
-        navigate('/flights')
-        return
-      }
       const msg = typeof detail === 'string' ? detail : (detail?.message || 'Failed to create booking')
       toast.error(msg)
     } finally {
@@ -371,9 +338,7 @@ export default function BookingPage() {
         <Breadcrumb
           items={[
             { label: 'Home', to: '/' },
-            isFlightBooking
-              ? { label: 'Flights', to: '/flights' }
-              : (isViatorTour || isRegularTour)
+            (isViatorTour || isRegularTour)
               ? { label: selectedTour?.name || 'Tour', to: selectedTour?.id ? `/tours/${selectedTour.id}` : '/tours' }
               : { label: hotel?.name || 'Hotel', to: hotel?.id ? `/hotels/${hotel.id}` : '/hotels/search' },
             { label: 'Booking' },
@@ -456,68 +421,62 @@ export default function BookingPage() {
           {/* Right: order summary */}
           <div className="lg:col-span-1">
             <div className="sticky top-20 bg-white border rounded-xl p-5 space-y-5">
-              {isFlightBooking ? (
-                <FlightOrderSummary flight={selectedFlight} />
-              ) : (
-                <>
-                  <div className="flex gap-3">
-                    <img
-                      src={
-                        (isViatorTour || isRegularTour)
-                          ? (selectedTour?.images?.[0] || 'https://placehold.co/80x80?text=Tour')
-                          : (hotel?.images?.[0] || 'https://placehold.co/80x80?text=Hotel')
-                      }
-                      alt={(isViatorTour || isRegularTour) ? selectedTour?.name : hotel?.name}
-                      className="w-20 h-20 rounded-lg object-cover"
-                    />
-                    <div className="min-w-0">
-                      <p className="font-bold text-sm line-clamp-1">
-                        {(isViatorTour || isRegularTour) ? selectedTour?.name : hotel?.name}
-                      </p>
-                      {!(isViatorTour || isRegularTour) && <p className="text-xs text-gray-500">{selectedRoom?.name}</p>}
-                      <p className="text-xs text-gray-400">
-                        {(isViatorTour || isRegularTour) ? selectedTour?.city : `${hotel?.city}, ${hotel?.country}`}
-                      </p>
-                    </div>
-                  </div>
+              <div className="flex gap-3">
+                <img
+                  src={
+                    (isViatorTour || isRegularTour)
+                      ? (selectedTour?.images?.[0] || 'https://placehold.co/80x80?text=Tour')
+                      : (hotel?.images?.[0] || 'https://placehold.co/80x80?text=Hotel')
+                  }
+                  alt={(isViatorTour || isRegularTour) ? selectedTour?.name : hotel?.name}
+                  className="w-20 h-20 rounded-lg object-cover"
+                />
+                <div className="min-w-0">
+                  <p className="font-bold text-sm line-clamp-1">
+                    {(isViatorTour || isRegularTour) ? selectedTour?.name : hotel?.name}
+                  </p>
+                  {!(isViatorTour || isRegularTour) && <p className="text-xs text-gray-500">{selectedRoom?.name}</p>}
+                  <p className="text-xs text-gray-400">
+                    {(isViatorTour || isRegularTour) ? selectedTour?.city : `${hotel?.city}, ${hotel?.country}`}
+                  </p>
+                </div>
+              </div>
 
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-gray-400" />
-                      <span>
-                        {(isViatorTour || isRegularTour)
-                          ? (tourDate ? formatDate(tourDate) : '---')
-                          : `${effectiveCheckIn ? formatDate(effectiveCheckIn) : '---'} — ${effectiveCheckOut ? formatDate(effectiveCheckOut) : '---'}`}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4 text-gray-400" />
-                      <span>
-                        {effectiveAdults} adult{effectiveAdults > 1 ? 's' : ''}
-                        {effectiveChildAges.length > 0 && (
-                          <>
-                            {' '}· {effectiveChildAges.length} child
-                            {effectiveChildAges.length > 1 ? 'ren' : ''}{' '}
-                            ({effectiveChildAges.join(', ')} y/o)
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-gray-400" />
+                  <span>
+                    {(isViatorTour || isRegularTour)
+                      ? (tourDate ? formatDate(tourDate) : '---')
+                      : `${effectiveCheckIn ? formatDate(effectiveCheckIn) : '---'} — ${effectiveCheckOut ? formatDate(effectiveCheckOut) : '---'}`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-gray-400" />
+                  <span>
+                    {effectiveAdults} adult{effectiveAdults > 1 ? 's' : ''}
+                    {effectiveChildAges.length > 0 && (
+                      <>
+                        {' '}· {effectiveChildAges.length} child
+                        {effectiveChildAges.length > 1 ? 'ren' : ''}{' '}
+                        ({effectiveChildAges.join(', ')} y/o)
+                      </>
+                    )}
+                  </span>
+                </div>
+              </div>
 
-                  <hr />
+              <hr />
 
-                  <PriceBreakdown
-                    pricePerNight={(isViatorTour || isRegularTour) ? (selectedTour?.price_per_person || 0) : roomRateTotal}
-                    nights={(isViatorTour || isRegularTour) ? (guests || 1) : nights}
-                    discount={totalDiscount}
-                    tierDiscount={tierDiscount}
-                    tierName={loyaltyTier?.name}
-                    tierDiscountPct={tierDiscountPct}
-                    labelOverride={(isViatorTour || isRegularTour) ? 'per person' : undefined}
-                  />
-                </>
-              )}
+              <PriceBreakdown
+                pricePerNight={(isViatorTour || isRegularTour) ? (selectedTour?.price_per_person || 0) : roomRateTotal}
+                nights={(isViatorTour || isRegularTour) ? (guests || 1) : nights}
+                discount={totalDiscount}
+                tierDiscount={tierDiscount}
+                tierName={loyaltyTier?.name}
+                tierDiscountPct={tierDiscountPct}
+                labelOverride={(isViatorTour || isRegularTour) ? 'per person' : undefined}
+              />
 
               {(tierDiscount > 0 || appliedVoucher || pointsApplied) && (
                 <div className="space-y-1 text-xs text-success bg-success/5 rounded-lg p-3">
@@ -537,47 +496,6 @@ export default function BookingPage() {
         </div>
       </div>
     </>
-  )
-}
-
-function FlightOrderSummary({ flight }) {
-  const fmt = useFormatCurrency()
-  if (!flight) return null
-  const paxList = flight.passengers || (flight.passenger ? [flight.passenger] : [])
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <PlaneTakeoff className="w-5 h-5 text-primary" />
-        <span className="font-bold text-sm">{flight.airline_name}</span>
-      </div>
-      {flight.slices?.map((slice, i) => (
-        <div key={i} className="text-sm text-gray-700">
-          <span className="font-semibold">{slice.origin}</span>
-          <span className="mx-1 text-gray-400">→</span>
-          <span className="font-semibold">{slice.destination}</span>
-          {slice.duration && <span className="text-xs text-gray-400 ml-2">{slice.duration}</span>}
-        </div>
-      ))}
-      {paxList.length > 0 && (
-        <div className="text-xs text-gray-500">
-          <p className="font-medium text-gray-600 mb-1">
-            {paxList.length} passenger{paxList.length > 1 ? 's' : ''}:
-          </p>
-          <ul className="space-y-0.5">
-            {paxList.map((p, i) => (
-              <li key={i} className="truncate">
-                {i + 1}. {p.first_name} {p.last_name}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <hr />
-      <div className="flex justify-between text-sm font-bold">
-        <span>Total</span>
-        <span>{fmt(flight.total_amount, flight.currency)}</span>
-      </div>
-    </div>
   )
 }
 

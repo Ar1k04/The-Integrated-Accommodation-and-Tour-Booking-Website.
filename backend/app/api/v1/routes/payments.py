@@ -69,6 +69,27 @@ async def create_payment(
         # 409 Conflict — semantically correct for "the resource you're trying to
         # pay for is no longer in a payable state." Frontend reads error_code
         # to show a "search again" CTA instead of a generic toast.
+        #
+        # We also mark the booking + its items as cancelled so it doesn't sit
+        # in My Bookings as a stale `pending` row forever. The booking was
+        # created on the previous request (POST /bookings) and never gets a
+        # chance to reach the supplier — without this cleanup the user sees
+        # an orphan pending booking after being redirected back to search.
+        from app.models.booking_item import BookingItem, BookingItemStatus
+        from app.models.booking import BookingStatus
+        booking_row = (
+            await db.execute(
+                select(Booking)
+                .options(selectinload(Booking.items))
+                .where(Booking.id == data.booking_id, Booking.user_id == current_user.id)
+            )
+        ).scalar_one_or_none()
+        if booking_row and booking_row.status == BookingStatus.pending.value:
+            booking_row.status = BookingStatus.cancelled.value
+            for item in booking_row.items:
+                if item.status == BookingItemStatus.pending.value:
+                    item.status = BookingItemStatus.cancelled.value
+            await db.flush()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={

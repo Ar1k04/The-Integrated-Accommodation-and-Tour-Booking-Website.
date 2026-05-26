@@ -814,6 +814,21 @@ async def _finalize_duffel_flight(
             flight.duffel_order_id = result["duffel_order_id"]
             flight.duffel_booking_ref = result.get("duffel_booking_ref")
             flight.status = "confirmed"
+            # Sync local total_amount with what Duffel actually charged from balance.
+            # `result["total_amount"]` is the upstream order total; differs from
+            # `flight.total_amount` (search-time snapshot) whenever the offer was
+            # re-quoted between search and book. Keeping the local row in sync
+            # makes downstream accounting (refunds, reports) match the supplier.
+            charged_total = result.get("total_amount")
+            if charged_total is not None:
+                try:
+                    from decimal import Decimal as _Decimal
+                    flight.total_amount = _Decimal(str(charged_total))
+                except Exception:
+                    pass
+            charged_currency = result.get("currency")
+            if charged_currency:
+                flight.currency = charged_currency
             # Clear any cached error from a previous failed attempt.
             cleaned = {k: v for k, v in (flight.passenger_details or {}).items() if k != "last_error"}
             flight.passenger_details = cleaned

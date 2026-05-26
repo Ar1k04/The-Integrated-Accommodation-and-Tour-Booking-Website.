@@ -170,9 +170,14 @@ async def cancel_booking(
     includes the supplier's refund_amount / cancellation_fee so the frontend
     can show the user what (if anything) they'll get back.
     """
+    # Nested eager-load: cancel_booking walks booking.items and accesses
+    # item.flight_booking — without selectinload at this depth SQLAlchemy
+    # tries to lazy-load inside an async session and raises
+    # `MissingGreenlet`. Same fix as the silent-fail bug from
+    # confirm_booking (memory 2026-05-23).
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.items))
+        .options(selectinload(Booking.items).selectinload(BookingItem.flight_booking))
         .where(Booking.id == booking_id, Booking.user_id == current_user.id)
     )
     booking = result.scalar_one_or_none()

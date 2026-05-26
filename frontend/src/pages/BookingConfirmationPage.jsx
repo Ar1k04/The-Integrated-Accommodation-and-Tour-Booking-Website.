@@ -6,7 +6,7 @@ import { bookingsApi } from '@/api/bookingsApi'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { formatDate } from '@/utils/formatters'
 import Skeleton from '@/components/common/Skeleton'
-import { CheckCircle, Download, Calendar, Users, Copy, PlaneTakeoff, Ticket } from 'lucide-react'
+import { CheckCircle, Download, Calendar, Users, Copy, PlaneTakeoff, Ticket, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
 import FlightItineraryBlock from '@/components/flight/FlightItineraryBlock'
@@ -253,8 +253,21 @@ export default function BookingConfirmationPage() {
                 className="flex-1 flex items-center justify-center gap-2 border border-primary text-primary font-semibold py-2.5 rounded-lg hover:bg-primary/5">
                 <Download className="w-4 h-4" /> {t('confirmation.downloadPdf')}
               </button>
+              {/* Flight bookings get a dedicated manage page with sync /
+                  cancel / e-ticket / change-flight actions. Surface it
+                  prominently so users don't dig through the bookings list. */}
+              {booking?.items?.some(i => i.item_type === 'flight') && (
+                <Link to={`/flights/bookings/${id}`}
+                  className="flex-1 flex items-center justify-center gap-2 bg-primary text-white font-semibold py-2.5 rounded-lg hover:bg-primary-dark">
+                  <Settings className="w-4 h-4" /> Manage flight booking
+                </Link>
+              )}
               <Link to="/profile?tab=bookings"
-                className="flex-1 flex items-center justify-center gap-2 bg-primary text-white font-semibold py-2.5 rounded-lg hover:bg-primary-dark">
+                className={`flex-1 flex items-center justify-center gap-2 ${
+                  booking?.items?.some(i => i.item_type === 'flight')
+                    ? 'border text-gray-700 hover:bg-gray-50'
+                    : 'bg-primary text-white hover:bg-primary-dark'
+                } font-semibold py-2.5 rounded-lg`}>
                 {t('confirmation.viewBookings')}
               </Link>
             </div>

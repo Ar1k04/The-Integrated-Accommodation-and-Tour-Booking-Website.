@@ -75,7 +75,10 @@ async def _validate_flight_offers_alive(booking: Booking) -> None:
             try:
                 expires_at = datetime.fromisoformat(expires_iso.replace("Z", "+00:00"))
                 seconds_left = (expires_at - datetime.now(timezone.utc)).total_seconds()
-                if seconds_left < 60:
+                # 90s buffer: PaymentIntent creation → user-side Stripe confirm
+                # round-trip → backend Duffel create_order typically takes
+                # 15-40 s; 90 s leaves headroom for slow connections.
+                if seconds_left < 90:
                     raise OfferExpiredError(
                         "Flight offer is about to expire. Please search again.",
                         offer_id=offer_id,
@@ -427,6 +430,68 @@ async def refund_for_booking(
     await db.flush()
     await db.refresh(payment)
     return payment
+
+
+async def create_change_payment_intent(
+    db: AsyncSession,
+    *,
+    user_id,
+    booking_id,
+    order_change_id: str,
+    amount_usd: float | Decimal,
+    currency: str = "usd",
+) -> tuple[str, str, int, str]:
+    """Stripe PaymentIntent for the *difference* on a Duffel order change.
+
+    Returns ``(payment_intent_id, client_secret, amount_cents, currency)``.
+
+    Stores a standalone ``Payment`` row linked to the same booking with
+    metadata ``change_for=order_change_id`` so refund/audit tooling can
+    correlate. We deliberately do NOT extend the original Payment row —
+    refund accounting stays cleaner this way (each ancillary or change has
+    its own Stripe object).
+    """
+    booking = (
+        await db.execute(select(Booking).where(Booking.id == booking_id))
+    ).scalar_one_or_none()
+    if not booking:
+        raise ValueError("Booking not found")
+    if str(booking.user_id) != str(user_id):
+        raise ValueError("Not your booking")
+
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    amount_cents = _to_cents(amount_usd)
+    if amount_cents <= 0:
+        raise ValueError("amount_usd must be positive for a charge")
+    customer_id = await get_or_create_stripe_customer(user) if user else None
+
+    intent = stripe.PaymentIntent.create(
+        amount=amount_cents,
+        currency=currency.lower(),
+        payment_method_types=["card"],
+        description=f"Booking {booking_id} change {order_change_id}",
+        receipt_email=user.email if user else None,
+        customer=customer_id,
+        metadata={
+            "booking_id": str(booking_id),
+            "user_id": str(user_id),
+            "order_change_id": order_change_id,
+            "purpose": "order_change",
+        },
+        idempotency_key=f"change-{order_change_id}-intent",
+    )
+
+    payment = Payment(
+        booking_id=booking_id,
+        provider=PaymentProvider.stripe.value,
+        stripe_payment_intent_id=intent.id,
+        amount=amount_cents / 100,
+        currency=currency,
+        status=PaymentStatus.pending.value,
+    )
+    db.add(payment)
+    await db.flush()
+    return intent.id, intent.client_secret, amount_cents, currency.lower()
 
 
 async def refund_payment(db: AsyncSession, payment_id) -> Payment:

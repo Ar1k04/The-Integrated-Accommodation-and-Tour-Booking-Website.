@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   Download, RefreshCw, X, Ticket, PlaneTakeoff, AlertCircle, ArrowLeft,
+  Edit3, History, ArrowRightLeft,
 } from 'lucide-react'
 
 import { bookingsApi } from '@/api/bookingsApi'
@@ -60,56 +61,308 @@ export default function FlightManageBookingPage() {
   const handleDownloadETicket = async () => {
     if (!flight) return
     const { default: jsPDF } = await import('jspdf')
-    const doc = new jsPDF()
-    doc.setFontSize(22)
-    doc.text('TravelBooking — E-Ticket', 20, 22)
-    doc.setFontSize(12)
-    doc.setFont(undefined, 'bold')
-    doc.text(flight.airline_name || '', 20, 40)
-    doc.setFont(undefined, 'normal')
 
-    doc.setFontSize(14)
-    doc.text(`PNR: ${flight.duffel_booking_ref || '—'}`, 20, 52)
+    // jsPDF's built-in Helvetica font only supports Latin-1 (ISO-8859-1). Any
+    // unicode glyph — ✈, →, •, em-dash, or Vietnamese diacritics like Nguyễn —
+    // renders as garbled boxes. We strip everything down to safe ASCII before
+    // calling `doc.text()`. Combining marks come off via NFD + regex, the
+    // common symbols get replaced inline, anything still outside ASCII is
+    // dropped. Backend already normalises passenger names this way for IATA
+    // compliance — this just keeps the PDF consistent.
+    const toAscii = (s) => {
+      if (s == null) return '-'
+      return String(s)
+        // NFD splits Vietnamese/European letters into base+combining mark,
+        // then we drop the combining marks (Unicode block U+0300..U+036F).
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        // `đ`/`Đ` are not decomposable so we map them explicitly.
+        .replace(/[đ]/g, 'd').replace(/[Đ]/g, 'D')
+        // Common typography substitutions back to ASCII.
+        .replace(/[–—]/g, '-')       // en-dash, em-dash
+        .replace(/[‘’ʻ]/g, "'") // smart single quotes
+        .replace(/[“”]/g, '"')       // smart double quotes
+        .replace(/[•●]/g, '-')       // bullets
+        .replace(/[→]/g, '->')            // right arrow
+        .replace(/[^\x20-\x7E]/g, '')          // drop anything still non-ASCII
+        .trim() || '-'
+    }
 
-    doc.setFontSize(11)
-    let y = 70
-    doc.text('Itinerary:', 20, y); y += 8
-    const slices = snapshot.slices || []
-    if (slices.length === 0) {
-      // Fallback to single-segment from FlightBooking columns
-      doc.text(`${flight.departure_airport} → ${flight.arrival_airport}`, 24, y); y += 6
-      doc.text(`Depart: ${formatDate(flight.departure_at)}`, 24, y); y += 6
-      doc.text(`Arrive: ${formatDate(flight.arrival_at)}`, 24, y); y += 8
-    } else {
-      slices.forEach((sl, si) => {
-        doc.text(`${si === 0 ? 'Outbound' : 'Return'}: ${sl.origin} → ${sl.destination}`, 24, y); y += 6
-        ;(sl.segments || []).forEach((seg) => {
-          doc.text(`  ${seg.flight_number || ''}  ${seg.origin_iata} ${seg.departure_at?.slice(0, 16)} → ${seg.destination_iata} ${seg.arrival_at?.slice(0, 16)}`, 24, y)
+    // All-English fallback labels — never reach into i18n which could return Vietnamese.
+    const T = (k) => k
+
+    // Local date/time formatters — jsPDF runs in browser so we can rely on
+    // `Intl`. Use en-GB locale so weekday/month names are always ASCII.
+    const fmtTime = (iso) => {
+      if (!iso) return '-'
+      try {
+        return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+      } catch { return '-' }
+    }
+    const fmtDate = (iso) => {
+      if (!iso) return '-'
+      try {
+        return new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      } catch { return '-' }
+    }
+
+    // ── Layout constants ─────────────────────────────────────────────────
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+    const PAGE_W = 210
+    const PAGE_H = 297
+    const M = 14           // outer margin
+    const PRIMARY = [30, 64, 175]   // brand blue
+    const ACCENT  = [217, 119, 6]   // amber
+    const TEXT    = [31, 41, 55]
+    const MUTED   = [107, 114, 128]
+    const LIGHT   = [243, 244, 246]
+    const BORDER  = [209, 213, 219]
+
+    const setColor = (rgb) => doc.setTextColor(rgb[0], rgb[1], rgb[2])
+    const setFill  = (rgb) => doc.setFillColor(rgb[0], rgb[1], rgb[2])
+    const setDraw  = (rgb) => doc.setDrawColor(rgb[0], rgb[1], rgb[2])
+
+    // ── Header bar (brand color band) ───────────────────────────────────
+    setFill(PRIMARY); doc.rect(0, 0, PAGE_W, 26, 'F')
+    setColor([255, 255, 255])
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20)
+    doc.text('TravelBooking', M, 13)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+    doc.text('E-TICKET / ITINERARY RECEIPT', M, 19)
+    // Right-aligned: issue date
+    doc.setFontSize(8)
+    const issued = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    doc.text(toAscii(`Issued: ${issued}`), PAGE_W - M, 13, { align: 'right' })
+    doc.text('travelbooking.example.com', PAGE_W - M, 19, { align: 'right' })
+
+    // ── PNR card (highlighted box) ───────────────────────────────────────
+    let y = 36
+    setFill([255, 255, 255]); setDraw(PRIMARY)
+    doc.setLineWidth(0.6); doc.roundedRect(M, y, PAGE_W - M * 2, 22, 2, 2, 'D')
+    doc.setLineWidth(0.2)
+    setColor(MUTED); doc.setFontSize(8)
+    doc.text('BOOKING REFERENCE (PNR)', M + 5, y + 7)
+    setColor(PRIMARY); doc.setFont('helvetica', 'bold'); doc.setFontSize(22)
+    doc.text(toAscii(flight.duffel_booking_ref || '-'), M + 5, y + 17)
+    // Right side: airline + booking ID
+    setColor(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+    doc.text('AIRLINE', PAGE_W - M - 5, y + 7, { align: 'right' })
+    setColor(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+    doc.text(toAscii(flight.airline_name || '-'), PAGE_W - M - 5, y + 13, { align: 'right' })
+    setColor(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
+    doc.text(toAscii(`Order: ${(flight.duffel_order_id || flight.id || '').slice(0, 22)}`), PAGE_W - M - 5, y + 19, { align: 'right' })
+
+    // ── Flight / Itinerary section ──────────────────────────────────────
+    y += 30
+    setColor(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+    doc.text('FLIGHT ITINERARY', M, y)
+    setDraw(BORDER); doc.setLineWidth(0.2)
+    doc.line(M, y + 1.5, PAGE_W - M, y + 1.5)
+    y += 7
+
+    const slices = snapshot.slices?.length
+      ? snapshot.slices
+      : [{
+          origin: flight.departure_airport,
+          destination: flight.arrival_airport,
+          segments: [{
+            flight_number: flight.flight_number,
+            origin_iata: flight.departure_airport,
+            destination_iata: flight.arrival_airport,
+            departure_at: flight.departure_at,
+            arrival_at: flight.arrival_at,
+          }],
+        }]
+
+    slices.forEach((sl, sliceIdx) => {
+      const segs = sl.segments || []
+      // Slice header strip
+      setFill(LIGHT)
+      doc.rect(M, y, PAGE_W - M * 2, 7, 'F')
+      setColor(PRIMARY); doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+      const label = slices.length > 1
+        ? `LEG ${sliceIdx + 1} OF ${slices.length}`
+        : 'ITINERARY'
+      doc.text(label, M + 3, y + 4.8)
+      setColor(MUTED); doc.setFont('helvetica', 'normal').setFontSize(9)
+      const sliceFrom = toAscii(sl.origin || segs[0]?.origin_iata || '')
+      const sliceTo = toAscii(sl.destination || segs[segs.length - 1]?.destination_iata || '')
+      doc.text(`${sliceFrom}  ->  ${sliceTo}`, PAGE_W - M - 3, y + 4.8, { align: 'right' })
+      y += 10
+
+      segs.forEach((seg, segIdx) => {
+        // Segment card
+        const cardH = 28
+        setFill([255, 255, 255]); setDraw(BORDER)
+        doc.setLineWidth(0.3)
+        doc.roundedRect(M, y, PAGE_W - M * 2, cardH, 1.5, 1.5, 'D')
+
+        // Flight number / airline badge (left vertical strip)
+        setFill(PRIMARY)
+        doc.rect(M, y, 32, cardH, 'F')
+        setColor([255, 255, 255])
+        doc.setFont('helvetica', 'bold').setFontSize(8)
+        doc.text('FLIGHT', M + 16, y + 6, { align: 'center' })
+        doc.setFontSize(13)
+        doc.text(toAscii(seg.flight_number || '-'), M + 16, y + 14, { align: 'center' })
+        doc.setFontSize(7).setFont('helvetica', 'normal')
+        doc.text(toAscii(seg.airline_name || flight.airline_name || ''),
+          M + 16, y + 20, { align: 'center', maxWidth: 30 })
+
+        // Origin block
+        const colX1 = M + 38
+        const colX2 = M + 90
+        const colX3 = PAGE_W - M - 36
+        setColor(MUTED); doc.setFontSize(7)
+        doc.text('FROM', colX1, y + 5)
+        setColor(TEXT); doc.setFont('helvetica', 'bold').setFontSize(16)
+        doc.text(toAscii(seg.origin_iata || '-'), colX1, y + 13)
+        setColor(MUTED); doc.setFont('helvetica', 'normal').setFontSize(7)
+        const oName = toAscii((seg.origin_name || '').slice(0, 28))
+        if (oName && oName !== '-') doc.text(oName, colX1, y + 18)
+        setColor(TEXT); doc.setFontSize(9)
+        doc.text(fmtTime(seg.departure_at), colX1, y + 24)
+        setColor(MUTED); doc.setFontSize(7)
+        doc.text(fmtDate(seg.departure_at), colX1, y + 27)
+
+        // Arrow + duration (middle) — drawn with vector primitives instead
+        // of unicode glyphs so it never renders as a tofu box.
+        setDraw(PRIMARY); setFill(PRIMARY)
+        doc.setLineWidth(0.5)
+        const arrowY = y + 12
+        const arrowStartX = colX2 + 2
+        const arrowEndX = colX2 + 28
+        // Shaft
+        doc.line(arrowStartX, arrowY, arrowEndX - 3, arrowY)
+        // Triangle head (filled)
+        doc.triangle(arrowEndX - 3, arrowY - 1.5,
+                     arrowEndX - 3, arrowY + 1.5,
+                     arrowEndX,     arrowY, 'F')
+        doc.setLineWidth(0.2)
+        setColor(MUTED); doc.setFont('helvetica', 'normal').setFontSize(7)
+        if (seg.duration) {
+          doc.text(toAscii(seg.duration), colX2 + 15, y + 16.5, { align: 'center' })
+        }
+
+        // Destination block
+        setColor(MUTED); doc.setFontSize(7)
+        doc.text('TO', colX3, y + 5)
+        setColor(TEXT); doc.setFont('helvetica', 'bold').setFontSize(16)
+        doc.text(toAscii(seg.destination_iata || '-'), colX3, y + 13)
+        setColor(MUTED); doc.setFont('helvetica', 'normal').setFontSize(7)
+        const dName = toAscii((seg.destination_name || '').slice(0, 28))
+        if (dName && dName !== '-') doc.text(dName, colX3, y + 18)
+        setColor(TEXT); doc.setFontSize(9)
+        doc.text(fmtTime(seg.arrival_at), colX3, y + 24)
+        setColor(MUTED); doc.setFontSize(7)
+        doc.text(fmtDate(seg.arrival_at), colX3, y + 27)
+
+        // Bottom hint: cabin class / aircraft (use ASCII separator " | ")
+        if (flight.cabin_class || seg.aircraft) {
+          setColor(MUTED); doc.setFontSize(7)
+          const meta = [
+            flight.cabin_class && `Cabin: ${flight.cabin_class}`,
+            seg.aircraft && `Aircraft: ${seg.aircraft}`,
+          ].filter(Boolean).join('  |  ')
+          if (meta.length < 60) {
+            doc.text(toAscii(meta), PAGE_W - M - 3, y + cardH + 4, { align: 'right' })
+            y += 4
+          }
+        }
+
+        y += cardH + 3
+        // Layover hint between segments of same slice
+        if (segIdx < segs.length - 1) {
+          setColor(ACCENT); doc.setFont('helvetica', 'bold').setFontSize(8)
+          doc.text(toAscii(`Layover at ${seg.destination_iata}`), M + 38, y + 3)
+          setColor(MUTED); doc.setFont('helvetica', 'normal')
           y += 6
-        })
-        y += 2
+        }
       })
-    }
+      y += 4
+    })
 
-    y += 4
-    doc.text('Passengers:', 20, y); y += 8
-    if (passengers.length === 0) {
-      doc.text(`${flight.passenger_name}`, 24, y); y += 6
-    } else {
-      passengers.forEach((p, i) => {
-        doc.text(`  ${i + 1}. ${(p.title || '').toUpperCase()}. ${p.first_name || ''} ${p.last_name || ''}`, 24, y)
-        y += 6
-      })
-    }
+    // ── Passengers section ──────────────────────────────────────────────
+    if (y > 230) { doc.addPage(); y = M }
+    setColor(TEXT); doc.setFont('helvetica', 'bold').setFontSize(11)
+    doc.text('PASSENGERS', M, y)
+    setDraw(BORDER); doc.setLineWidth(0.2)
+    doc.line(M, y + 1.5, PAGE_W - M, y + 1.5)
+    y += 6
 
-    y += 4
-    doc.setFont(undefined, 'bold')
-    doc.text(`Total: ${flight.currency} ${Number(flight.total_amount || 0).toFixed(2)}`, 20, y)
-    doc.setFont(undefined, 'normal')
+    const paxList = passengers.length
+      ? passengers
+      : [{ first_name: flight.passenger_name?.split(' ')?.[0] || '', last_name: flight.passenger_name?.split(' ').slice(1).join(' ') || '', title: 'mr' }]
 
-    doc.setFontSize(9)
-    doc.text('Please present this document along with valid ID at check-in.', 20, 280)
-    doc.text('Online check-in opens 24 hours before departure.', 20, 286)
+    // Table header
+    setFill(LIGHT); doc.rect(M, y, PAGE_W - M * 2, 6, 'F')
+    setColor(MUTED); doc.setFont('helvetica', 'bold').setFontSize(7)
+    doc.text('#', M + 3, y + 4)
+    doc.text('NAME', M + 12, y + 4)
+    doc.text('TYPE', M + 100, y + 4)
+    doc.text('E-TICKET NO.', M + 130, y + 4)
+    y += 6
+
+    const documents = details.documents || []
+    paxList.forEach((p, i) => {
+      setColor(TEXT); doc.setFont('helvetica', 'normal').setFontSize(9)
+      doc.text(String(i + 1), M + 3, y + 4)
+      // Strip diacritics from displayed names — IATA convention is ASCII-only
+      // on tickets anyway, so this matches what the airline actually printed.
+      const name = toAscii(`${(p.title || '').toUpperCase()}. ${p.first_name || ''} ${p.last_name || ''}`.trim())
+      doc.text(name, M + 12, y + 4)
+      const paxType = p.age != null
+        ? (p.age < 2 ? 'INFANT' : p.age < 12 ? 'CHILD' : 'ADULT')
+        : 'ADULT'
+      setColor(MUTED); doc.setFontSize(8)
+      doc.text(paxType, M + 100, y + 4)
+      // E-ticket number from Duffel documents (one per passenger usually)
+      const ticketNo = toAscii(documents[i]?.unique_identifier || '-')
+      setColor(TEXT); doc.setFont('helvetica', 'bold').setFontSize(8)
+      doc.text(ticketNo, M + 130, y + 4)
+      doc.setFont('helvetica', 'normal')
+      // Row separator
+      setDraw(BORDER); doc.setLineWidth(0.1)
+      doc.line(M, y + 6, PAGE_W - M, y + 6)
+      y += 7
+    })
+
+    // ── Fare summary ────────────────────────────────────────────────────
+    y += 5
+    if (y > 245) { doc.addPage(); y = M }
+    setColor(TEXT); doc.setFont('helvetica', 'bold').setFontSize(11)
+    doc.text('FARE SUMMARY', M, y)
+    setDraw(BORDER); doc.line(M, y + 1.5, PAGE_W - M, y + 1.5)
+    y += 8
+    setColor(MUTED); doc.setFont('helvetica', 'normal').setFontSize(9)
+    doc.text('Total paid', M, y)
+    setColor(PRIMARY); doc.setFont('helvetica', 'bold').setFontSize(14)
+    const totalStr = `${flight.currency || 'USD'} ${Number(flight.total_amount || 0).toFixed(2)}`
+    doc.text(toAscii(totalStr), PAGE_W - M, y, { align: 'right' })
+
+    // ── Important info footer band ──────────────────────────────────────
+    y = PAGE_H - 45
+    setFill(LIGHT); doc.rect(0, y, PAGE_W, 45, 'F')
+    setColor(PRIMARY); doc.setFont('helvetica', 'bold').setFontSize(9)
+    doc.text('IMPORTANT INFORMATION', M, y + 6)
+    setColor(TEXT); doc.setFont('helvetica', 'normal').setFontSize(8)
+    // Bullets drawn as ASCII '-' to stay within Helvetica's Latin-1 range.
+    const notes = [
+      '-  Please arrive at the airport at least 2 hours before scheduled departure (3 hours for international flights).',
+      '-  Online check-in opens 24 hours before departure and closes 1 hour before scheduled departure.',
+      '-  Present this e-ticket (printed or digital) together with a valid government-issued photo ID at check-in.',
+      "-  Baggage allowance varies by fare class. Check your booking details or the airline's website.",
+      '-  Flight times are local to each airport. Always reconfirm with the airline 24h before departure.',
+    ]
+    let ny = y + 11
+    notes.forEach((line) => {
+      doc.text(toAscii(line), M, ny, { maxWidth: PAGE_W - M * 2 })
+      ny += 4.5
+    })
+
+    // ── Footer line: PNR repeated + page ────────────────────────────────
+    setColor(MUTED); doc.setFontSize(7)
+    doc.text(toAscii(`PNR: ${flight.duffel_booking_ref || '-'}  |  Generated by TravelBooking`), M, PAGE_H - 5)
+    doc.text('Page 1', PAGE_W - M, PAGE_H - 5, { align: 'right' })
 
     doc.save(`eticket-${flight.duffel_booking_ref || flight.id.slice(0, 8)}.pdf`)
   }
@@ -248,6 +501,36 @@ export default function FlightManageBookingPage() {
           )}
         </div>
 
+        {/* Change history */}
+        {Array.isArray(details.change_history) && details.change_history.length > 0 && (
+          <div className="bg-white border rounded-2xl p-6 mb-6">
+            <h3 className="font-heading font-bold text-lg mb-4 flex items-center gap-2">
+              <History className="w-5 h-5" /> {t('flights:manage.changeHistory', 'Change history')}
+            </h3>
+            <ul className="space-y-3">
+              {details.change_history.map((entry, i) => (
+                <li key={i} className="text-sm border-l-2 border-primary/30 pl-3">
+                  <p className="font-medium">
+                    {(entry.slices_added || []).map((s) => `${s.origin}→${s.destination}`).join(', ') || 'Itinerary updated'}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {entry.occurred_at?.slice(0, 16).replace('T', ' ')}
+                    {entry.total_diff != null && (
+                      <span className="ml-2">
+                        {entry.total_diff > 0
+                          ? `· Charged ${fmt(entry.total_diff, entry.currency)}`
+                          : entry.total_diff < 0
+                            ? `· Refunded ${fmt(Math.abs(entry.total_diff), entry.currency)}`
+                            : '· No charge'}
+                      </span>
+                    )}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Documents */}
         {documents.length > 0 && (
           <div className="bg-white border rounded-2xl p-6 mb-6">
@@ -278,6 +561,15 @@ export default function FlightManageBookingPage() {
               {syncMutation.isPending
                 ? t('flights:manage.syncing')
                 : t('flights:manage.syncFromAirline')}
+            </button>
+          )}
+          {canCancel && flight.duffel_order_id && (
+            <button
+              onClick={() => navigate(`/flights/bookings/${bookingId}/change`)}
+              className="flex items-center gap-2 border border-accent text-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent/5 transition-colors"
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+              {t('flights:manage.changeFlight', 'Change flight')}
             </button>
           )}
           <button

@@ -300,7 +300,20 @@ async def search_offers(
                 o for o in offers_raw
                 if ((o.get("owner") or {}).get("iata_code") or "").upper() == "ZZ"
             ]
-        return [_normalize_offer(o) for o in offers_raw[:50]]
+        # Strict per-airline cap: each carrier shows at most N offers so the
+        # result set has a balanced mix instead of one airline dominating.
+        # Duffel returns offers sorted within each airline by price/quality,
+        # so taking the first N per airline gives the strongest options from
+        # each. No "leftover" fill — exceeding the cap defeats the balance.
+        PER_AIRLINE_CAP = 10
+        per_airline: dict[str, int] = {}
+        balanced: list[dict] = []
+        for o in offers_raw:
+            iata = ((o.get("owner") or {}).get("iata_code") or "").upper() or "?"
+            if per_airline.get(iata, 0) < PER_AIRLINE_CAP:
+                balanced.append(o)
+                per_airline[iata] = per_airline.get(iata, 0) + 1
+        return [_normalize_offer(o) for o in balanced]
     except DuffelError:
         raise
     except Exception as exc:
@@ -387,10 +400,57 @@ async def create_order(
                 entry["seat"] = seat_service_id
         passengers_payload.append(entry)
 
+    # Compute payment amount from the FRESH offer total (just-fetched above) +
+    # the price of any selected services. Duffel rejects with
+    # `payment_amount_does_not_match_order_amount` (422) if `payments.amount`
+    # drifts from the order's `total_amount` — and the offer total may have
+    # been re-quoted since we stored the price at search time. The caller's
+    # `amount` argument is now used only as a fallback if fresh fetch is
+    # missing the field for some reason.
+    fresh_total = offer_data.get("total_amount")
+    fresh_currency = offer_data.get("total_currency") or currency
+
+    services_total = 0.0
+    if services:
+        # offer.available_services carries the price of each service id, so we
+        # can sum without an extra round-trip. We fetch available_services on
+        # the same offer endpoint when needed.
+        available = offer_data.get("available_services") or []
+        if not available:
+            try:
+                svc_resp = await _client().get(
+                    f"/air/offers/{duffel_offer_id}?return_available_services=true"
+                )
+                if svc_resp.status_code == 200:
+                    available = (svc_resp.json().get("data") or {}).get("available_services") or []
+            except Exception:
+                available = []
+        by_id = {s.get("id"): s for s in available if s.get("id")}
+        for svc in services:
+            sid = svc.get("id") if isinstance(svc, dict) else None
+            qty = int((svc.get("quantity") if isinstance(svc, dict) else 1) or 1)
+            svc_meta = by_id.get(sid)
+            if svc_meta:
+                try:
+                    services_total += float(svc_meta.get("total_amount") or 0) * qty
+                except (TypeError, ValueError):
+                    pass
+
+    try:
+        payment_amount = float(fresh_total) + services_total if fresh_total is not None else float(amount)
+    except (TypeError, ValueError):
+        payment_amount = float(amount)
+    # Format with 2 decimals (Duffel expects strings like "71.72")
+    payment_amount_str = f"{payment_amount:.2f}"
+
     body_data = {
         "selected_offers": [duffel_offer_id],
         "passengers": passengers_payload,
-        "payments": [{"type": "balance", "amount": amount, "currency": currency}],
+        "payments": [{
+            "type": "balance",
+            "amount": payment_amount_str,
+            "currency": fresh_currency,
+        }],
     }
     if services:
         body_data["services"] = services
@@ -489,6 +549,206 @@ async def get_available_services(duffel_offer_id: str) -> list[dict]:
         raise
     except Exception as exc:
         raise DuffelError(502, f"Duffel get_available_services failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Order changes — 3-step flow: change request → change offers → order change.
+# ---------------------------------------------------------------------------
+
+
+def _normalize_change_offer(raw: dict) -> dict:
+    """Surface signed change_total_amount + new_total + penalty so the UI can
+    decide whether to charge or refund.
+    """
+    slices_add = []
+    for sl in (raw.get("slices") or {}).get("add") or []:
+        segs = [_normalize_segment(s) for s in sl.get("segments") or []]
+        origin_obj = sl.get("origin") or {}
+        dest_obj = sl.get("destination") or {}
+        slices_add.append({
+            "origin": origin_obj.get("iata_code") or "",
+            "destination": dest_obj.get("iata_code") or "",
+            "duration": _parse_duration(sl.get("duration")),
+            "segments": segs,
+        })
+    slices_remove = []
+    for sl in (raw.get("slices") or {}).get("remove") or []:
+        origin_obj = sl.get("origin") or {}
+        dest_obj = sl.get("destination") or {}
+        slices_remove.append({
+            "id": sl.get("id") or "",
+            "origin": origin_obj.get("iata_code") or "",
+            "destination": dest_obj.get("iata_code") or "",
+        })
+
+    def _f(x):
+        try:
+            return float(x) if x is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "id": raw.get("id") or "",
+        "order_change_request_id": raw.get("order_change_request_id"),
+        "change_total_amount": _f(raw.get("change_total_amount")),
+        "change_total_currency": raw.get("change_total_currency"),
+        "new_total_amount": _f(raw.get("new_total_amount")),
+        "new_total_currency": raw.get("new_total_currency"),
+        "penalty_total_amount": _f(raw.get("penalty_total_amount")),
+        "penalty_total_currency": raw.get("penalty_total_currency"),
+        "refund_to": raw.get("refund_to"),
+        "expires_at": raw.get("expires_at"),
+        "slices_add": slices_add,
+        "slices_remove": slices_remove,
+        "conditions": raw.get("conditions") or {},
+    }
+
+
+async def create_order_change_request(
+    order_id: str,
+    *,
+    slices_remove: list[str],
+    slices_add: list[dict],
+    private_fares: dict | None = None,
+) -> dict:
+    """POST /air/order_change_requests.
+
+    slices_remove: list of slice IDs from the existing order.
+    slices_add: list of ``{origin, destination, departure_date, cabin_class?}``.
+    """
+    add_payload = []
+    for sl in slices_add:
+        out = {
+            "origin": str(sl["origin"]).upper(),
+            "destination": str(sl["destination"]).upper(),
+            "departure_date": str(sl["departure_date"]),
+        }
+        if sl.get("cabin_class"):
+            out["cabin_class"] = sl["cabin_class"]
+        add_payload.append(out)
+    data: dict[str, Any] = {
+        "order_id": order_id,
+        "slices": {
+            "remove": [{"slice_id": sid} for sid in (slices_remove or [])],
+            "add": add_payload,
+        },
+    }
+    if private_fares:
+        data["private_fares"] = private_fares
+    try:
+        resp = await _client().post(
+            "/air/order_change_requests", json={"data": data}
+        )
+        _raise_for_status(resp)
+        return resp.json().get("data") or {}
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel create_order_change_request failed: {exc}") from exc
+
+
+async def get_order_change_request(ocr_id: str) -> dict:
+    try:
+        resp = await _client().get(f"/air/order_change_requests/{ocr_id}")
+        _raise_for_status(resp)
+        return resp.json().get("data") or {}
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel get_order_change_request failed: {exc}") from exc
+
+
+async def list_order_change_offers(
+    order_change_request_id: str,
+    *,
+    limit: int = 50,
+    after: str | None = None,
+    sort: str | None = None,
+) -> dict:
+    params: dict[str, Any] = {
+        "order_change_request_id": order_change_request_id,
+        "limit": int(limit),
+    }
+    if after:
+        params["after"] = after
+    if sort:
+        params["sort"] = sort
+    try:
+        resp = await _client().get("/air/order_change_offers", params=params)
+        _raise_for_status(resp)
+        body = resp.json()
+        raw_data = body.get("data") or []
+        return {
+            "data": [_normalize_change_offer(x) for x in raw_data],
+            "meta": body.get("meta") or {},
+        }
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel list_order_change_offers failed: {exc}") from exc
+
+
+async def get_order_change_offer(oco_id: str) -> dict:
+    try:
+        resp = await _client().get(f"/air/order_change_offers/{oco_id}")
+        _raise_for_status(resp)
+        return _normalize_change_offer(resp.json().get("data") or {})
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel get_order_change_offer failed: {exc}") from exc
+
+
+async def create_order_change(order_change_offer_id: str) -> dict:
+    """POST /air/order_changes — creates a pending order_change from an offer."""
+    try:
+        resp = await _client().post(
+            "/air/order_changes",
+            json={"data": {"selected_order_change_offer": order_change_offer_id}},
+        )
+        _raise_for_status(resp)
+        return resp.json().get("data") or {}
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel create_order_change failed: {exc}") from exc
+
+
+async def get_order_change(oc_id: str) -> dict:
+    try:
+        resp = await _client().get(f"/air/order_changes/{oc_id}")
+        _raise_for_status(resp)
+        return resp.json().get("data") or {}
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel get_order_change failed: {exc}") from exc
+
+
+async def confirm_order_change(
+    oc_id: str,
+    *,
+    payment: dict | None = None,
+) -> dict:
+    """POST /air/order_changes/{id}/actions/confirm.
+
+    For positive change_total_amount include payment={type:"balance",amount,currency}.
+    For zero or negative diffs pass payment=None.
+    """
+    body_data: dict[str, Any] = {}
+    if payment:
+        body_data["payment"] = dict(payment)
+    try:
+        resp = await _client().post(
+            f"/air/order_changes/{oc_id}/actions/confirm",
+            json={"data": body_data} if body_data else None,
+        )
+        _raise_for_status(resp)
+        return resp.json().get("data") or {}
+    except DuffelError:
+        raise
+    except Exception as exc:
+        raise DuffelError(502, f"Duffel confirm_order_change failed: {exc}") from exc
 
 
 async def cancel_order(duffel_order_id: str) -> dict | None:

@@ -30,6 +30,9 @@ import ManageVouchers from '@/pages/admin/ManageVouchers'
 import FlightsSearchPage from '@/pages/FlightsSearchPage'
 import FlightOfferDetailPage from '@/pages/FlightOfferDetailPage'
 import FlightManageBookingPage from '@/pages/FlightManageBookingPage'
+import FlightChangeRequestPage from '@/pages/FlightChangeRequestPage'
+import FlightCheckoutPage from '@/pages/FlightCheckoutPage'
+import NotFoundPage from '@/pages/NotFoundPage'
 
 export const router = createBrowserRouter([
   {
@@ -58,8 +61,16 @@ export const router = createBrowserRouter([
       { path: '/flights', element: <RedirectIfAdmin><FlightsSearchPage /></RedirectIfAdmin> },
       { path: '/flights/offers/:offerId', element: <RedirectIfAdmin><FlightOfferDetailPage /></RedirectIfAdmin> },
       {
+        path: '/flights/checkout',
+        element: <ProtectedRoute userOnly><FlightCheckoutPage /></ProtectedRoute>,
+      },
+      {
         path: '/flights/bookings/:bookingId',
         element: <ProtectedRoute userOnly><FlightManageBookingPage /></ProtectedRoute>,
+      },
+      {
+        path: '/flights/bookings/:bookingId/change',
+        element: <ProtectedRoute userOnly><FlightChangeRequestPage /></ProtectedRoute>,
       },
       { path: '/tours', element: <RedirectIfAdmin><ToursPage /></RedirectIfAdmin> },
       { path: '/tours/viator/:code', element: <RedirectIfAdmin><ViatorTourDetailPage /></RedirectIfAdmin> },
@@ -73,6 +84,7 @@ export const router = createBrowserRouter([
         element: <ProtectedRoute userOnly><MyBookingsPage /></ProtectedRoute>,
       },
       { path: '/payments/vnpay/return', element: <VNPayReturnPage /> },
+      { path: '*', element: <NotFoundPage /> },
     ],
   },
   {
@@ -106,6 +118,7 @@ export const router = createBrowserRouter([
         path: '/admin/vouchers',
         element: <ProtectedRoute requireStaff><ManageVouchers /></ProtectedRoute>,
       },
+      { path: '/admin/*', element: <NotFoundPage /> },
     ],
   },
 ])
