@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency } from '@/utils/formatters'
 import { Link } from 'react-router-dom'
-import { ROOM_TYPES } from '@/utils/constants'
+import { ROOM_TYPES, CURRENCIES, DEFAULT_CURRENCY } from '@/utils/constants'
 import {
   Plus, Search, Pencil, Trash2, ChevronLeft, ChevronRight, X,
 } from 'lucide-react'
@@ -160,15 +160,22 @@ export default function ManageRooms() {
       </div>
 
       {modal && (
-        <RoomModal room={modal} onClose={() => setModal(null)} onSave={(data) => saveMut.mutate({ id: modal.id, data })} saving={saveMut.isPending} />
+        <RoomModal
+          room={modal}
+          hotelCurrency={hotelsData?.find((h) => h.id === selectedHotel)?.currency || DEFAULT_CURRENCY}
+          onClose={() => setModal(null)}
+          onSave={(data) => saveMut.mutate({ id: modal.id, data })}
+          saving={saveMut.isPending}
+        />
       )}
     </>
   )
 }
 
-function RoomModal({ room, onClose, onSave, saving }) {
+function RoomModal({ room, hotelCurrency, onClose, onSave, saving }) {
   const { t } = useTranslation('admin')
   useEscapeKey(onClose)
+  const currencyInfo = CURRENCIES.find((c) => c.code === hotelCurrency) || CURRENCIES[0]
   const defaultTiers = [
     { min_age: 0, max_age: 5, discount_percent: 100 },
     { min_age: 6, max_age: 12, discount_percent: 50 },
@@ -215,9 +222,17 @@ function RoomModal({ room, onClose, onSave, saving }) {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.pricePerNight')}</label>
-              <input type="number" value={form.price_per_night} onChange={(e) => setForm({ ...form, price_per_night: Number(e.target.value) })}
-                className="w-full border rounded-lg px-4 py-2.5 text-sm" />
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {t('form.pricePerNight')} <span className="text-gray-400 font-normal">({currencyInfo.code})</span>
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">
+                  {currencyInfo.symbol}
+                </span>
+                <input type="number" min="0" step="0.01" value={form.price_per_night}
+                  onChange={(e) => setForm({ ...form, price_per_night: Number(e.target.value) })}
+                  className="w-full border rounded-lg pl-8 pr-4 py-2.5 text-sm" />
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">

@@ -8,7 +8,8 @@ import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency, formatDate } from '@/utils/formatters'
-import { CURRENCIES, DEFAULT_CURRENCY } from '@/utils/constants'
+import { CURRENCIES, DEFAULT_CURRENCY, HOTEL_TYPES, AMENITIES, LITEAPI_ID_TO_SLUG } from '@/utils/constants'
+import { useFacilities } from '@/hooks/useFacilities'
 import { Link } from 'react-router-dom'
 import {
   Plus, Search, Pencil, Trash2, Star, ChevronLeft, ChevronRight, X, Upload,
@@ -83,7 +84,7 @@ export default function ManageHotels() {
               <Link to="/admin" className="text-sm text-primary hover:underline">{t('actions.backToDashboard')}</Link>
               <h1 className="font-heading text-2xl font-bold text-gray-900">{t('dashboard.manageHotels')}</h1>
             </div>
-            <button onClick={() => setModal({ name: '', city: '', country: '', star_rating: 3, description: '' })}
+            <button onClick={() => setModal({ name: '', city: '', country: '', star_rating: 3, description: '', property_type: 'hotels', amenities: [] })}
               className="bg-primary hover:bg-primary-dark text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2">
               <Plus className="w-4 h-4" aria-hidden="true" /> {t('actions.addHotel')}
             </button>
@@ -177,7 +178,9 @@ function slugify(text) {
 
 function HotelModal({ hotel, onClose, onSave, saving }) {
   const { t } = useTranslation('admin')
+  const { t: tHotels } = useTranslation('hotels')
   useEscapeKey(onClose)
+  const { facilities } = useFacilities()
   const [form, setForm] = useState({
     name: hotel.name || '',
     city: hotel.city || '',
@@ -186,8 +189,31 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
     currency: hotel.currency || DEFAULT_CURRENCY,
     description: hotel.description || '',
     address: hotel.address || '',
-    property_type: hotel.property_type || 'hotel',
+    property_type: hotel.property_type || 'hotels',
+    amenities: Array.isArray(hotel.amenities) ? hotel.amenities : [],
   })
+
+  const toggleAmenity = (slug) => {
+    setForm((prev) => {
+      const curr = prev.amenities || []
+      return {
+        ...prev,
+        amenities: curr.includes(slug)
+          ? curr.filter((x) => x !== slug)
+          : [...curr, slug],
+      }
+    })
+  }
+
+  const amenityList = facilities.length > 0
+    ? facilities.map((f) => ({
+        slug: LITEAPI_ID_TO_SLUG[f.id],
+        label: tHotels(`amenities.${LITEAPI_ID_TO_SLUG[f.id]}`, f.name),
+      }))
+    : AMENITIES.map((slug) => ({
+        slug,
+        label: tHotels(`amenities.${slug}`, slug.replace(/_/g, ' ')),
+      }))
 
   const [images, setImages] = useState(() =>
     (hotel.images || []).map((url) => ({ type: 'existing', url }))
@@ -272,8 +298,10 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.propertyType')}</label>
               <select value={form.property_type} onChange={(e) => setForm({ ...form, property_type: e.target.value })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm">
-                {['hotel', 'resort', 'apartment', 'villa', 'hostel'].map((pt) => (
-                  <option key={pt} value={pt} className="capitalize">{pt}</option>
+                {HOTEL_TYPES.map(({ slug }) => (
+                  <option key={slug} value={slug}>
+                    {tHotels(`hotelTypes.${slug}`, slug.replace(/_/g, ' '))}
+                  </option>
                 ))}
               </select>
             </div>
@@ -293,6 +321,25 @@ function HotelModal({ hotel, onClose, onSave, saving }) {
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.description')}</label>
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full border rounded-lg px-4 py-2.5 text-sm resize-none h-20" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {tHotels('search.amenities', 'Facilities')}
+            </label>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+              {amenityList.map(({ slug, label }) => (
+                <label key={slug} className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={(form.amenities || []).includes(slug)}
+                    onChange={() => toggleAmenity(slug)}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="capitalize">{label}</span>
+                </label>
+              ))}
+            </div>
           </div>
 
           <div>

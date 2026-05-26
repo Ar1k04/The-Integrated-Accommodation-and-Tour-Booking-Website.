@@ -7,8 +7,12 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.services.facility_mapping import HOTEL_TYPE_SLUG_TO_ID
 
 logger = logging.getLogger(__name__)
+
+# Reverse lookup: LiteAPI hotelTypeId -> our local slug.
+_LITEAPI_TYPE_ID_TO_SLUG = {v: k for k, v in HOTEL_TYPE_SLUG_TO_ID.items()}
 
 _CLIENT: httpx.AsyncClient | None = None
 _DASHBOARD_CLIENT: httpx.AsyncClient | None = None
@@ -156,6 +160,19 @@ def _extract_facilities(raw: dict) -> list:
     return result
 
 
+def _resolve_property_type_slug(raw: dict) -> str | None:
+    """Map a LiteAPI hotel's type to our local slug (apartments, hotels, ...)."""
+    raw_type_id = raw.get("hotelTypeId")
+    if raw_type_id is not None:
+        try:
+            slug = _LITEAPI_TYPE_ID_TO_SLUG.get(int(raw_type_id))
+            if slug:
+                return slug
+        except (TypeError, ValueError):
+            pass
+    return raw.get("propertyType")
+
+
 def _normalize_hotel(raw: dict) -> dict:
     """Normalize a LiteAPI hotel object (list or detail endpoint) to a flat dict."""
     # list endpoint uses: id, stars, rating, main_photo, city, country (lowercase)
@@ -203,7 +220,7 @@ def _normalize_hotel(raw: dict) -> dict:
         "latitude": latitude,
         "longitude": longitude,
         "star_rating": stars,
-        "property_type": raw.get("propertyType") or raw.get("hotelTypeId") and "hotel",
+        "property_type": _resolve_property_type_slug(raw),
         "amenities": _extract_facilities(raw),
         "images": images,
         "min_room_price": float(min_price) if min_price else None,

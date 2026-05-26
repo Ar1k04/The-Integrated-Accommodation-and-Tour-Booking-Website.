@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { bookingsApi } from '@/api/bookingsApi'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { formatDate } from '@/utils/formatters'
+import { downloadBookingPdf } from '@/utils/bookingPdf'
 import Skeleton from '@/components/common/Skeleton'
 import { CheckCircle, Download, Calendar, Users, Copy, PlaneTakeoff, Ticket, Settings } from 'lucide-react'
 import { toast } from 'sonner'
@@ -27,43 +28,7 @@ export default function BookingConfirmationPage() {
     toast.success('Booking reference copied!')
   }
 
-  const handleDownloadPDF = async () => {
-    const { default: jsPDF } = await import('jspdf')
-    const doc = new jsPDF()
-    doc.setFontSize(20)
-    doc.text('TravelBooking — Confirmation', 20, 20)
-    doc.setFontSize(12)
-    doc.text(`Booking Reference: ${id}`, 20, 40)
-    let y = 55
-    ;(booking?.items || []).forEach((item, idx) => {
-      if (item.item_type === 'room') {
-        doc.text(`Item ${idx + 1}: Hotel Room`, 20, y); y += 10
-        doc.text(`  Check-in: ${formatDate(item.check_in)}  Check-out: ${formatDate(item.check_out)}`, 20, y); y += 10
-        doc.text(`  Rooms: ${item.quantity}  Subtotal: ${fmt(item.subtotal)}`, 20, y); y += 10
-      } else if (item.item_type === 'tour') {
-        doc.text(`Item ${idx + 1}: Tour`, 20, y); y += 10
-        doc.text(`  Date: ${formatDate(item.check_in)}  Pax: ${item.quantity}  Subtotal: ${fmt(item.subtotal)}`, 20, y); y += 10
-      } else if (item.item_type === 'flight') {
-        doc.text(`Item ${idx + 1}: Flight`, 20, y); y += 10
-        doc.text(`  Subtotal: ${fmt(item.subtotal)}`, 20, y); y += 10
-      }
-    })
-    if (booking?.subtotal > 0) {
-      doc.text(`Subtotal: ${fmt(booking?.subtotal)}`, 20, y); y += 10
-    }
-    if (booking?.taxes > 0) {
-      doc.text(`Taxes & fees: ${fmt(booking?.taxes)}`, 20, y); y += 10
-    }
-    if (booking?.tier_discount > 0) {
-      doc.text(`Member discount: -${fmt(booking?.tier_discount)}`, 20, y); y += 10
-    }
-    if (booking?.discount_amount > 0) {
-      doc.text(`Voucher discount: -${fmt(booking?.discount_amount)}`, 20, y); y += 10
-    }
-    doc.text(`Total: ${fmt(booking?.total_price)}`, 20, y); y += 10
-    doc.text(`Status: ${booking?.status}`, 20, y)
-    doc.save(`booking-${id.slice(0, 8)}.pdf`)
-  }
+  const handleDownloadPDF = () => downloadBookingPdf(booking, fmt)
 
   if (isLoading) {
     return (

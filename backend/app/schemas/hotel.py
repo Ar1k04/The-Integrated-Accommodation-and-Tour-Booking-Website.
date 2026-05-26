@@ -2,7 +2,34 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.services.facility_mapping import HOTEL_TYPE_SLUG_TO_ID, SLUG_TO_LITEAPI_ID
+
+_VALID_PROPERTY_TYPES = set(HOTEL_TYPE_SLUG_TO_ID.keys())
+_VALID_AMENITY_SLUGS = set(SLUG_TO_LITEAPI_ID.keys())
+
+
+def _validate_property_type_value(v: str | None) -> str | None:
+    if v is None or v == "":
+        return v
+    if v not in _VALID_PROPERTY_TYPES:
+        raise ValueError(
+            f"property_type must be one of {sorted(_VALID_PROPERTY_TYPES)}"
+        )
+    return v
+
+
+def _validate_amenities_value(v: list | None) -> list | None:
+    if v is None:
+        return v
+    invalid = [a for a in v if a not in _VALID_AMENITY_SLUGS]
+    if invalid:
+        raise ValueError(
+            f"amenities contain invalid slugs: {invalid}. "
+            f"Allowed: {sorted(_VALID_AMENITY_SLUGS)}"
+        )
+    return v
 
 
 class HotelCreate(BaseModel):
@@ -24,6 +51,9 @@ class HotelCreate(BaseModel):
     base_price: float | None = Field(default=None, gt=0)
     currency: str = Field(default="USD", max_length=10)
 
+    _validate_property_type = field_validator("property_type")(_validate_property_type_value)
+    _validate_amenities = field_validator("amenities")(_validate_amenities_value)
+
 
 class HotelUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
@@ -39,6 +69,9 @@ class HotelUpdate(BaseModel):
     images: list | None = None
     base_price: float | None = Field(None, gt=0)
     currency: str | None = Field(None, max_length=10)
+
+    _validate_property_type = field_validator("property_type")(_validate_property_type_value)
+    _validate_amenities = field_validator("amenities")(_validate_amenities_value)
 
 
 class OwnerInfo(BaseModel):

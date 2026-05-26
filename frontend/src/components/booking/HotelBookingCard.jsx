@@ -4,12 +4,14 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import {
   Calendar, Users, ChevronDown, MapPin, Hotel as HotelIcon,
-  ExternalLink, FileText, Hash,
+  ExternalLink, FileText, Hash, Download,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import BookingStatusBadge from '@/components/common/BookingStatusBadge'
 import CancellationPolicyBadge from './CancellationPolicyBadge'
 import { hotelsApi } from '@/api/hotelsApi'
 import { formatDate, nightsBetween } from '@/utils/formatters'
+import { downloadBookingPdf } from '@/utils/bookingPdf'
 
 // Resolves the right detail-page URL for a hotel booking item. Falls back from
 // the local DB hotel id to the LiteAPI hotel id, mirroring the routing in
@@ -25,8 +27,23 @@ function hotelHref(item) {
 export default function HotelBookingCard({ booking, fmt, canCancel, onCancel }) {
   const { t } = useTranslation('profile')
   const [expanded, setExpanded] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const roomItem = booking.items?.find((i) => i.item_type === 'room')
   if (!roomItem) return null
+
+  const handleDownloadPdf = async (e) => {
+    e.stopPropagation()
+    if (downloading) return
+    setDownloading(true)
+    try {
+      await downloadBookingPdf(booking, fmt)
+    } catch (err) {
+      console.error('PDF download failed', err)
+      toast.error(t('bookings.pdfFailed', { defaultValue: 'Could not generate PDF' }))
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const href = hotelHref(roomItem)
   const hotelName = roomItem.hotel?.name || roomItem.hotel_name || roomItem.room?.name || t('bookings.hotelRoom')
@@ -192,6 +209,17 @@ export default function HotelBookingCard({ booking, fmt, canCancel, onCancel }) 
                 {t('bookings.viewHotel')}
               </Link>
             )}
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-700 rounded-lg hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+            >
+              <Download className="w-3 h-3" />
+              {downloading
+                ? t('bookings.downloadingPdf', { defaultValue: 'Preparing PDF…' })
+                : t('bookings.downloadPdf', { defaultValue: 'Download PDF' })}
+            </button>
             {canCancel(booking.status) && (
               <button
                 onClick={(e) => {
