@@ -470,7 +470,7 @@ async def test_cancel_booking_returns_refund_info_on_success():
 
     # Per LiteAPI docs, PUT /bookings/{id} takes no body — only the path param.
     mock_client.put.assert_awaited_once_with("/bookings/LTA-BOOKING-001")
-    assert result is not None
+    assert result["ok"] is True
     assert result["status"] == "CANCELLED"
     assert result["refund_amount"] == 240.0
     assert result["cancellation_fee"] == 0.0
@@ -496,7 +496,7 @@ async def test_cancel_booking_with_charges_surfaces_fee():
 
         result = await liteapi_service.cancel_booking("LTA-NONREF-001")
 
-    assert result is not None
+    assert result["ok"] is True
     assert result["status"] == "CANCELLED_WITH_CHARGES"
     assert result["cancellation_fee"] == 200.0
     assert result["refund_amount"] == 0.0
@@ -513,15 +513,17 @@ async def test_cancel_booking_304_treated_as_idempotent_success():
 
         result = await liteapi_service.cancel_booking("LTA-ALREADY-CANCELLED")
 
-    assert result is not None
+    assert result["ok"] is True
     assert result["already_cancelled"] is True
     assert result["status"] == "CANCELLED"
 
 
 @pytest.mark.asyncio
-async def test_cancel_booking_returns_none_on_error():
-    """Upstream errors are swallowed and returned as None; the local cancel
-    still proceeds (so users aren't blocked by transient LiteAPI failures)."""
+async def test_cancel_booking_returns_structured_error():
+    """Upstream errors are reported as {"ok": False, "message": ...} so the
+    caller (booking_service.cancel_booking) can decide whether to surface them
+    to the user — for refused cancels past the rate's deadline we want to
+    bubble the supplier message up instead of silently cancelling locally."""
     with patch.object(liteapi_service, "_client") as mock_client_fn:
         mock_client = MagicMock()
         mock_client.put = AsyncMock(return_value=_mock_response(404, {"message": "Booking not found"}))
@@ -529,7 +531,8 @@ async def test_cancel_booking_returns_none_on_error():
 
         result = await liteapi_service.cancel_booking("NONEXISTENT")
 
-    assert result is None
+    assert result["ok"] is False
+    assert "message" in result
 
 
 @pytest.mark.asyncio

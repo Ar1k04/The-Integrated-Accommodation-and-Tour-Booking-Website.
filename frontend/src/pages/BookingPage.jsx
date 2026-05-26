@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { loadStripe } from '@stripe/stripe-js'
@@ -30,6 +31,7 @@ const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '')
 
 export default function BookingPage() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const { user } = useAuth()
   const {
     selectedRoom, hotel, checkIn, checkOut, guests, adults, childAges,
@@ -211,6 +213,7 @@ export default function BookingPage() {
               viator_product_code: selectedTour.viator_product_code,
               viator_price: selectedTour.viator_price || selectedTour.price_per_person,
               viator_tour_name: selectedTour.name,
+              viator_tour_image_url: selectedTour.images?.[0] || undefined,
               tour_date: tourDate,
               quantity: tourAdults + tourChildren.length,
               adults: tourAdults,
@@ -238,6 +241,8 @@ export default function BookingPage() {
               item_type: 'room',
               liteapi_rate_id: selectedRoom.liteapi_rate_id,
               liteapi_hotel_id: selectedRoom.liteapi_hotel_id,
+              liteapi_hotel_name: hotel?.name || undefined,
+              liteapi_hotel_image_url: hotel?.images?.[0] || undefined,
               liteapi_room_name: selectedRoom.name,
               liteapi_price: selectedRoom.liteapi_price,
               check_in: effectiveCheckIn,
@@ -319,6 +324,11 @@ export default function BookingPage() {
 
   const handlePaymentSuccess = (failure = null) => {
     clearBooking()
+    // Bust the My Bookings cache so the user sees their fresh booking
+    // immediately when they navigate to /profile?tab=bookings. Without this,
+    // the global staleTime of 5min on the queryClient (main.jsx) keeps showing
+    // the stale list and the new booking only appears after a hard refresh.
+    qc.invalidateQueries({ queryKey: ['my-bookings'] })
     if (failure) {
       // Payment captured but supplier booking failed — the backend has already
       // attempted a refund. Route to the failure page so the user understands.

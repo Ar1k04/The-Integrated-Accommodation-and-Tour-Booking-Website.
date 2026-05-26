@@ -64,6 +64,15 @@ class BookingServiceError(ValueError):
     """Domain errors raised by the booking flow."""
 
 
+class SupplierCancelError(BookingServiceError):
+    """An upstream supplier (LiteAPI / Viator / Duffel) refused a cancel.
+
+    Distinct from BookingServiceError so the route can map it to HTTP 409 with
+    the supplier's message intact — important for cases like "past the rate's
+    cancellation deadline" where the user needs to see *why* the cancel was
+    refused rather than a generic failure."""
+
+
 def _soft_lock_keys(entry) -> list[str]:
     """Return Redis lock keys to acquire for a BookingItemCreate entry.
 
@@ -197,6 +206,16 @@ async def _reserve_liteapi_room_item(
     supplier_discount = (supplier_discount_per_unit * nights * item.quantity).quantize(Decimal("0.01"))
 
     children_ages = list(item.children_ages or [])
+    # Parse the cancellation deadline from LiteAPI (ISO string). Persisting it
+    # means the My Bookings UI can show the user exactly when free cancellation
+    # ends — no need to chase the rate again later.
+    deadline_iso = result.get("cancellation_deadline")
+    cancellation_deadline = None
+    if isinstance(deadline_iso, str):
+        try:
+            cancellation_deadline = datetime.fromisoformat(deadline_iso.replace("Z", "+00:00"))
+        except ValueError:
+            cancellation_deadline = None
     bi = BookingItem(
         item_type=BookingItemType.room.value,
         room_id=None,
@@ -207,6 +226,11 @@ async def _reserve_liteapi_room_item(
         quantity=item.quantity,
         status=BookingItemStatus.pending.value,
         liteapi_prebook_id=result["prebook_id"],
+        liteapi_hotel_id=item.liteapi_hotel_id,
+        hotel_name=item.liteapi_hotel_name,
+        image_url=item.liteapi_hotel_image_url,
+        cancellation_deadline=cancellation_deadline,
+        refundable=result.get("refundable"),
         adults_count=item.adults or item.guests_count,
         children_count=len(children_ages),
         children_ages=children_ages,
@@ -336,6 +360,8 @@ async def _reserve_viator_tour_item(
         tour_schedule_id=None,
         check_in=item.tour_date,  # store tour_date in check_in for confirm_booking lookup
         viator_product_code=item.viator_product_code,
+        tour_name=item.viator_tour_name,
+        image_url=item.viator_tour_image_url,
         unit_price=unit_price,
         subtotal=subtotal,
         quantity=item.quantity,
@@ -1274,17 +1300,23 @@ async def cancel_booking(
         supplier_entry: dict | None = None
         if item.liteapi_booking_id:
             result = await liteapi_service.cancel_booking(item.liteapi_booking_id)
-            if result:
-                item.supplier_status = result.get("status") or "CANCELLED"
-                item.supplier_status_synced_at = datetime.now(timezone.utc)
-                supplier_entry = {
-                    "item_id": item.id,
-                    "supplier": "liteapi",
-                    "status": result.get("status"),
-                    "refund_amount": result.get("refund_amount"),
-                    "cancellation_fee": result.get("cancellation_fee"),
-                    "currency": result.get("currency"),
-                }
+            if not result.get("ok"):
+                # Surface LiteAPI's "no" instead of silently cancelling locally.
+                # Common case: past the rate's cancellation deadline → the user
+                # should see the supplier message ("non-refundable rate cannot
+                # be cancelled" or similar) and decide what to do.
+                msg = result.get("message") or "LiteAPI refused to cancel this booking"
+                raise SupplierCancelError(msg)
+            item.supplier_status = result.get("status") or "CANCELLED"
+            item.supplier_status_synced_at = datetime.now(timezone.utc)
+            supplier_entry = {
+                "item_id": item.id,
+                "supplier": "liteapi",
+                "status": result.get("status"),
+                "refund_amount": result.get("refund_amount"),
+                "cancellation_fee": result.get("cancellation_fee"),
+                "currency": result.get("currency"),
+            }
         elif item.liteapi_prebook_id:
             # Prebook never finalized — never charged the supplier, so a full refund is safe.
             item.supplier_status = "CANCELLED"

@@ -15,6 +15,36 @@ class _RoomSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class _HotelSummary(BaseModel):
+    """Minimal hotel info embedded on a room booking item so the My Bookings
+    card can render an image + name + "View hotel" link without a separate fetch."""
+
+    id: uuid.UUID | None = None
+    name: str | None = None
+    slug: str | None = None
+    city: str | None = None
+    country: str | None = None
+    liteapi_hotel_id: str | None = None
+    image_url: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class _TourSummary(BaseModel):
+    """Minimal tour info embedded on a tour booking item — same purpose as
+    `_HotelSummary` but for the tours tab."""
+
+    id: uuid.UUID | None = None
+    name: str | None = None
+    slug: str | None = None
+    city: str | None = None
+    country: str | None = None
+    viator_product_code: str | None = None
+    image_url: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class _FlightSummary(BaseModel):
     id: uuid.UUID
     airline_name: str
@@ -41,6 +71,8 @@ class RoomItemCreate(BaseModel):
     room_id: uuid.UUID | None = None
     liteapi_rate_id: str | None = None
     liteapi_hotel_id: str | None = None
+    liteapi_hotel_name: str | None = None
+    liteapi_hotel_image_url: str | None = None
     liteapi_room_name: str | None = None
     liteapi_price: float | None = None
     check_in: date
@@ -77,6 +109,7 @@ class TourItemCreate(BaseModel):
     viator_product_code: str | None = None
     viator_price: float | None = None
     viator_tour_name: str | None = None
+    viator_tour_image_url: str | None = None
     tour_date: date
     quantity: int = Field(default=1, ge=1)
     adults: int | None = Field(default=None, ge=1)
@@ -161,6 +194,12 @@ class BookingItemResponse(BaseModel):
     flight_booking_id: uuid.UUID | None = None
     liteapi_prebook_id: str | None = None
     liteapi_booking_id: str | None = None
+    liteapi_hotel_id: str | None = None
+    hotel_name: str | None = None
+    tour_name: str | None = None
+    image_url: str | None = None
+    cancellation_deadline: datetime | None = None
+    refundable: bool | None = None
     viator_product_code: str | None = None
     viator_booking_ref: str | None = None
     supplier_status: str | None = None
@@ -175,6 +214,8 @@ class BookingItemResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     room: _RoomSummary | None = None
+    hotel: _HotelSummary | None = None
+    tour: _TourSummary | None = None
     flight_booking: _FlightSummary | None = None
 
     model_config = {"from_attributes": True}

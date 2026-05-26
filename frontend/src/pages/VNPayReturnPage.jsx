@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { paymentsApi } from '@/api/paymentsApi'
 import { CheckCircle, XCircle, Loader } from 'lucide-react'
 
 export default function VNPayReturnPage() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [searchParams] = useSearchParams()
   const [status, setStatus] = useState('verifying') // 'verifying' | 'success' | 'failed'
   const [bookingId, setBookingId] = useState(null)
@@ -24,6 +26,10 @@ export default function VNPayReturnPage() {
         if (res.data?.success) {
           setBookingId(data.booking_id)
           setStatus('success')
+          // Drop the My Bookings cache so the new booking appears immediately
+          // when the user lands on /profile?tab=bookings (same fix as the
+          // Stripe path in BookingPage.handlePaymentSuccess).
+          qc.invalidateQueries({ queryKey: ['my-bookings'] })
         } else {
           setBookingId(data?.booking_id)
           setStatus('failed')
@@ -32,7 +38,7 @@ export default function VNPayReturnPage() {
       .catch(() => {
         setStatus('failed')
       })
-  }, [searchParams])
+  }, [searchParams, qc])
 
   useEffect(() => {
     if (status === 'success' && bookingId) {

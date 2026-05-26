@@ -12,6 +12,8 @@ import { adminApi } from '@/api/adminApi'
 import { authApi } from '@/api/authApi'
 import { loyaltyApi } from '@/api/loyaltyApi'
 import BookingStatusBadge from '@/components/common/BookingStatusBadge'
+import HotelBookingCard from '@/components/booking/HotelBookingCard'
+import TourBookingCard from '@/components/booking/TourBookingCard'
 import ReviewCard from '@/components/review/ReviewCard'
 import Skeleton from '@/components/common/Skeleton'
 import { formatDate } from '@/utils/formatters'
@@ -202,8 +204,17 @@ function BookingsTab() {
       qc.invalidateQueries({ queryKey: ['my-bookings'] })
       setPendingCancel(null)
     },
-    onError: () => {
-      toast.error(t('bookings.failedCancel'))
+    onError: (err) => {
+      // 409 from the backend means a supplier (LiteAPI / Viator / Duffel)
+      // refused — e.g. past the rate's cancellation deadline. Surface the
+      // upstream message so the user understands *why*; fall back to a
+      // generic toast for unrelated failures.
+      const detail = err?.response?.data?.detail
+      if (err?.response?.status === 409 && typeof detail === 'string') {
+        toast.error(detail)
+      } else {
+        toast.error(t('bookings.failedCancel'))
+      }
       setPendingCancel(null)
     },
   })
@@ -253,34 +264,15 @@ function BookingsTab() {
           {subTab === 'hotels' && (
             hotelBookings.length > 0 ? (
               <div className="space-y-4">
-                {hotelBookings.map((b) => {
-                  const roomItem = b.items?.find(i => i.item_type === 'room')
-                  return (
-                    <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-semibold text-sm truncate">{roomItem?.room?.name || 'Hotel Room'}</p>
-                          <BookingStatusBadge status={b.status} />
-                        </div>
-                        <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                          {roomItem?.check_in && roomItem?.check_out && (
-                            <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(roomItem.check_in)} — {formatDate(roomItem.check_out)}</span>
-                          )}
-                          {roomItem?.quantity && (
-                            <span>{roomItem.quantity} room{roomItem.quantity > 1 ? 's' : ''}</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <p className="font-bold text-primary">{fmt(b.total_price)}</p>
-                        {canCancel(b.status) && (
-                          <button onClick={() => setPendingCancel(b)}
-                            className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
+                {hotelBookings.map((b) => (
+                  <HotelBookingCard
+                    key={b.id}
+                    booking={b}
+                    fmt={fmt}
+                    canCancel={canCancel}
+                    onCancel={setPendingCancel}
+                  />
+                ))}
               </div>
             ) : (
               <EmptyState message={t('bookings.empty.hotels')} />
@@ -290,34 +282,15 @@ function BookingsTab() {
           {subTab === 'tours' && (
             tourBookings.length > 0 ? (
               <div className="space-y-4">
-                {tourBookings.map((b) => {
-                  const tourItem = b.items?.find(i => i.item_type === 'tour')
-                  return (
-                    <div key={b.id} className="bg-white rounded-xl border p-5 flex flex-col md:flex-row md:items-center gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-semibold text-sm truncate">{tourItem?.viator_tour_name || 'Tour'}</p>
-                          <BookingStatusBadge status={b.status} />
-                        </div>
-                        <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                          {tourItem?.check_in && (
-                            <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(tourItem.check_in)}</span>
-                          )}
-                          {tourItem?.quantity && (
-                            <span>{tourItem.quantity} participant{tourItem.quantity > 1 ? 's' : ''}</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <p className="font-bold text-primary">{fmt(b.total_price)}</p>
-                        {canCancel(b.status) && (
-                          <button onClick={() => setPendingCancel(b)}
-                            className="text-error text-xs hover:underline">{t('bookings.cancel')}</button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
+                {tourBookings.map((b) => (
+                  <TourBookingCard
+                    key={b.id}
+                    booking={b}
+                    fmt={fmt}
+                    canCancel={canCancel}
+                    onCancel={setPendingCancel}
+                  />
+                ))}
               </div>
             ) : (
               <EmptyState message={t('bookings.empty.tours')} />

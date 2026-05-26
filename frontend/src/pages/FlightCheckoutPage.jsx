@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { loadStripe } from '@stripe/stripe-js'
@@ -45,6 +46,7 @@ const fmtDate = (iso) => {
 
 export default function FlightCheckoutPage() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const { user } = useAuth()
   const { selectedFlight, clearBooking } = useBookingStore()
   const fmt = useFormatCurrency()
@@ -237,6 +239,10 @@ export default function FlightCheckoutPage() {
     // supplier rejection) — never back to /flights search.
     completedRef.current = true
     clearBooking()
+    // Bust the My Bookings cache so the new flight shows up the next time the
+    // user opens /profile?tab=bookings — global staleTime is 5min, so without
+    // this the list stays stale until the user hard-refreshes.
+    qc.invalidateQueries({ queryKey: ['my-bookings'] })
     if (failure) {
       navigate(`/bookings/${bookingId}/failure`, { state: { failure }, replace: true })
       return

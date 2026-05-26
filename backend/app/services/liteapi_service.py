@@ -759,6 +759,20 @@ async def prebook(
         price, currency = _parse_price_block(raw)
         # expiry: either "expireInSeconds" (int) or "expiryTime" (ISO)
         expires_at = raw.get("expiryTime") or raw.get("expireInSeconds")
+        # Cancellation policy travels with the prebook response — surface the
+        # earliest deadline and the refundable flag so we can persist them on
+        # the BookingItem. Layouts seen in the wild: top-level cancellationPolicies,
+        # or nested under a `rate` / `roomTypes[0].rates[0]` block.
+        cancel_block = (
+            raw.get("cancellationPolicies")
+            or (raw.get("rate") or {}).get("cancellationPolicies")
+            or {}
+        )
+        refundable = cancel_block.get("refundableTag", "") != "NRFN" if cancel_block else None
+        deadline = None
+        infos = cancel_block.get("cancelPolicyInfos") or []
+        if infos and isinstance(infos, list):
+            deadline = infos[0].get("cancelTime") or infos[0].get("from")
         return {
             "prebook_id": prebook_id,
             "price": price,
@@ -768,6 +782,8 @@ async def prebook(
             "transaction_id": raw.get("transactionId"),
             "payment_types": raw.get("paymentTypes") or [],
             "expires_at": expires_at,
+            "cancellation_deadline": deadline,
+            "refundable": refundable,
         }
     except LiteAPIError:
         raise
@@ -855,7 +871,7 @@ async def get_prebook(prebook_id: str) -> dict:
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
 
 
-async def cancel_booking(liteapi_booking_id: str) -> dict | None:
+async def cancel_booking(liteapi_booking_id: str) -> dict:
     """
     Cancel a LiteAPI booking.
 
@@ -865,14 +881,19 @@ async def cancel_booking(liteapi_booking_id: str) -> dict | None:
     `status` ("CANCELLED" if fully refundable, "CANCELLED_WITH_CHARGES" if past
     the deadline or non-refundable), plus `cancellation_fee` and `refund_amount`.
 
-    Returns a dict with the supplier's cancellation result on success, or None
-    on failure. We never raise — the local cancel still proceeds either way.
+    Returns:
+        On success: {"ok": True, "status", "cancellation_fee", "refund_amount",
+                     "currency", "already_cancelled"}
+        On failure: {"ok": False, "error_code", "message"} — caller decides
+                    whether to surface or swallow. We no longer return None so
+                    callers can distinguish "LiteAPI said no" from a bug.
     """
     try:
         resp = await _client().put(f"/bookings/{liteapi_booking_id}")
         # 304 = already cancelled; treat as success and synthesise the status
         if resp.status_code == 304:
             return {
+                "ok": True,
                 "status": "CANCELLED",
                 "cancellation_fee": 0.0,
                 "refund_amount": None,
@@ -884,6 +905,7 @@ async def cancel_booking(liteapi_booking_id: str) -> dict | None:
         data = payload.get("data") if isinstance(payload, dict) else None
         data = data or payload or {}
         return {
+            "ok": True,
             "status": data.get("status") or "CANCELLED",
             "cancellation_fee": data.get("cancellation_fee"),
             "refund_amount": data.get("refund_amount"),
@@ -892,10 +914,10 @@ async def cancel_booking(liteapi_booking_id: str) -> dict | None:
         }
     except LiteAPIError as exc:
         logger.warning("LiteAPI cancel failed for %s: %s", liteapi_booking_id, exc.message)
-        return None
+        return {"ok": False, "error_code": exc.code, "message": exc.message}
     except Exception as exc:
         logger.warning("LiteAPI cancel error: %s", exc)
-        return None
+        return {"ok": False, "error_code": None, "message": str(exc)}
 
 
 # ---------------------------------------------------------------------------

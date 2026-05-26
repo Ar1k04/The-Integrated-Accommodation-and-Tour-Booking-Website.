@@ -3,7 +3,7 @@ import uuid
 from datetime import date as date_type, datetime
 
 import sqlalchemy as sa
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -66,6 +66,12 @@ class BookingItem(Base):
     )
     liteapi_prebook_id: Mapped[str | None] = mapped_column(sa.Text)
     liteapi_booking_id: Mapped[str | None] = mapped_column(sa.Text, unique=True)
+    liteapi_hotel_id: Mapped[str | None] = mapped_column(String(100))
+    hotel_name: Mapped[str | None] = mapped_column(sa.Text)
+    tour_name: Mapped[str | None] = mapped_column(sa.Text)
+    image_url: Mapped[str | None] = mapped_column(sa.Text)
+    cancellation_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refundable: Mapped[bool | None] = mapped_column(Boolean)
     viator_product_code: Mapped[str | None] = mapped_column(String(100))
     viator_booking_ref: Mapped[str | None] = mapped_column(String(255), unique=True)
     supplier_status: Mapped[str | None] = mapped_column(String(40))
