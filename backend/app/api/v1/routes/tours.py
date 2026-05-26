@@ -19,6 +19,7 @@ from app.schemas.tour import (
     TourListResponse,
     TourResponse,
     TourUpdate,
+    ViatorDestinationsResponse,
     ViatorTagsResponse,
 )
 from app.services import lock_service, viator_service
@@ -62,6 +63,8 @@ def _viator_tour_to_response(raw: dict) -> TourResponse:
         source="viator",
         viator_product_code=raw.get("viator_product_code"),
         age_bands=raw.get("age_bands") or None,
+        destinations=raw.get("destinations") or None,
+        departs_from=raw.get("departs_from") or None,
     )
 
 
@@ -144,6 +147,42 @@ async def list_viator_tags(request: Request):
     result = {"tags": tags}
     await _set_cached(redis, cache_key, result, ttl=86400)
     return result
+
+
+@router.get("/viator/destinations", response_model=ViatorDestinationsResponse)
+async def list_viator_destinations(
+    request: Request,
+    q: str = Query(..., min_length=2, description="City/region prefix to autocomplete"),
+    limit: int = Query(10, ge=1, le=25),
+):
+    """Autocomplete from Viator's `/destinations` catalog so users can only
+    pick destinations that actually return tours. Cached 24h server-side.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    cache_key = f"viator:dest-search:{q.lower()}:{limit}"
+    cached = await _get_cached(redis, cache_key)
+    if cached is not None and isinstance(cached, dict):
+        return cached
+    try:
+        matches = await viator_service.search_destinations(q, limit=limit)
+    except ViatorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,
+            detail=exc.message,
+        )
+    payload = {
+        "destinations": [
+            {
+                "destination_id": d["destinationId"],
+                "name": d["name"],
+                "type": d.get("type", ""),
+                "parent_destination_id": d.get("parentDestinationId"),
+            }
+            for d in matches
+        ]
+    }
+    await _set_cached(redis, cache_key, payload, ttl=86400)
+    return payload
 
 
 @router.get("/viator/{viator_product_code}", response_model=TourResponse)

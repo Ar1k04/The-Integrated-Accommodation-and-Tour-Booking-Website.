@@ -5,7 +5,6 @@ import { MapPin } from 'lucide-react'
 import FilterSection from '@/components/common/FilterSection'
 import TagPickerModal from './TagPickerModal'
 import { toursApi } from '@/api/toursApi'
-import { searchCities } from '@/api/nominatimApi'
 import {
   POPULAR_VIATOR_TAGS,
   VIATOR_FLAGS,
@@ -58,11 +57,16 @@ export default function TourFilters({ filters, onChange, onClear }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  // Autocomplete from Viator's /destinations catalog so users only pick
+  // destinations Viator actually has tours for (e.g. "Hanoi", "Halong Bay").
   const { data: citySuggestions = [], isFetching } = useQuery({
-    queryKey: ['tour-city-suggestions', debouncedCity],
-    queryFn: () => searchCities(debouncedCity),
+    queryKey: ['tour-viator-destinations', debouncedCity],
+    queryFn: () =>
+      toursApi
+        .searchViatorDestinations(debouncedCity, 10)
+        .then((r) => r.data?.destinations || []),
     enabled: debouncedCity.length >= 2,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   })
 
   // ── Prefetch tag list once (cheap, used by quick-pick label lookups) ─────
@@ -107,20 +111,21 @@ export default function TourFilters({ filters, onChange, onClear }) {
               {isFetching && citySuggestions.length === 0 && (
                 <li className="px-3 py-2 text-sm text-gray-400">{t('common:common.loading')}</li>
               )}
-              {citySuggestions.map((s, i) => (
+              {citySuggestions.map((s) => (
                 <li
-                  key={i}
+                  key={s.destination_id}
                   onMouseDown={() => {
-                    update({ city: s.city })
-                    setCityInput(s.city)
+                    update({ city: s.name })
+                    setCityInput(s.name)
                     setShowSuggestions(false)
                   }}
                   className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-primary/5"
                 >
                   <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
-                  <span className="font-medium">{s.city}</span>
-                  {s.state && <span className="text-gray-400 truncate">{s.state}, {s.country}</span>}
-                  {!s.state && s.country && <span className="text-gray-400 truncate">{s.country}</span>}
+                  <span className="font-medium">{s.name}</span>
+                  {s.type && (
+                    <span className="text-gray-400 text-xs uppercase tracking-wide">{s.type}</span>
+                  )}
                 </li>
               ))}
             </ul>

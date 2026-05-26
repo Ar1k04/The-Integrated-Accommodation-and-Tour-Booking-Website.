@@ -2,6 +2,7 @@
 import logging
 import re
 import time
+import unicodedata
 from datetime import date
 from typing import Any
 
@@ -79,64 +80,237 @@ def _raise_for_status(resp: httpx.Response) -> None:
         raise ViatorError(resp.status_code, detail)
 
 
-# Viator sandbox destination ID map (GET /destinations on sandbox server)
-_CITY_DEST_MAP: dict[str, str] = {
-    # Vietnam
-    "hanoi": "351", "ha noi": "351", "hà nội": "351",
-    "ho chi minh": "352", "saigon": "352", "hcmc": "352", "ho chi minh city": "352",
-    "da nang": "4680", "đà nẵng": "4680", "danang": "4680",
-    "hoi an": "5229", "hội an": "5229",
-    "hue": "5219", "huế": "5219",
-    "nha trang": "4682", "phu quoc": "22452",
-    "vietnam": "21",
-    # Thailand
-    "bangkok": "343", "phuket": "349", "chiang mai": "5267",
-    "thailand": "20",
-    # Singapore
-    "singapore": "60449",
-    # Japan
-    "tokyo": "334", "osaka": "333", "kyoto": "332",
-    "japan": "16",
-    # Korea
-    "seoul": "973", "busan": "4615",
-    # Malaysia
-    "kuala lumpur": "335", "kl": "335",
-    # Indonesia
-    "bali": "98", "jakarta": "4633",
-    # USA
-    "new york": "5560", "los angeles": "645",
-    # France
-    "paris": "479",
-    # UK
-    "london": "737",
-    # Italy
-    "rome": "511",
-    # Spain
-    "barcelona": "562",
-    # Germany
-    "berlin": "488",
-    # Australia
-    "sydney": "357",
-    # UAE
-    "dubai": "828",
-    # Netherlands
-    "amsterdam": "525",
-    # Turkey
-    "istanbul": "585",
-    # India
-    "mumbai": "953",
+# ── Destination lookup via Viator GET /destinations ──────────────────────────
+# Per Viator docs the /destinations endpoint is the source of truth and is
+# available to Basic Access. We fetch once per 24h and build an in-memory index
+# keyed by a diacritic-stripped, alphanumeric-only form of the canonical name
+# so "Hà Nội", "Ha Noi", "HANOI" all hit Hanoi's record.
+
+_DEST_CACHE: dict[str, Any] = {"data": None, "index": None, "fetched_at": 0.0}
+_DEST_CACHE_TTL = 86400  # 24h
+
+# Type priority — when two destinations share a normalized name (e.g. a CITY
+# and a REGION both called "Hanoi"), the CITY wins. Higher = preferred.
+_DEST_TYPE_PRIORITY = {
+    "CITY": 100, "TOWN": 95, "VILLAGE": 90, "HAMLET": 85,
+    "AREA": 70, "ISLAND": 65, "NATIONAL_PARK": 60,
+    "DISTRICT": 50, "NEIGHBORHOOD": 45, "COUNTY": 40,
+    "REGION": 30, "PROVINCE": 25, "STATE": 20,
+    "COUNTRY": 10,
 }
 
+# Aliases for user-typed forms that do not match any Viator destination name
+# verbatim after normalization. Keys/values are pre-normalized via _normalize_dest_name.
+_DESTINATION_ALIASES: dict[str, str] = {
+    "saigon": "hochiminhcity",
+    "hcmc": "hochiminhcity",
+    "hochiminh": "hochiminhcity",
+    "halong": "halongbay",
+    "vinhhalong": "halongbay",
+    "phuquocisland": "phuquoc",
+    "kl": "kualalumpur",
+    "nyc": "newyorkcity",
+    "newyork": "newyorkcity",
+    "la": "losangeles",
+}
 
-def _infer_dest_id(city: str) -> str | None:
-    if not city:
+# Fallback destinations used when /destinations 401s (invalid API key) so the
+# demo / dev experience still works. IDs are stable Viator destination IDs.
+_FALLBACK_DESTINATIONS: list[dict] = [
+    # Vietnam — IDs verified against Viator sandbox /destinations (May 2026).
+    {"destinationId": "351", "name": "Hanoi", "type": "CITY", "parentDestinationId": "22691"},
+    {"destinationId": "352", "name": "Ho Chi Minh City", "type": "CITY", "parentDestinationId": "22328"},
+    {"destinationId": "22692", "name": "Halong Bay", "type": "CITY", "parentDestinationId": "22691"},
+    {"destinationId": "4680", "name": "Da Nang", "type": "CITY", "parentDestinationId": "765"},
+    {"destinationId": "5229", "name": "Hoi An", "type": "CITY", "parentDestinationId": "765"},
+    {"destinationId": "5219", "name": "Hue", "type": "CITY", "parentDestinationId": "765"},
+    {"destinationId": "4682", "name": "Nha Trang", "type": "CITY", "parentDestinationId": "765"},
+    {"destinationId": "22452", "name": "Phu Quoc", "type": "CITY", "parentDestinationId": "22328"},
+    {"destinationId": "22691", "name": "Northern Vietnam", "type": "REGION", "parentDestinationId": "21"},
+    {"destinationId": "765", "name": "Central Vietnam", "type": "REGION", "parentDestinationId": "21"},
+    {"destinationId": "22328", "name": "Southern Vietnam", "type": "REGION", "parentDestinationId": "21"},
+    {"destinationId": "21", "name": "Vietnam", "type": "COUNTRY", "parentDestinationId": None},
+    {"destinationId": "343", "name": "Bangkok", "type": "CITY", "parentDestinationId": "20"},
+    {"destinationId": "349", "name": "Phuket", "type": "AREA", "parentDestinationId": "20"},
+    {"destinationId": "5267", "name": "Chiang Mai", "type": "CITY", "parentDestinationId": "20"},
+    {"destinationId": "20", "name": "Thailand", "type": "COUNTRY", "parentDestinationId": None},
+    {"destinationId": "60449", "name": "Singapore", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "334", "name": "Tokyo", "type": "CITY", "parentDestinationId": "16"},
+    {"destinationId": "333", "name": "Osaka", "type": "CITY", "parentDestinationId": "16"},
+    {"destinationId": "332", "name": "Kyoto", "type": "CITY", "parentDestinationId": "16"},
+    {"destinationId": "16", "name": "Japan", "type": "COUNTRY", "parentDestinationId": None},
+    {"destinationId": "973", "name": "Seoul", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "335", "name": "Kuala Lumpur", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "98", "name": "Bali", "type": "AREA", "parentDestinationId": None},
+    {"destinationId": "4633", "name": "Jakarta", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "5560", "name": "New York City", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "645", "name": "Los Angeles", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "479", "name": "Paris", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "737", "name": "London", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "511", "name": "Rome", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "562", "name": "Barcelona", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "488", "name": "Berlin", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "357", "name": "Sydney", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "828", "name": "Dubai", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "525", "name": "Amsterdam", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "585", "name": "Istanbul", "type": "CITY", "parentDestinationId": None},
+    {"destinationId": "953", "name": "Mumbai", "type": "CITY", "parentDestinationId": None},
+]
+
+
+def _normalize_dest_name(s: str) -> str:
+    """Strip diacritics, lowercase, keep only alphanumerics.
+
+    "Hà Nội" → "hanoi", "Ha Noi" → "hanoi", "Halong Bay" → "halongbay",
+    so the same key works for both Vietnamese diacritic forms and the
+    English spellings Viator uses.
+    """
+    if not s:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", s)
+    no_marks = "".join(c for c in decomposed if not unicodedata.combining(c))
+    # Viator uses "Halong Bay" but users often type "Halong" — keep both
+    # spaces stripped so prefix matching can connect them.
+    return re.sub(r"[^a-z0-9]+", "", no_marks.lower())
+
+
+def _type_priority(t: str | None) -> int:
+    return _DEST_TYPE_PRIORITY.get((t or "").upper(), 0)
+
+
+def _build_dest_index(destinations: list[dict]) -> dict[str, dict]:
+    """Map normalized name → destination, preferring CITY-type when a name collides."""
+    index: dict[str, dict] = {}
+    for d in destinations:
+        name = d.get("name") or ""
+        key = _normalize_dest_name(name)
+        if not key:
+            continue
+        existing = index.get(key)
+        if existing is None or _type_priority(d.get("type")) > _type_priority(existing.get("type")):
+            index[key] = d
+    return index
+
+
+async def fetch_destinations(force: bool = False) -> list[dict]:
+    """Fetch the full Viator destination tree (cached 24h).
+
+    Falls back to a small static list when the API key is invalid so demo
+    flows keep working. Each entry has at minimum
+    {destinationId, name, type, parentDestinationId}.
+    """
+    now = time.time()
+    cached = _DEST_CACHE["data"]
+    if not force and cached is not None and (now - _DEST_CACHE["fetched_at"]) < _DEST_CACHE_TTL:
+        return cached
+
+    try:
+        resp = await _client().get("/destinations", headers=_LANG_HEADER)
+        _raise_for_status(resp)
+        raw = resp.json() or {}
+        items = raw.get("destinations") or []
+        cleaned: list[dict] = []
+        for d in items:
+            dest_id = d.get("destinationId") or d.get("ref")
+            if dest_id is None:
+                continue
+            cleaned.append({
+                "destinationId": str(dest_id),
+                "name": str(d.get("name") or ""),
+                "type": str(d.get("type") or "").upper(),
+                "parentDestinationId": str(d["parentDestinationId"]) if d.get("parentDestinationId") else None,
+                "lookupId": d.get("lookupId"),
+            })
+        _DEST_CACHE["data"] = cleaned
+        _DEST_CACHE["index"] = _build_dest_index(cleaned)
+        _DEST_CACHE["fetched_at"] = now
+        return cleaned
+    except ViatorError as exc:
+        if exc.status_code == 401:
+            logger.info("Viator key invalid — using fallback destination list")
+            _DEST_CACHE["data"] = _FALLBACK_DESTINATIONS
+            _DEST_CACHE["index"] = _build_dest_index(_FALLBACK_DESTINATIONS)
+            _DEST_CACHE["fetched_at"] = now
+            return _FALLBACK_DESTINATIONS
+        raise
+    except Exception as exc:
+        logger.warning("Viator /destinations fetch failed: %s — using fallback", exc)
+        _DEST_CACHE["data"] = _FALLBACK_DESTINATIONS
+        _DEST_CACHE["index"] = _build_dest_index(_FALLBACK_DESTINATIONS)
+        _DEST_CACHE["fetched_at"] = now
+        return _FALLBACK_DESTINATIONS
+
+
+async def resolve_destination(query: str) -> dict | None:
+    """Resolve a free-text city/region to a Viator destination object.
+
+    Matching priority:
+      1. Exact normalized name (e.g. "Hà Nội" → "hanoi" → Hanoi/CITY)
+      2. Alias (e.g. "saigon" → "hochiminhcity")
+      3. Prefix match (e.g. "halong" → "halongbay"); when multiple destinations
+         share a prefix, the highest type-priority wins (CITY before REGION).
+    """
+    if not query or not query.strip():
         return None
-    key = city.lower().strip()
-    if key in _CITY_DEST_MAP:
-        return _CITY_DEST_MAP[key]
-    for kw, dest_id in _CITY_DEST_MAP.items():
-        if kw in key or key in kw:
-            return dest_id
+    await fetch_destinations()
+    index: dict[str, dict] = _DEST_CACHE.get("index") or {}
+    if not index:
+        return None
+
+    norm = _normalize_dest_name(query)
+    if not norm:
+        return None
+    aliased = _DESTINATION_ALIASES.get(norm, norm)
+
+    if aliased in index:
+        return index[aliased]
+
+    # Prefix match in both directions; rank by type priority then shorter name.
+    candidates: list[dict] = []
+    for key, dest in index.items():
+        if key.startswith(aliased) or aliased.startswith(key):
+            candidates.append(dest)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda d: (-_type_priority(d.get("type")), len(d.get("name") or "")))
+    return candidates[0]
+
+
+async def search_destinations(query: str, limit: int = 10) -> list[dict]:
+    """Return up to `limit` destinations ranked by match quality. Used by the
+    frontend autocomplete so users can only pick destinations Viator knows."""
+    if not query or len(query.strip()) < 2:
+        return []
+    await fetch_destinations()
+    index: dict[str, dict] = _DEST_CACHE.get("index") or {}
+    norm = _normalize_dest_name(query)
+    if not norm:
+        return []
+    aliased = _DESTINATION_ALIASES.get(norm, norm)
+
+    scored: list[tuple[int, int, dict]] = []
+    for key, dest in index.items():
+        if key == aliased:
+            score = 100
+        elif key.startswith(aliased):
+            score = 80
+        elif aliased.startswith(key) and len(key) >= 3:
+            score = 60
+        elif aliased in key:
+            score = 40
+        else:
+            continue
+        scored.append((score, _type_priority(dest.get("type")), dest))
+    scored.sort(key=lambda t: (-t[0], -t[1], len(t[2].get("name") or "")))
+    return [d for _, _, d in scored[:limit]]
+
+
+def _destination_name(dest_id: str) -> str | None:
+    """Look up a destination's canonical name by ID from the cached index."""
+    data = _DEST_CACHE.get("data") or []
+    for d in data:
+        if d.get("destinationId") == dest_id:
+            return d.get("name")
     return None
 
 
@@ -255,8 +429,15 @@ def _get_demo_tours(dest_id: str, limit: int = 20) -> list[dict]:
     return _DEMO_TOURS.get(key, [])[:limit]
 
 
-def _normalize_product(raw: dict) -> dict:
-    """Normalize a Viator product object to a flat dict the frontend understands."""
+def _normalize_product(raw: dict, *, searched_dest_name: str | None = None) -> dict:
+    """Normalize a Viator product object to a flat dict the frontend understands.
+
+    `searched_dest_name` is the canonical name of the destination the user
+    searched against (e.g. "Hanoi"). When provided AND it differs from the
+    product's primary destination, we surface it as `departs_from` so the UI
+    can render "Departs from Hanoi" on multi-destination products
+    (e.g. a Halong Bay cruise sold from Hanoi).
+    """
     product_code = raw.get("productCode") or raw.get("code") or ""
     title = raw.get("title") or raw.get("name") or ""
 
@@ -292,11 +473,38 @@ def _normalize_product(raw: dict) -> dict:
     avg_rating = float(reviews.get("combinedAverageRating") or 0)
     total_reviews = int(reviews.get("totalReviews") or 0)
 
-    # Destination / city
+    # Destination / city — Viator products may visit several destinations
+    # (e.g. a Halong Bay cruise that departs from Hanoi has both in
+    # `destinations`). The /products/search response gives each entry as
+    # {ref: "<destId>", primary: bool}, so we resolve refs back to names via
+    # the cached /destinations index. Surface the full list so the card can
+    # show "Visits: Hanoi, Halong Bay" instead of just the primary.
+    def _dest_label(d: dict) -> str:
+        return d.get("name") or _destination_name(str(d.get("ref") or "")) or ""
+
     destinations = raw.get("destinations") or []
     primary_dest = next((d for d in destinations if d.get("primary")), destinations[0] if destinations else {})
-    city = primary_dest.get("name") or raw.get("city") or ""
+    city = _dest_label(primary_dest) or raw.get("city") or ""
     country = raw.get("country") or ""
+    destination_names: list[str] = []
+    for d in destinations:
+        n = _dest_label(d)
+        if n and n not in destination_names:
+            destination_names.append(n)
+    if not destination_names and city:
+        destination_names = [city]
+
+    departs_from: str | None = None
+    if searched_dest_name and city and _normalize_dest_name(searched_dest_name) != _normalize_dest_name(city):
+        # User searched X but the product's primary destination is Y — they
+        # land on this product because X is also in its destinations list.
+        # Tell the UI so it can render "Departs from X".
+        for n in destination_names:
+            if _normalize_dest_name(n) == _normalize_dest_name(searched_dest_name):
+                departs_from = n
+                break
+        if departs_from is None:
+            departs_from = searched_dest_name
 
     # Tags as category
     tags = raw.get("tags") or []
@@ -358,6 +566,8 @@ def _normalize_product(raw: dict) -> dict:
         "includes": includes,
         "excludes": excludes,
         "age_bands": age_bands,
+        "destinations": destination_names,
+        "departs_from": departs_from,
         "source": "viator",
     }
 
@@ -390,9 +600,17 @@ async def search_tours(
     """
     if limit is not None:
         count = limit
-    resolved_dest = dest_id or _infer_dest_id(city)
+    resolved_dest = dest_id
+    resolved_name: str | None = None
+    if not resolved_dest:
+        match = await resolve_destination(city)
+        if match:
+            resolved_dest = match["destinationId"]
+            resolved_name = match.get("name")
     if not resolved_dest:
         raise ViatorError(400, f"Cannot resolve Viator destination for city '{city}'")
+    if resolved_name is None:
+        resolved_name = _destination_name(resolved_dest)
 
     if sort not in _VALID_SORTS:
         sort = "TRAVELER_RATING"
@@ -447,7 +665,7 @@ async def search_tours(
         data = resp.json()
         products = data.get("products") or []
         return {
-            "products": [_normalize_product(p) for p in products],
+            "products": [_normalize_product(p, searched_dest_name=resolved_name) for p in products],
             "total": int(data.get("totalCount") or len(products)),
         }
     except ViatorError as exc:

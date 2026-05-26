@@ -13,6 +13,11 @@ export default function TourCard({ tour }) {
 
   const mainImage = tour.images?.[0] || 'https://placehold.co/400x300?text=Tour'
 
+  // Viator tours often visit multiple destinations (e.g. a Halong Bay cruise
+  // sold from Hanoi has destinations: [Hanoi, Halong Bay]). Show the extras
+  // so a Hanoi-search card titled "Halong Cruise" doesn't look like a bug.
+  const extraDestinations = (tour.destinations || []).filter((d) => d && d !== tour.city)
+
   return (
     <div className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden group">
       <Link to={tourHref} className="block relative overflow-hidden">
@@ -49,6 +54,17 @@ export default function TourCard({ tour }) {
             <Users className="w-3.5 h-3.5" />Max {tour.max_participants}
           </span>
         </div>
+
+        {tour.departs_from && tour.departs_from !== tour.city && (
+          <p className="mt-1 text-xs text-gray-500">
+            Departs from <span className="font-medium text-gray-700">{tour.departs_from}</span>
+          </p>
+        )}
+        {extraDestinations.length > 0 && (
+          <p className="mt-1 text-xs text-gray-500 line-clamp-1">
+            Visits: <span className="text-gray-700">{[tour.city, ...extraDestinations].filter(Boolean).join(', ')}</span>
+          </p>
+        )}
 
         {tour.owner_name && (
           <div className="flex items-center gap-1 mt-2 text-sm text-gray-500">

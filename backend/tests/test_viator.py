@@ -1,4 +1,6 @@
 """Tests for Viator service layer with mocked HTTP responses."""
+import time
+
 import pytest
 import httpx
 from datetime import date
@@ -10,6 +12,22 @@ from app.services.viator_service import ViatorError
 
 def _mock_response(status_code: int, json_data: dict) -> httpx.Response:
     return httpx.Response(status_code, json=json_data)
+
+
+@pytest.fixture(autouse=True)
+def _populate_dest_cache():
+    """Pre-populate the /destinations cache so search_tours skips the HTTP
+    call. Using the same fallback list the service ships with — it includes
+    Hanoi (351), Halong Bay (776), and Vietnam (21)."""
+    viator_service._DEST_CACHE["data"] = viator_service._FALLBACK_DESTINATIONS
+    viator_service._DEST_CACHE["index"] = viator_service._build_dest_index(
+        viator_service._FALLBACK_DESTINATIONS
+    )
+    viator_service._DEST_CACHE["fetched_at"] = time.time()
+    yield
+    viator_service._DEST_CACHE["data"] = None
+    viator_service._DEST_CACHE["index"] = None
+    viator_service._DEST_CACHE["fetched_at"] = 0.0
 
 
 @pytest.mark.asyncio
@@ -142,6 +160,99 @@ async def test_search_tours_degrades_on_unknown_city():
     with pytest.raises(ViatorError) as exc_info:
         await viator_service.search_tours(city="Atlantis")
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_resolve_destination_handles_vietnamese_diacritics():
+    """'Hà Nội' must resolve to Hanoi (351) — not the country and not Halong Bay."""
+    match = await viator_service.resolve_destination("Hà Nội")
+    assert match is not None
+    assert match["destinationId"] == "351"
+    assert match["name"] == "Hanoi"
+    assert match["type"] == "CITY"
+
+
+@pytest.mark.asyncio
+async def test_resolve_destination_halong_bay_separate_from_hanoi():
+    """'Hạ Long' must resolve to Halong Bay (22692 in the real Viator catalog),
+    not fall through to Hanoi."""
+    match = await viator_service.resolve_destination("Hạ Long")
+    assert match is not None
+    assert match["destinationId"] == "22692"
+    assert match["name"] == "Halong Bay"
+
+
+@pytest.mark.asyncio
+async def test_resolve_destination_prefers_city_over_country():
+    """Bare 'Hanoi' must hit the CITY destination, not Vietnam (the country)."""
+    match = await viator_service.resolve_destination("Hanoi")
+    assert match is not None
+    assert match["destinationId"] == "351"
+    assert match["type"] == "CITY"
+
+
+@pytest.mark.asyncio
+async def test_resolve_destination_alias_saigon_to_ho_chi_minh():
+    """User types 'Saigon' but Viator catalogs it as 'Ho Chi Minh City' (352)."""
+    match = await viator_service.resolve_destination("saigon")
+    assert match is not None
+    assert match["destinationId"] == "352"
+    assert match["name"] == "Ho Chi Minh City"
+
+
+@pytest.mark.asyncio
+async def test_resolve_destination_returns_none_for_unknown():
+    assert await viator_service.resolve_destination("Atlantis") is None
+    assert await viator_service.resolve_destination("") is None
+    assert await viator_service.resolve_destination("   ") is None
+
+
+@pytest.mark.asyncio
+async def test_search_destinations_autocomplete_ranks_exact_first():
+    """Autocomplete on 'han' returns Hanoi at top; on 'ha' it includes Halong Bay and Hanoi."""
+    matches = await viator_service.search_destinations("han", limit=5)
+    assert matches, "expected at least one match for 'han'"
+    assert matches[0]["destinationId"] == "351"
+
+    matches_ha = await viator_service.search_destinations("ha", limit=10)
+    ids = [m["destinationId"] for m in matches_ha]
+    assert "351" in ids  # Hanoi prefix
+    assert "22692" in ids  # Halong Bay prefix
+
+
+@pytest.mark.asyncio
+async def test_normalize_product_exposes_all_destinations_and_departs_from():
+    """A Halong-cruise-from-Hanoi product visited via Hanoi search should set
+    departs_from=Hanoi so the card can show context.
+
+    Mirrors the real /products/search shape: each destination is
+    {ref, primary} — names are resolved via the cached /destinations index.
+    """
+    raw = {
+        "products": [
+            {
+                "productCode": "TOUR_VN_002",
+                "title": "Halong Bay Day Cruise from Hanoi",
+                "destinations": [
+                    {"ref": "22692", "primary": True},   # Halong Bay
+                    {"ref": "351", "primary": False},    # Hanoi
+                ],
+                "pricing": {"summary": {"fromPrice": 89.0}},
+            }
+        ],
+        "totalCount": 1,
+    }
+    with patch.object(viator_service, "_client") as mock_client_fn:
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(200, raw))
+        mock_client_fn.return_value = mock_client
+
+        results = await viator_service.search_tours(city="Hanoi")
+
+    p = results["products"][0]
+    assert p["city"] == "Halong Bay"
+    assert p["destinations"] == ["Halong Bay", "Hanoi"]
+    assert p["departs_from"] == "Hanoi"
 
 
 @pytest.mark.asyncio

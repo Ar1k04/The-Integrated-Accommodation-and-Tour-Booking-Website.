@@ -77,6 +77,13 @@ class TourResponse(BaseModel):
     source: Literal["local", "viator"] = "local"
     viator_product_code: str | None = None
     age_bands: list[TourAgeBand] | None = None
+    # Multi-destination context — set for Viator tours that visit more than
+    # one place (e.g. a Halong Bay cruise sold from Hanoi). `destinations` is
+    # the full list from the product; `departs_from` is the searched-against
+    # destination when it differs from the primary `city` so the card can
+    # render "Departs from Hanoi".
+    destinations: list[str] | None = None
+    departs_from: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -103,3 +110,14 @@ class ViatorTag(BaseModel):
 
 class ViatorTagsResponse(BaseModel):
     tags: list[ViatorTag]
+
+
+class ViatorDestination(BaseModel):
+    destination_id: str
+    name: str
+    type: str
+    parent_destination_id: str | None = None
+
+
+class ViatorDestinationsResponse(BaseModel):
+    destinations: list[ViatorDestination]

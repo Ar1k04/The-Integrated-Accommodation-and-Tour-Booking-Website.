@@ -4,7 +4,6 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
 import { toursApi } from '@/api/toursApi'
-import { searchCities } from '@/api/nominatimApi'
 import TourCard from '@/components/tour/TourCard'
 import TourFilters from '@/components/tour/TourFilters'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
@@ -65,10 +64,13 @@ export default function ToursPage() {
   }, [searchText])
 
   const { data: heroSuggestions = [], isFetching: isFetchingHero } = useQuery({
-    queryKey: ['tour-hero-suggestions', debouncedHero],
-    queryFn: () => searchCities(debouncedHero),
+    queryKey: ['tour-hero-viator-destinations', debouncedHero],
+    queryFn: () =>
+      toursApi
+        .searchViatorDestinations(debouncedHero, 10)
+        .then((r) => r.data?.destinations || []),
     enabled: debouncedHero.length >= 2,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   })
 
   useEffect(() => {
@@ -176,21 +178,21 @@ export default function ToursPage() {
                   {isFetchingHero && heroSuggestions.length === 0 && (
                     <li className="px-4 py-2.5 text-sm text-gray-400">{t('common:common.loading')}</li>
                   )}
-                  {heroSuggestions.map((s, i) => (
+                  {heroSuggestions.map((s) => (
                     <li
-                      key={i}
+                      key={s.destination_id}
                       onMouseDown={() => {
-                        handleCityFilterChange(s.city)
+                        handleCityFilterChange(s.name)
+                        setSearchText(s.name)
                         setShowHeroSuggestions(false)
                       }}
                       className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-800 cursor-pointer hover:bg-primary/5"
                     >
                       <MapPin className="w-4 h-4 text-primary shrink-0" />
-                      <span className="font-medium">{s.city}</span>
-                      {s.state
-                        ? <span className="text-gray-400 truncate">{s.state}, {s.country}</span>
-                        : s.country && <span className="text-gray-400 truncate">{s.country}</span>
-                      }
+                      <span className="font-medium">{s.name}</span>
+                      {s.type && (
+                        <span className="text-gray-400 text-xs uppercase tracking-wide">{s.type}</span>
+                      )}
                     </li>
                   ))}
                 </ul>
