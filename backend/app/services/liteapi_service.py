@@ -409,6 +409,78 @@ async def list_facilities() -> list[dict]:
         raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
 
 
+async def fetch_countries() -> list[dict]:
+    """Fetch the full ISO-3166 country list from LiteAPI GET /data/countries.
+
+    Returns [{code: str (2-letter), name: str}, ...]. Static reference data;
+    intended to be synced into our `countries` table once and refreshed
+    occasionally (monthly cron).
+    """
+    try:
+        resp = await _client().get("/data/countries")
+        _raise_for_status(resp)
+        data = resp.json()
+        raw = data.get("data") if isinstance(data, dict) else data
+        items = raw if isinstance(raw, list) else []
+        out: list[dict] = []
+        for item in items:
+            code = (item.get("code") or item.get("countryCode") or "").strip().upper()
+            name = item.get("name") or item.get("country") or ""
+            if len(code) == 2 and name:
+                out.append({"code": code, "name": name})
+        return out
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        logger.warning("LiteAPI fetch_countries failed: %s", exc)
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
+async def fetch_cities(country_code: str) -> list[dict]:
+    """Fetch every city in one country from LiteAPI GET /data/cities.
+
+    Returns [{liteapi_id, name, country_code, state, latitude, longitude}, ...].
+    LiteAPI's response shape for /data/cities is fairly minimal — name + code
+    only in some regions — so missing fields are returned as None.
+    """
+    cc = (country_code or "").strip().upper()
+    if len(cc) != 2:
+        return []
+    try:
+        resp = await _client().get("/data/cities", params={"countryCode": cc})
+        _raise_for_status(resp)
+        data = resp.json()
+        raw = data.get("data") if isinstance(data, dict) else data
+        items = raw if isinstance(raw, list) else []
+        out: list[dict] = []
+        for item in items:
+            name = item.get("city") or item.get("name") or ""
+            if not name:
+                continue
+            # LiteAPI's id varies (code, cityCode, id); fall back to "CC|name"
+            # to keep the upsert key stable across pulls.
+            cid = item.get("code") or item.get("cityCode") or item.get("id")
+            liteapi_id = str(cid) if cid else f"{cc}|{name.lower()}"
+            lat = item.get("latitude") or item.get("lat")
+            lng = item.get("longitude") or item.get("lon") or item.get("lng")
+            out.append(
+                {
+                    "liteapi_id": liteapi_id,
+                    "name": name,
+                    "country_code": cc,
+                    "state": item.get("state") or item.get("region") or None,
+                    "latitude": float(lat) if lat is not None else None,
+                    "longitude": float(lng) if lng is not None else None,
+                }
+            )
+        return out
+    except LiteAPIError:
+        raise
+    except Exception as exc:
+        logger.warning("LiteAPI fetch_cities(%s) failed: %s", cc, exc)
+        raise LiteAPIError(502, f"LiteAPI unavailable: {exc}")
+
+
 async def search_hotels(
     country_code: str = "",
     city: str = "",

@@ -14,6 +14,8 @@ from app.models.room_availability import RoomAvailability, RoomAvailabilityStatu
 from app.models.tour_schedule import TourSchedule
 from app.models.flight_booking import FlightBooking, FlightBookingStatus
 from app.models.booking_item import BookingItem, BookingItemType, BookingItemStatus
+from app.models.country import Country
+from app.models.city import City
 
 __all__ = [
     "User", "UserRole",
@@ -32,4 +34,6 @@ __all__ = [
     "TourSchedule",
     "FlightBooking", "FlightBookingStatus",
     "BookingItem", "BookingItemType", "BookingItemStatus",
+    "Country",
+    "City",
 ]
