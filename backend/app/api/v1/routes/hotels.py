@@ -5,7 +5,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/hotels", tags=["Hotels"])
 
 _LITEAPI_CACHE_TTL = 300  # 5 minutes
+_FAST_LIMIT = 20           # hotels fetched for cold page-1 (≈ 1 page visible)
+_FULL_LIMIT = 400          # hotels fetched in background — gives 20 pages of 20
+_FAST_CACHE_TTL = 60       # short — full cache supersedes it within seconds
 
 
 def _hotel_response(hotel: Hotel, min_room_price: float | None = None) -> HotelResponse:
@@ -83,6 +86,39 @@ async def _get_cached_liteapi_hotels(redis, cache_key: str) -> list[dict] | None
     return None
 
 
+async def _get_cached_hotel_block(redis, cache_key: str) -> tuple[list[dict], int] | None:
+    """Read a {hotels, total} cache entry. Returns None on miss / parse error."""
+    if redis is None:
+        return None
+    try:
+        cached = await redis.get(cache_key)
+        if not cached:
+            return None
+        obj = json.loads(cached)
+        if not isinstance(obj, dict) or "hotels" not in obj:
+            return None
+        hotels = obj["hotels"] if isinstance(obj["hotels"], list) else []
+        total = int(obj.get("total", len(hotels)))
+        return hotels, total
+    except Exception:
+        return None
+
+
+async def _set_cached_hotel_block(
+    redis, cache_key: str, hotels: list[dict], total: int, ttl: int = _LITEAPI_CACHE_TTL
+) -> None:
+    """Write a {hotels, total} cache entry. `total` is LiteAPI's full match
+    count (independent of how many we fetched), so callers can advertise a
+    stable result count even when serving a 20-hotel fast preview."""
+    if redis is None:
+        return
+    try:
+        payload = {"hotels": hotels, "total": int(total)}
+        await redis.set(cache_key, json.dumps(payload), ex=ttl)
+    except Exception:
+        pass
+
+
 def _parse_child_ages(raw: str | None) -> list[int]:
     """Parse a `child_ages=11,8` query string into a clamped list of ints (0–17)."""
     if not raw:
@@ -101,6 +137,81 @@ def _parse_child_ages(raw: str | None) -> list[int]:
     return ages
 
 
+async def _background_fill_full_cache(
+    redis,
+    cache_key_full: str,
+    db_liteapi_ids: set[str],
+    parsed_child_ages: list[int],
+    **search_kwargs,
+) -> None:
+    """Fire-and-forget: fetch the full 200-hotel set AND pre-fetch their min
+    rates, so page-2+ requests hit Redis for both pieces and serve instantly.
+
+    A Redis SET NX lock dedupes concurrent requests for the same search from
+    firing two background fetches.
+    """
+    if redis is None:
+        return
+    lock_key = f"{cache_key_full}:bg-lock"
+    try:
+        got_lock = await redis.set(lock_key, "1", nx=True, ex=60)
+        if not got_lock:
+            return
+        existing = await redis.get(cache_key_full)
+        if existing:
+            return
+
+        raw, total_available = await liteapi_service.search_hotels(
+            limit=_FULL_LIMIT, **search_kwargs
+        )
+        await _set_cached_hotel_block(redis, cache_key_full, raw, total_available)
+
+        # Pre-warm the min-rates cache for the same set the route will compute,
+        # so the route can serve subsequent pages without another LiteAPI hit.
+        # The rate cache key in the route is keyed by sorted(no_price_ids) +
+        # check_in/check_out — we mirror that derivation exactly here.
+        no_price_ids: list[str] = []
+        for h in raw:
+            lite_id = h.get("liteapi_hotel_id")
+            if not lite_id or lite_id in db_liteapi_ids:
+                continue
+            if h.get("min_room_price") is None:
+                no_price_ids.append(lite_id)
+        if not no_price_ids:
+            return
+
+        check_in = search_kwargs.get("check_in")
+        check_out = search_kwargs.get("check_out")
+        guests = search_kwargs.get("guests") or 1
+        rate_check_in = check_in or (date.today() + timedelta(days=7))
+        rate_check_out = check_out or (rate_check_in + timedelta(days=1))
+        rate_cache_key = (
+            f"liteapi:minrates:{','.join(sorted(no_price_ids))}:"
+            f"{rate_check_in}:{rate_check_out}"
+        )
+        if await redis.get(rate_cache_key):
+            return
+        min_rates = await get_min_rates_batch(
+            no_price_ids,
+            rate_check_in,
+            rate_check_out,
+            guests,
+            children_ages=parsed_child_ages,
+        )
+        if min_rates:
+            await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL)
+    except LiteAPIError as exc:
+        if exc.status_code != 400:
+            logger.warning("background full-fetch failed for %s: %s", cache_key_full, exc.message)
+    except Exception as exc:
+        logger.warning("background full-fetch crashed for %s: %s", cache_key_full, exc)
+    finally:
+        try:
+            await redis.delete(lock_key)
+        except Exception:
+            pass
+
+
 async def _set_cached_liteapi_hotels(redis, cache_key: str, data: list[dict]) -> None:
     if redis is None:
         return
@@ -113,6 +224,7 @@ async def _set_cached_liteapi_hotels(redis, cache_key: str, data: list[dict]) ->
 @router.get("", response_model=HotelListResponse)
 async def list_hotels(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
     city: str | None = None,
     country: str | None = None,
@@ -275,53 +387,100 @@ async def list_hotels(
     slugs_key = ",".join(sorted(selected_slugs)) if selected_slugs else ""
     types_key = ",".join(sorted(selected_type_slugs)) if selected_type_slugs else ""
     geo_key = f"{latitude}:{longitude}:{radius_km}" if geo_search else ""
-    # Cache-key prefix bumped to v2 to invalidate stale 20-item entries.
-    cache_key = f"liteapi:hotels_v2:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}:200"
-    cached = await _get_cached_liteapi_hotels(redis, cache_key)
+    # Two-tier cache keys (v4): :full = complete 200 set (canonical),
+    # :p1 = fast ≤20 set served on cold page-1 while :full is being filled
+    # in the background. v4 cache value is {hotels, total} so we can advertise
+    # the LiteAPI-reported full match count even on the fast preview.
+    cache_base = f"liteapi:hotels_v4:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}"
+    cache_key_full = f"{cache_base}:full"
+    cache_key_p1 = f"{cache_base}:p1"
 
-    if cached is not None:
-        raw_hotels = cached
-    else:
-        # Resolve country_code from our cities table when the request didn't
-        # supply one (frontend autocomplete passes only `city`). Falls back to
-        # the legacy hardcoded keyword map inside liteapi_service. Picks the
-        # most populous match so "Hà Nội" → VN, not some tiny same-name town.
-        resolved_country = country
-        if not resolved_country and city:
-            row = (
-                await db.execute(
-                    text(
-                        "SELECT country_code FROM cities "
-                        "WHERE name_norm = f_unaccent(:c) "
-                        "ORDER BY population DESC LIMIT 1"
-                    ),
-                    {"c": city},
-                )
-            ).first()
-            if row:
-                resolved_country = row[0]
-
-        try:
-            raw_hotels = await liteapi_service.search_hotels(
-                country_code=resolved_country or "",
-                city=city or "",
-                check_in=check_in,
-                check_out=check_out,
-                guests=guests or 1,
-                limit=200,
-                facility_ids=facility_ids or None,
-                strict_facilities_filtering=strict,
-                hotel_type_ids=hotel_type_ids or None,
-                latitude=latitude if geo_search else None,
-                longitude=longitude if geo_search else None,
-                radius_km=radius_km if geo_search else None,
+    # Resolve country_code from our cities table when the request didn't
+    # supply one (frontend autocomplete passes only `city`). Falls back to
+    # the legacy hardcoded keyword map inside liteapi_service. Picks the
+    # most populous match so "Hà Nội" → VN, not some tiny same-name town.
+    resolved_country = country
+    if not resolved_country and city:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT country_code FROM cities "
+                    "WHERE name_norm = f_unaccent(:c) "
+                    "ORDER BY population DESC LIMIT 1"
+                ),
+                {"c": city},
             )
-            await _set_cached_liteapi_hotels(redis, cache_key, raw_hotels)
+        ).first()
+        if row:
+            resolved_country = row[0]
+
+    search_kwargs = dict(
+        country_code=resolved_country or "",
+        city=city or "",
+        check_in=check_in,
+        check_out=check_out,
+        guests=guests or 1,
+        facility_ids=facility_ids or None,
+        strict_facilities_filtering=strict,
+        hotel_type_ids=hotel_type_ids or None,
+        latitude=latitude if geo_search else None,
+        longitude=longitude if geo_search else None,
+        radius_km=radius_km if geo_search else None,
+    )
+
+    # liteapi_total_available = LiteAPI's reported full match count, so the
+    # frontend can show a stable "201 hotels" even on the fast preview.
+    raw_hotels: list[dict] = []
+    liteapi_total_available = 0
+
+    cached_full = await _get_cached_hotel_block(redis, cache_key_full)
+    if cached_full is not None:
+        raw_hotels, liteapi_total_available = cached_full
+    elif page > 1:
+        # Pages 2-10: cannot serve from partial — need the full set. Fetch sync.
+        try:
+            raw_hotels, liteapi_total_available = await liteapi_service.search_hotels(
+                limit=_FULL_LIMIT, **search_kwargs
+            )
+            await _set_cached_hotel_block(
+                redis, cache_key_full, raw_hotels, liteapi_total_available
+            )
         except LiteAPIError as exc:
-            # 400 means we couldn't infer country — that's expected for unknown cities
             if exc.status_code != 400:
                 logger.warning("LiteAPI search degraded: %s", exc.message)
-            raw_hotels = []
+    else:
+        # Page 1 fast path: try short-TTL p1 cache, else fetch only 20 hotels.
+        cached_p1 = await _get_cached_hotel_block(redis, cache_key_p1)
+        if cached_p1 is not None:
+            raw_hotels, liteapi_total_available = cached_p1
+        else:
+            try:
+                raw_hotels, liteapi_total_available = await liteapi_service.search_hotels(
+                    limit=_FAST_LIMIT, **search_kwargs
+                )
+                if raw_hotels:
+                    await _set_cached_hotel_block(
+                        redis,
+                        cache_key_p1,
+                        raw_hotels,
+                        liteapi_total_available,
+                        ttl=_FAST_CACHE_TTL,
+                    )
+            except LiteAPIError as exc:
+                if exc.status_code != 400:
+                    logger.warning("LiteAPI search degraded: %s", exc.message)
+        # Kick off background fetch of the full 200 + pre-warm the rate
+        # cache so page-2+ requests are instant. FastAPI runs this AFTER the
+        # response is sent. Redis lock dedupes concurrent triggers.
+        if raw_hotels:
+            background_tasks.add_task(
+                _background_fill_full_cache,
+                redis,
+                cache_key_full,
+                db_liteapi_ids,
+                _parse_child_ages(child_ages),
+                **search_kwargs,
+            )
 
     # Build initial list and collect IDs that have no static minRate
     no_price_ids: list[str] = []
@@ -393,7 +552,17 @@ async def list_hotels(
 
         all_items = sorted(all_items, key=_sort_key)
 
-    total = len(all_items)
+    # Advertise a stable total: LiteAPI's full match count (capped at our
+    # pagination ceiling _FULL_LIMIT) plus filtered local DB rows. This keeps
+    # the displayed count consistent across the cold-page-1 fast preview and
+    # the later full-cache responses ("201 hotels" instead of "21 → 201"). We
+    # only fall back to len(all_items) when LiteAPI's total is unknown, e.g.
+    # search failed or the request didn't hit LiteAPI at all.
+    if liteapi_total_available > 0:
+        liteapi_visible = min(liteapi_total_available, _FULL_LIMIT)
+        total = max(len(all_items), liteapi_visible + len(db_items))
+    else:
+        total = len(all_items)
     total_pages = math.ceil(total / per_page) if total else 1
     start = (page - 1) * per_page
     end = start + per_page

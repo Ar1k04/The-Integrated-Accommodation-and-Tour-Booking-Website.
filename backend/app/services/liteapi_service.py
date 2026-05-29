@@ -77,75 +77,6 @@ def _raise_for_status(resp: httpx.Response) -> None:
         raise LiteAPIError(resp.status_code, detail, code=code)
 
 
-# Keyword → ISO-3166-1 alpha-2 mapping for common travel destinations
-_CITY_COUNTRY_MAP: dict[str, str] = {
-    # Vietnam
-    "hanoi": "VN", "ha noi": "VN", "hà nội": "VN",
-    "ho chi minh": "VN", "saigon": "VN", "hcmc": "VN",
-    "da nang": "VN", "đà nẵng": "VN", "danang": "VN",
-    "hoi an": "VN", "hội an": "VN",
-    "hue": "VN", "huế": "VN",
-    "nha trang": "VN", "ha long": "VN", "phu quoc": "VN",
-    "can tho": "VN", "vung tau": "VN",
-    "vietnam": "VN", "viet nam": "VN",
-    # Thailand
-    "bangkok": "TH", "phuket": "TH", "chiang mai": "TH",
-    "pattaya": "TH", "krabi": "TH", "koh samui": "TH",
-    "thailand": "TH",
-    # Singapore
-    "singapore": "SG",
-    # Japan
-    "tokyo": "JP", "osaka": "JP", "kyoto": "JP", "hiroshima": "JP",
-    "japan": "JP",
-    # Korea
-    "seoul": "KR", "busan": "KR", "jeju": "KR", "korea": "KR",
-    # Malaysia
-    "kuala lumpur": "MY", "kl": "MY", "penang": "MY", "langkawi": "MY",
-    "malaysia": "MY",
-    # Indonesia
-    "bali": "ID", "jakarta": "ID", "lombok": "ID", "yogyakarta": "ID",
-    "indonesia": "ID",
-    # USA
-    "new york": "US", "los angeles": "US", "las vegas": "US",
-    "miami": "US", "chicago": "US", "usa": "US",
-    # France
-    "paris": "FR", "nice": "FR", "lyon": "FR", "france": "FR",
-    # UK
-    "london": "GB", "manchester": "GB", "edinburgh": "GB",
-    "uk": "GB", "england": "GB",
-    # Others
-    "rome": "IT", "milan": "IT", "venice": "IT", "italy": "IT",
-    "barcelona": "ES", "madrid": "ES", "spain": "ES",
-    "berlin": "DE", "munich": "DE", "germany": "DE",
-    "sydney": "AU", "melbourne": "AU", "australia": "AU",
-    "dubai": "AE", "uae": "AE",
-    "beijing": "CN", "shanghai": "CN", "china": "CN",
-    "amsterdam": "NL", "netherlands": "NL",
-    "prague": "CZ", "czech": "CZ",
-    "istanbul": "TR", "turkey": "TR",
-    "cairo": "EG", "egypt": "EG",
-    "mumbai": "IN", "delhi": "IN", "india": "IN",
-}
-
-
-def _infer_country_code(text: str) -> str | None:
-    """Infer a 2-letter ISO country code from a city/country name string."""
-    if not text:
-        return None
-    key = text.lower().strip()
-    # Direct lookup
-    if key in _CITY_COUNTRY_MAP:
-        return _CITY_COUNTRY_MAP[key]
-    # Substring match (e.g. "Ho Chi Minh City" contains "ho chi minh")
-    for kw, code in _CITY_COUNTRY_MAP.items():
-        if kw in key or key in kw:
-            return code
-    # Already a 2-letter code
-    if len(key) == 2 and key.isalpha():
-        return key.upper()
-    return None
-
-
 def _extract_facilities(raw: dict) -> list:
     """Extract named facilities from a LiteAPI hotel detail response.
 
@@ -494,15 +425,22 @@ async def search_hotels(
     latitude: float | None = None,
     longitude: float | None = None,
     radius_km: float | None = None,
-) -> list[dict]:
-    """Search hotels via LiteAPI /data/hotels. Returns normalized hotel dicts.
+) -> tuple[list[dict], int]:
+    """Search hotels via LiteAPI /data/hotels.
+
+    Returns `(hotels, total_available)` — the list of normalized hotels (capped
+    by `limit`) and LiteAPI's reported full match count. The total is from the
+    response's `total` field; falls back to len(hotels) when missing. Callers
+    can use this to display a stable result count even when fetching just a
+    fast page-1 preview.
 
     Two modes:
     - **Geo mode** (when both `latitude` and `longitude` provided): proximity
       search; countryCode/cityName are optional and skipped. LiteAPI's
       `/data/hotels` accepts `radius` in metres.
-    - **City mode** (default): requires countryCode (inferred from city name
-      when omitted). Raises LiteAPIError if country can't be resolved.
+    - **City mode** (default): requires an explicit `country_code` from the
+      caller. Routes resolve it from our `cities` table (see hotels route).
+      Raises LiteAPIError(400) if missing.
     """
     params: dict[str, Any] = {"limit": limit}
 
@@ -511,10 +449,13 @@ async def search_hotels(
         params["longitude"] = longitude
         params["radius"] = int((radius_km or 5) * 1000)
     else:
-        resolved_cc = country_code or _infer_country_code(city) or ""
-        if not resolved_cc:
-            raise LiteAPIError(400, f"Cannot resolve country code for city '{city}'. Provide country explicitly.")
-        params["countryCode"] = resolved_cc
+        if not country_code:
+            raise LiteAPIError(
+                400,
+                f"Cannot resolve country code for city '{city}'. "
+                "Caller must supply country_code (resolved from cities table).",
+            )
+        params["countryCode"] = country_code
         if city:
             params["cityName"] = city
 
@@ -531,7 +472,14 @@ async def search_hotels(
         data = resp.json()
         hotels_raw = data.get("data") if isinstance(data, dict) else data
         hotels = hotels_raw if isinstance(hotels_raw, list) else []
-        return [_normalize_hotel(h) for h in hotels]
+        normalized = [_normalize_hotel(h) for h in hotels]
+        # LiteAPI returns the true total (matches across all of /data/hotels)
+        # in the response's `total` field — independent of our `limit` param.
+        total_available = (
+            int(data["total"]) if isinstance(data, dict) and "total" in data
+            else len(normalized)
+        )
+        return normalized, total_available
     except LiteAPIError:
         raise
     except Exception as exc:
