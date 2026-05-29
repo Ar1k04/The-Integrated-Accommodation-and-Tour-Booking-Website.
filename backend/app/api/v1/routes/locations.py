@@ -9,7 +9,9 @@ Ranking (composite, asc tier wins first):
   tier 0 — name_norm LIKE q%       (true prefix on the city name)
   tier 1 — search_text contains    (word-boundary inside city/state)
   tier 2 — trigram similarity      (fuzzy / typo)
-Within the same tier, popular cities (hotel_count DESC) come first.
+Within the same tier: hotel_count DESC (local-inventory boost) →
+population DESC (the primary popularity signal across the 50k+ cities that
+have no local hotel) → trigram similarity → name.
 
 Fallback: if local returns 0 rows for queries ≥ 3 chars, proxies to
 Nominatim live so we don't break for obscure villages outside LiteAPI's
@@ -64,7 +66,10 @@ async def autocomplete_cities(
                 WHEN c.search_text LIKE '% ' || p.qn || '%'  THEN 1
                 ELSE 2
             END AS tier,
-            similarity(c.search_text, p.qn) AS sim
+            -- Score similarity against the focused city name. search_text
+            -- includes admin1+alt_names and would dilute the score below
+            -- threshold for short typos like "hanio".
+            similarity(c.name_norm, p.qn) AS sim
         FROM cities c
         JOIN countries co ON co.code = c.country_code
         CROSS JOIN params p
@@ -72,9 +77,13 @@ async def autocomplete_cities(
           AND (
               c.name_norm   LIKE p.qn || '%'
               OR c.search_text LIKE '% ' || p.qn || '%'
-              OR c.search_text % p.qn
+              OR c.name_norm % p.qn                 -- fuzzy/typo on city name only
           )
-        ORDER BY tier ASC, c.hotel_count DESC, sim DESC, c.name ASC
+        ORDER BY tier ASC,
+                 c.hotel_count DESC,
+                 c.population DESC NULLS LAST,
+                 sim DESC,
+                 c.name ASC
         LIMIT :limit
         """
     )

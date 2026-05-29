@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import StaffUser, CurrentUser
@@ -282,9 +282,28 @@ async def list_hotels(
     if cached is not None:
         raw_hotels = cached
     else:
+        # Resolve country_code from our cities table when the request didn't
+        # supply one (frontend autocomplete passes only `city`). Falls back to
+        # the legacy hardcoded keyword map inside liteapi_service. Picks the
+        # most populous match so "Hà Nội" → VN, not some tiny same-name town.
+        resolved_country = country
+        if not resolved_country and city:
+            row = (
+                await db.execute(
+                    text(
+                        "SELECT country_code FROM cities "
+                        "WHERE name_norm = f_unaccent(:c) "
+                        "ORDER BY population DESC LIMIT 1"
+                    ),
+                    {"c": city},
+                )
+            ).first()
+            if row:
+                resolved_country = row[0]
+
         try:
             raw_hotels = await liteapi_service.search_hotels(
-                country_code=country or "",
+                country_code=resolved_country or "",
                 city=city or "",
                 check_in=check_in,
                 check_out=check_out,
