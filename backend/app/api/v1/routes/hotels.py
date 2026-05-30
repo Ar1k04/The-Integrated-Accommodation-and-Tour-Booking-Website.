@@ -137,6 +137,35 @@ def _parse_child_ages(raw: str | None) -> list[int]:
     return ages
 
 
+async def _liteapi_search_with_geo_fallback(
+    limit: int, **search_kwargs
+) -> tuple[list[dict], int]:
+    """Search LiteAPI; if both geo coords + cityName were sent and matched 0
+    hotels, retry name-only. Covers the case where our SimpleMaps lat/lng is
+    too far from LiteAPI's city centroid (rare but possible) — name match
+    still rescues the search."""
+    hotels, total = await liteapi_service.search_hotels(limit=limit, **search_kwargs)
+    has_geo = (
+        search_kwargs.get("latitude") is not None
+        and search_kwargs.get("longitude") is not None
+    )
+    has_city = bool(search_kwargs.get("country_code"))
+    if not hotels and has_geo and has_city:
+        fallback = {
+            **search_kwargs,
+            "latitude": None,
+            "longitude": None,
+            "radius_km": None,
+        }
+        logger.warning(
+            "LiteAPI geo+name returned 0; retrying name-only (city=%s) — "
+            "DB lat/lng may be off from LiteAPI's centroid",
+            search_kwargs.get("city"),
+        )
+        hotels, total = await liteapi_service.search_hotels(limit=limit, **fallback)
+    return hotels, total
+
+
 async def _background_fill_full_cache(
     redis,
     cache_key_full: str,
@@ -161,7 +190,7 @@ async def _background_fill_full_cache(
         if existing:
             return
 
-        raw, total_available = await liteapi_service.search_hotels(
+        raw, total_available = await _liteapi_search_with_geo_fallback(
             limit=_FULL_LIMIT, **search_kwargs
         )
         await _set_cached_hotel_block(redis, cache_key_full, raw, total_available)
@@ -439,7 +468,7 @@ async def list_hotels(
     elif page > 1:
         # Pages 2-10: cannot serve from partial — need the full set. Fetch sync.
         try:
-            raw_hotels, liteapi_total_available = await liteapi_service.search_hotels(
+            raw_hotels, liteapi_total_available = await _liteapi_search_with_geo_fallback(
                 limit=_FULL_LIMIT, **search_kwargs
             )
             await _set_cached_hotel_block(
@@ -455,7 +484,7 @@ async def list_hotels(
             raw_hotels, liteapi_total_available = cached_p1
         else:
             try:
-                raw_hotels, liteapi_total_available = await liteapi_service.search_hotels(
+                raw_hotels, liteapi_total_available = await _liteapi_search_with_geo_fallback(
                     limit=_FAST_LIMIT, **search_kwargs
                 )
                 if raw_hotels:

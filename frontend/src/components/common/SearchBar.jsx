@@ -16,19 +16,43 @@ export default function SearchBar({ variant = 'hero' }) {
   const { destination, checkIn, checkOut, guests, searchType, setDestination, setDates, setGuests, setSearchType } = useSearchStore()
 
   const [localDest, setLocalDest] = useState(destination)
+  // Captures the entire picked autocomplete suggestion (countryCode + lat/lng)
+  // so /hotels/search gets disambiguation context. Without this, picking
+  // "Paris, Texas, US" silently resolves to Paris, FR on the backend because
+  // the DB lookup picks the most populous match. Cleared on manual edit.
+  const [pickedSuggestion, setPickedSuggestion] = useState(null)
+
+  // ISO-2 → friendly country name ("US" → "United States"), localized to the
+  // browser's UI lang. We use this for the composed "City, Country" string we
+  // drop into the input after a suggestion is picked so the user can tell at
+  // a glance which Paris (FR vs TX vs CA) they're searching.
+  const countryNameFromCode = (code) => {
+    if (!code) return ''
+    try {
+      const locale = (typeof navigator !== 'undefined' && navigator.language) || 'en'
+      return new Intl.DisplayNames([locale], { type: 'region' }).of(code) || code
+    } catch {
+      return code
+    }
+  }
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [showGuests, setShowGuests] = useState(false)
   const [showCalendar, setShowCalendar] = useState(false)
   const calendarWrapRef = useRef(null)
   const guestsWrapRef = useRef(null)
   const debouncedDest = useDebounce(localDest, 300)
-  const calendarDestination = localDest.trim()
+  // When user has just picked a suggestion, the input shows the composed
+  // "City, Country" string — autocomplete on that doesn't help anyone.
+  const autocompleteEnabled = debouncedDest.length >= 2 && !pickedSuggestion
+  // For calendar/price preview + raw city, prefer the picked suggestion's
+  // bare city name (not the composed display) so backend matches LiteAPI.
+  const calendarDestination = (pickedSuggestion?.city || localDest).trim()
   const shouldLoadCalendarPrices = showCalendar && searchType === 'hotels' && calendarDestination.length >= 2
 
   const { data: suggestions, isFetching: suggestionsLoading } = useQuery({
     queryKey: ['location-suggestions', debouncedDest],
     queryFn: () => searchCities(debouncedDest),
-    enabled: debouncedDest.length >= 2,
+    enabled: autocompleteEnabled,
     staleTime: 60_000,
     placeholderData: [],
   })
@@ -76,10 +100,24 @@ export default function SearchBar({ variant = 'hero' }) {
   }
 
   const handleSearch = () => {
-    setDestination(localDest)
+    // The input may show "Paris, United States" (composed) after a pick;
+    // backend wants just the bare city name ("Paris") to match LiteAPI.
+    const cityForUrl = pickedSuggestion?.city || localDest
+    setDestination(cityForUrl)
     if (searchType === 'hotels') {
       const params = new URLSearchParams()
-      if (localDest) params.set('city', localDest)
+      if (cityForUrl) params.set('city', cityForUrl)
+      if (pickedSuggestion?.countryCode) {
+        params.set('country', pickedSuggestion.countryCode)
+      }
+      if (
+        pickedSuggestion?.latitude != null &&
+        pickedSuggestion?.longitude != null
+      ) {
+        params.set('latitude', pickedSuggestion.latitude)
+        params.set('longitude', pickedSuggestion.longitude)
+        params.set('radius_km', 20)
+      }
       if (checkIn) params.set('check_in', format(checkIn, 'yyyy-MM-dd'))
       if (checkOut) params.set('check_out', format(checkOut, 'yyyy-MM-dd'))
       params.set('adults', guests.adults)
@@ -89,7 +127,8 @@ export default function SearchBar({ variant = 'hero' }) {
       navigate(`/hotels/search?${params.toString()}`)
     } else {
       const params = new URLSearchParams()
-      if (localDest) params.set('city', localDest)
+      const cityForTours = pickedSuggestion?.city || localDest
+      if (cityForTours) params.set('city', cityForTours)
       navigate(`/tours?${params.toString()}`)
     }
   }
@@ -144,7 +183,7 @@ export default function SearchBar({ variant = 'hero' }) {
             type="text"
             placeholder={t('searchBar.whereGoing')}
             value={localDest}
-            onChange={(e) => { setLocalDest(e.target.value); setShowSuggestions(true) }}
+            onChange={(e) => { setLocalDest(e.target.value); setPickedSuggestion(null); setShowSuggestions(true) }}
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
             className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
@@ -168,7 +207,12 @@ export default function SearchBar({ variant = 'hero' }) {
                   {suggestions.map((s, i) => (
                     <button
                       key={i}
-                      onMouseDown={() => { setLocalDest(s.city); setShowSuggestions(false) }}
+                      onMouseDown={() => {
+                        const countryName = countryNameFromCode(s.countryCode)
+                        setLocalDest(countryName ? `${s.city}, ${countryName}` : s.city)
+                        setPickedSuggestion(s)
+                        setShowSuggestions(false)
+                      }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-blue-50 text-left transition-colors"
                     >
                       <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">

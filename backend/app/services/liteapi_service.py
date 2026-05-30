@@ -434,30 +434,31 @@ async def search_hotels(
     can use this to display a stable result count even when fetching just a
     fast page-1 preview.
 
-    Two modes:
-    - **Geo mode** (when both `latitude` and `longitude` provided): proximity
-      search; countryCode/cityName are optional and skipped. LiteAPI's
-      `/data/hotels` accepts `radius` in metres.
-    - **City mode** (default): requires an explicit `country_code` from the
-      caller. Routes resolve it from our `cities` table (see hotels route).
-      Raises LiteAPIError(400) if missing.
+    Both `country_code/city` and `latitude/longitude/radius` may be supplied
+    together — LiteAPI intersects (AND) them when both are present, which
+    disambiguates Paris-FR-vs-Paris-TX and detects bad geo data (returns 0).
+    At least one of the two must be provided; otherwise raises 400.
     """
     params: dict[str, Any] = {"limit": limit}
 
-    if latitude is not None and longitude is not None:
+    has_geo = latitude is not None and longitude is not None
+
+    if has_geo:
         params["latitude"] = latitude
         params["longitude"] = longitude
         params["radius"] = int((radius_km or 5) * 1000)
-    else:
-        if not country_code:
-            raise LiteAPIError(
-                400,
-                f"Cannot resolve country code for city '{city}'. "
-                "Caller must supply country_code (resolved from cities table).",
-            )
+
+    if country_code:
         params["countryCode"] = country_code
         if city:
             params["cityName"] = city
+    elif not has_geo:
+        raise LiteAPIError(
+            400,
+            f"Cannot resolve country code for city '{city}'. "
+            "Caller must supply country_code (resolved from cities table) "
+            "or latitude+longitude.",
+        )
 
     if facility_ids:
         # LiteAPI expects a comma-separated string, e.g. "107,301"

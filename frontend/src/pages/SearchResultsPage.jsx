@@ -15,7 +15,7 @@ import { SlidersHorizontal, ArrowUpDown, X } from 'lucide-react'
 
 // Separated so that changing city/dates/guests fully remounts this component
 // (via the key prop in SearchResultsPage), clearing stale results instantly.
-function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
+function HotelResults({ city, cityDisplay, country, latitude, longitude, radiusKm, checkIn, checkOut, guests, childAges }) {
   const { t } = useTranslation(['hotels', 'common'])
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState('created_at')
@@ -42,6 +42,10 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
 
   const queryParams = useMemo(() => ({
     city: city || undefined,
+    country: country || undefined,
+    latitude: latitude || undefined,
+    longitude: longitude || undefined,
+    radius_km: radiusKm || undefined,
     check_in: checkIn || undefined,
     check_out: checkOut || undefined,
     guests: guests || undefined,
@@ -54,7 +58,7 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
     sort_by: sortBy,
     sort_order: sortOrder,
     per_page: 20,
-  }), [city, checkIn, checkOut, guests, childAges, filters, sortBy, sortOrder])
+  }), [city, country, latitude, longitude, radiusKm, checkIn, checkOut, guests, childAges, filters, sortBy, sortOrder])
 
   // Reset to page 1 whenever filters, sort, or the underlying search change.
   useEffect(() => { setPage(1) }, [queryParams])
@@ -81,7 +85,7 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
   const resultLabel = isLoading
     ? t('hotels:search.searching')
     : city
-      ? t('hotels:search.hotelsInCity', { count: total, city })
+      ? t('hotels:search.hotelsInCity', { count: total, city: cityDisplay || city })
       : t('hotels:search.hotelsFound', { count: total })
 
   return (
@@ -153,7 +157,7 @@ function HotelResults({ city, checkIn, checkOut, guests, childAges }) {
       open={mapOpen}
       onClose={() => setMapOpen(false)}
       hotels={hotels}
-      title={city ? `Hotels in ${city}` : 'All hotels'}
+      title={city ? `Hotels in ${cityDisplay || city}` : 'All hotels'}
     />
     </>
   )
@@ -163,20 +167,38 @@ export default function SearchResultsPage() {
   const [params] = useSearchParams()
 
   const city = params.get('city') || ''
+  const country = params.get('country') || ''
+  const latitude = params.get('latitude') || ''
+  const longitude = params.get('longitude') || ''
+  const radiusKm = params.get('radius_km') || ''
   const checkIn = params.get('check_in') || ''
   const checkOut = params.get('check_out') || ''
   const guests = params.get('guests') || ''
   const childAges = params.get('child_ages') || ''
 
+  // Friendly country name from ISO-2 (e.g. "US" → "United States") via the
+  // browser's standard Intl.DisplayNames API, localized to the user's UI lang.
+  // Falls back to the bare code if the API or value is unavailable.
+  const countryDisplay = (() => {
+    if (!country) return ''
+    try {
+      const locale = (typeof navigator !== 'undefined' && navigator.language) || 'en'
+      return new Intl.DisplayNames([locale], { type: 'region' }).of(country) || country
+    } catch {
+      return country
+    }
+  })()
+  const cityDisplay = city && countryDisplay ? `${city}, ${countryDisplay}` : city
+
   // Key forces HotelResults to fully remount on every new search,
   // wiping stale data and resetting filters/sort/scroll position.
-  const searchKey = `${city}|${checkIn}|${checkOut}|${guests}|${childAges}`
+  const searchKey = `${city}|${country}|${latitude}|${longitude}|${checkIn}|${checkOut}|${guests}|${childAges}`
 
   return (
     <>
       <Helmet>
-        <title>{city ? `Hotels in ${city}` : 'Search Hotels'} — TravelBooking</title>
-        <meta name="description" content={`Search and compare ${city ? `hotels in ${city}` : 'hotels worldwide'}. Best prices guaranteed.`} />
+        <title>{city ? `Hotels in ${cityDisplay}` : 'Search Hotels'} — TravelBooking</title>
+        <meta name="description" content={`Search and compare ${city ? `hotels in ${cityDisplay}` : 'hotels worldwide'}. Best prices guaranteed.`} />
       </Helmet>
 
       <div className="bg-primary py-4">
@@ -188,11 +210,16 @@ export default function SearchResultsPage() {
       <div className="bg-surface min-h-screen">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <h1 className="font-heading text-xl font-bold text-gray-900 mb-6">
-            {city ? `Hotels in ${city}` : 'Search Hotels'}
+            {city ? `Hotels in ${cityDisplay}` : 'Search Hotels'}
           </h1>
           <HotelResults
             key={searchKey}
             city={city}
+            cityDisplay={cityDisplay}
+            country={country}
+            latitude={latitude}
+            longitude={longitude}
+            radiusKm={radiusKm}
             checkIn={checkIn}
             checkOut={checkOut}
             guests={guests}
