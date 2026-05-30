@@ -67,12 +67,56 @@ function HotelResults({ city, cityDisplay, country, latitude, longitude, radiusK
     queryKey: ['hotels-search', queryParams, page],
     queryFn: () => hotelsApi.list({ ...queryParams, page }),
     placeholderData: keepPreviousData,
+    // Page-1 cold path returns hotels without prices (backend defers the
+    // rate batch to BG). Poll every 5s until backend marks prices_pending=false,
+    // at which point the response carries fully-priced cards from the :mid tier.
+    refetchInterval: (q) => (q.state.data?.data?.meta?.prices_pending ? 5000 : false),
   })
 
-  const hotels = data?.data?.items || []
+  const rawHotels = data?.data?.items || []
   const meta = data?.data?.meta
   const total = meta?.total || 0
   const totalPages = meta?.total_pages || 1
+  const pricesPending = meta?.prices_pending === true
+
+  // When the cold page-1 response comes back with null prices, fire a direct
+  // /hotels/min-rates fetch for those visible hotels — much faster (~3s, one
+  // LiteAPI chunk) than waiting for the BG to fill :mid (~6-7s). The backend
+  // also caches these rates under the same key the /hotels route uses, so
+  // subsequent polls hit them instantly too.
+  const missingPriceIds = useMemo(
+    () =>
+      pricesPending
+        ? rawHotels
+            .filter((h) => h.min_room_price == null && h.liteapi_hotel_id)
+            .map((h) => h.liteapi_hotel_id)
+        : [],
+    [rawHotels, pricesPending],
+  )
+
+  const { data: ratesData } = useQuery({
+    queryKey: ['hotel-min-rates', missingPriceIds.join(','), checkIn, checkOut, guests, childAges],
+    queryFn: () =>
+      hotelsApi.minRates({
+        hotel_ids: missingPriceIds.join(','),
+        check_in: checkIn || undefined,
+        check_out: checkOut || undefined,
+        guests: guests || 1,
+        child_ages: childAges || undefined,
+      }),
+    enabled: missingPriceIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const hotels = useMemo(() => {
+    const map = ratesData?.data
+    if (!map || typeof map !== 'object') return rawHotels
+    return rawHotels.map((h) =>
+      h.min_room_price == null && h.liteapi_hotel_id && map[h.liteapi_hotel_id] != null
+        ? { ...h, min_room_price: map[h.liteapi_hotel_id] }
+        : h,
+    )
+  }, [rawHotels, ratesData])
 
   const handlePageChange = (next) => {
     if (next < 1 || next > totalPages || next === page) return
@@ -134,7 +178,13 @@ function HotelResults({ city, cityDisplay, country, latitude, longitude, radiusK
         <div className={`space-y-4 ${isFetching && !isLoading ? 'opacity-60 transition-opacity' : ''}`}>
           {isLoading
             ? Array.from({ length: 4 }, (_, i) => <HotelCardSkeleton key={i} />)
-            : hotels.map((hotel) => <HotelCard key={hotel.id || hotel.liteapi_hotel_id} hotel={hotel} />)
+            : hotels.map((hotel) => (
+                <HotelCard
+                  key={hotel.id || hotel.liteapi_hotel_id}
+                  hotel={hotel}
+                  pricesPending={pricesPending}
+                />
+              ))
           }
           {!isLoading && hotels.length === 0 && (
             <div className="text-center py-20">

@@ -2,6 +2,8 @@ import api from './axiosInstance'
 
 export const hotelsApi = {
   list: (params) => api.get('/hotels', { params }),
+  // Fast direct rates fetch for visible hotels — bypasses the BG :mid wait.
+  minRates: (params) => api.get('/hotels/min-rates', { params }),
   get: (id) => api.get(`/hotels/${id}`),
   getLiteapi: (liteapiId) => api.get(`/hotels/liteapi/${liteapiId}`),
   getRates: (liteapiId, params) => api.get(`/hotels/liteapi/${liteapiId}/rates`, { params }),

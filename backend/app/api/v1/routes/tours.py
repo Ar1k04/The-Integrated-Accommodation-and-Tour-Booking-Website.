@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -6,7 +7,7 @@ import uuid
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +31,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tours", tags=["Tours"])
 
-_VIATOR_CACHE_TTL = 300  # 5 minutes
+_VIATOR_CACHE_TTL = 300       # 5 minutes — full cache
+_VIATOR_FAST_LIMIT = 30       # tours fetched for cold page-1 (≈ 1 page visible)
+_VIATOR_FAST_CACHE_TTL = 60   # short — full cache supersedes it within seconds
+_VIATOR_FULL_PAGE_SIZE = 50   # batch size when fetching full set (Viator max)
+_VIATOR_FULL_HARD_CAP = 500   # safety ceiling so background fill terminates
 
 
 def _tour_response(tour: Tour) -> TourResponse:
@@ -105,6 +110,113 @@ async def _set_cached(redis, key: str, data: list[dict] | dict, ttl: int | None 
         await redis.set(key, json.dumps(data), ex=ttl or _VIATOR_CACHE_TTL)
     except Exception:
         pass
+
+
+async def _get_cached_tour_block(redis, key: str) -> tuple[list[dict], int] | None:
+    """Read a {products, total} cache entry. Returns None on miss / parse error."""
+    if redis is None:
+        return None
+    try:
+        cached = await redis.get(key)
+        if not cached:
+            return None
+        obj = json.loads(cached)
+        if not isinstance(obj, dict) or "products" not in obj:
+            return None
+        products = obj["products"] if isinstance(obj["products"], list) else []
+        total = int(obj.get("total", len(products)))
+        return products, total
+    except Exception:
+        return None
+
+
+async def _set_cached_tour_block(
+    redis, key: str, products: list[dict], total: int, ttl: int = _VIATOR_CACHE_TTL
+) -> None:
+    """Write a {products, total} cache entry. `total` is Viator's full match
+    count (independent of how many we fetched), so the route can advertise a
+    stable count even when serving the fast 30-tour preview."""
+    if redis is None:
+        return
+    try:
+        payload = {"products": products, "total": int(total)}
+        await redis.set(key, json.dumps(payload), ex=ttl)
+    except Exception:
+        pass
+
+
+async def _background_fill_full_viator_cache(
+    redis,
+    cache_key_full: str,
+    viator_kwargs: dict,
+    total_hint: int,
+) -> None:
+    """Fire-and-forget: fetch the full Viator product set (capped at
+    _VIATOR_FULL_HARD_CAP) so page-2+ requests slice from Redis without
+    hitting Viator. A Redis SET NX lock dedupes concurrent triggers."""
+    if redis is None:
+        return
+    lock_key = f"{cache_key_full}:bg-lock"
+    try:
+        got_lock = await redis.set(lock_key, "1", nx=True, ex=60)
+        if not got_lock:
+            return
+        existing = await redis.get(cache_key_full)
+        if existing:
+            return
+
+        # If caller didn't have a total yet, fetch the first batch to learn it.
+        all_products: list[dict] = []
+        seen_codes: set[str] = set()
+        total = int(total_hint or 0)
+
+        if total <= 0:
+            first = await viator_service.search_tours(
+                **viator_kwargs, start=1, count=_VIATOR_FULL_PAGE_SIZE
+            )
+            total = int(first.get("total") or 0)
+            for p in first.get("products") or []:
+                code = p.get("viator_product_code")
+                if code and code not in seen_codes:
+                    seen_codes.add(code)
+                    all_products.append(p)
+            next_start = _VIATOR_FULL_PAGE_SIZE + 1
+        else:
+            next_start = 1
+
+        target = min(total, _VIATOR_FULL_HARD_CAP)
+        starts = list(range(next_start, target + 1, _VIATOR_FULL_PAGE_SIZE))
+        if starts:
+            results = await asyncio.gather(
+                *[
+                    viator_service.search_tours(
+                        **viator_kwargs, start=s, count=_VIATOR_FULL_PAGE_SIZE
+                    )
+                    for s in starts
+                ],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, Exception):
+                    continue
+                for p in r.get("products") or []:
+                    code = p.get("viator_product_code")
+                    if code and code not in seen_codes:
+                        seen_codes.add(code)
+                        all_products.append(p)
+
+        if all_products:
+            await _set_cached_tour_block(redis, cache_key_full, all_products, total)
+    except ViatorError as exc:
+        if exc.status_code != 400:
+            logger.warning("Viator background full-fetch failed for %s: %s", cache_key_full, exc.message)
+    except Exception as exc:
+        logger.warning("Viator background full-fetch crashed for %s: %s", cache_key_full, exc)
+    finally:
+        try:
+            await redis.delete(lock_key)
+        except Exception:
+            pass
 
 
 _SORT_BY_TO_VIATOR = {
@@ -247,6 +359,7 @@ async def get_viator_availability(
 @router.get("", response_model=TourListResponse)
 async def list_tours(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
     city: str | None = None,
     country: str | None = None,
@@ -259,7 +372,7 @@ async def list_tours(
     sort_by: str = Query("created_at", pattern="^(created_at|price_per_person|avg_rating|duration_days|name)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(30, ge=1, le=100),
     # ── Viator-specific filters (Affiliate Basic Access surface) ───────────
     tags: list[int] | None = Query(None, description="Viator tag IDs (multi)"),
     flags: list[str] | None = Query(None, description="Viator flags: FREE_CANCELLATION, etc."),
@@ -295,6 +408,9 @@ async def list_tours(
     total_db = 0
     db_viator_codes: set[str] = set()
 
+    viator_city = city or q
+    use_viator = effective_source != "local" and bool(viator_city) and not owner_id
+
     # ── DB query (skipped when effective_source == "viator") ─────────────────
     if effective_source != "viator":
         query = select(Tour)
@@ -322,19 +438,39 @@ async def list_tours(
 
         sort_col = getattr(Tour, sort_by)
         query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
-        query = query.offset((page - 1) * per_page).limit(per_page)
 
+        if not use_viator:
+            # Local-only: paginate at SQL level and return directly.
+            query = query.offset((page - 1) * per_page).limit(per_page)
+            result = await db.execute(query)
+            tours = result.scalars().all()
+            db_items = [_tour_response(t) for t in tours]
+            total_pages = math.ceil(total_db / per_page) if total_db else 1
+            return TourListResponse(
+                items=db_items,
+                meta={
+                    "total": total_db,
+                    "page": page,
+                    "per_page": per_page,
+                    "total_pages": total_pages,
+                },
+            )
+
+        # Hybrid path: fetch *all* matching DB rows so we can merge with Viator
+        # and slice the combined list in-memory. DB rows are typically few
+        # (mostly local/seeded tours), so this stays cheap.
         result = await db.execute(query)
         tours = result.scalars().all()
         db_items = [_tour_response(t) for t in tours]
         db_viator_codes = {t.viator_product_code for t in tours if t.viator_product_code}
 
-    # ── Viator hybrid search ─────────────────────────────────────────────────
-    viator_city = city or q
+    # ── Viator hybrid search (two-tier cache; page 1 fast preview + bg fill) ──
     viator_items: list[TourResponse] = []
     viator_total = 0
-    if effective_source != "local" and viator_city and not owner_id:
+    if use_viator:
         viator_sort, viator_order = _map_sort_to_viator(sort_by, sort_order)
+        # Cache key is keyed by filters only — NOT page/per_page — so all pages
+        # of the same search share the same cached product set.
         filter_payload = {
             "city": viator_city.lower(),
             "tags": sorted(tags or []),
@@ -348,45 +484,86 @@ async def list_tours(
             "end_date": end_date.isoformat() if end_date else None,
             "sort": viator_sort,
             "order": viator_order,
-            "page": page,
-            "per_page": per_page,
         }
         key_hash = hashlib.sha1(
             json.dumps(filter_payload, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
-        cache_key = f"viator:tours:{key_hash}"
+        cache_base = f"viator:tours_v2:{key_hash}"
+        cache_key_full = f"{cache_base}:full"
+        cache_key_p1 = f"{cache_base}:p1"
+
+        viator_kwargs = dict(
+            city=viator_city,
+            tags=tags,
+            flags=flags,
+            rating_from=rating_min,
+            duration_from_min=duration_min,
+            duration_to_min=duration_max,
+            lowest_price=min_price,
+            highest_price=max_price,
+            start_date=start_date,
+            end_date=end_date,
+            sort=viator_sort,
+            order=viator_order,
+        )
 
         redis = getattr(request.app.state, "redis", None)
-        cached = await _get_cached(redis, cache_key)
-        if cached is not None and isinstance(cached, dict):
-            raw_payload = cached
-        else:
+        raw_products: list[dict] = []
+
+        cached_full = await _get_cached_tour_block(redis, cache_key_full)
+        if cached_full is not None:
+            raw_products, viator_total = cached_full
+        elif page > 1:
+            # Page 2+ cold cache: need the full set — fetch one batch sync and
+            # trigger the rest in the background.
             try:
-                raw_payload = await viator_service.search_tours(
-                    city=viator_city,
-                    tags=tags,
-                    flags=flags,
-                    rating_from=rating_min,
-                    duration_from_min=duration_min,
-                    duration_to_min=duration_max,
-                    lowest_price=min_price,
-                    highest_price=max_price,
-                    start_date=start_date,
-                    end_date=end_date,
-                    sort=viator_sort,
-                    order=viator_order,
-                    start=(page - 1) * per_page + 1,
-                    count=per_page,
+                first = await viator_service.search_tours(
+                    **viator_kwargs, start=1, count=_VIATOR_FULL_PAGE_SIZE
                 )
-                await _set_cached(redis, cache_key, raw_payload)
+                raw_products = first.get("products") or []
+                viator_total = int(first.get("total") or len(raw_products))
+                if raw_products:
+                    await _set_cached_tour_block(
+                        redis, cache_key_full, raw_products, viator_total
+                    )
+                    background_tasks.add_task(
+                        _background_fill_full_viator_cache,
+                        redis, cache_key_full, viator_kwargs, viator_total,
+                    )
             except ViatorError as exc:
                 if exc.status_code != 400:
                     logger.warning("Viator search degraded: %s", exc.message)
-                raw_payload = {"products": [], "total": 0}
+        else:
+            # Page 1 fast path.
+            cached_p1 = await _get_cached_tour_block(redis, cache_key_p1)
+            if cached_p1 is not None:
+                raw_products, viator_total = cached_p1
+            else:
+                try:
+                    payload = await viator_service.search_tours(
+                        **viator_kwargs, start=1, count=_VIATOR_FAST_LIMIT
+                    )
+                    raw_products = payload.get("products") or []
+                    viator_total = int(payload.get("total") or len(raw_products))
+                    if raw_products:
+                        await _set_cached_tour_block(
+                            redis,
+                            cache_key_p1,
+                            raw_products,
+                            viator_total,
+                            ttl=_VIATOR_FAST_CACHE_TTL,
+                        )
+                except ViatorError as exc:
+                    if exc.status_code != 400:
+                        logger.warning("Viator search degraded: %s", exc.message)
+            # Fire-and-forget: fill the full cache so page-2+ are instant.
+            if raw_products:
+                background_tasks.add_task(
+                    _background_fill_full_viator_cache,
+                    redis, cache_key_full, viator_kwargs, viator_total,
+                )
 
-        raw_tours = raw_payload.get("products", []) if isinstance(raw_payload, dict) else raw_payload
-        viator_total = int(raw_payload.get("total") or len(raw_tours)) if isinstance(raw_payload, dict) else len(raw_tours)
-        for raw in raw_tours:
+        for raw in raw_products:
             code = raw.get("viator_product_code")
             if code and code in db_viator_codes:
                 continue
@@ -395,11 +572,21 @@ async def list_tours(
             viator_items.append(_viator_tour_to_response(raw))
 
     all_items = db_items + viator_items
-    total = total_db + viator_total
+    # Stable total: advertise Viator's full match count (capped) + DB rows, so
+    # the displayed count doesn't jump between the page-1 fast preview and the
+    # later full-cache responses.
+    if viator_total > 0:
+        viator_visible = min(viator_total, _VIATOR_FULL_HARD_CAP)
+        total = max(len(all_items), total_db + viator_visible)
+    else:
+        total = len(all_items)
     total_pages = math.ceil(total / per_page) if total else 1
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = all_items[start:end]
 
     return TourListResponse(
-        items=all_items,
+        items=page_items,
         meta={
             "total": total,
             "page": page,

@@ -33,9 +33,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/hotels", tags=["Hotels"])
 
 _LITEAPI_CACHE_TTL = 300  # 5 minutes
-_FAST_LIMIT = 20           # hotels fetched for cold page-1 (≈ 1 page visible)
-_FULL_LIMIT = 400          # hotels fetched in background — gives 20 pages of 20
-_FAST_CACHE_TTL = 60       # short — full cache supersedes it within seconds
+# Three-tier progressive cache:
+#  • :p1  ≤ 20  hotels — cold page-1, returned in ~3s
+#  • :mid ≤ 200 hotels — pages 2-10, filled by BG step 1 in ~5s after p1
+#  • :full ≤ 1000 hotels — pages 11-50, filled by BG step 2 in ~15s after p1
+# Each tier caches the hotel list AND pre-warms its own rate batch (rate-cache
+# keys differ by sorted-IDs set), so a tier-hit means the user's request can
+# be served entirely from Redis without any LiteAPI calls.
+_FAST_LIMIT = 20
+_MID_LIMIT = 100           # pages 1-5 (was 200 = 10 pages, smaller tier finishes faster)
+_FULL_LIMIT = 1000         # pages 6-50
+_FAST_CACHE_TTL = 60       # short — mid/full supersede it within seconds
 
 
 def _hotel_response(hotel: Hotel, min_room_price: float | None = None) -> HotelResponse:
@@ -166,79 +174,153 @@ async def _liteapi_search_with_geo_fallback(
     return hotels, total
 
 
-async def _background_fill_full_cache(
+async def _prewarm_rate_cache(
     redis,
+    hotels: list[dict],
+    db_liteapi_ids: set[str],
+    parsed_child_ages: list[int],
+    check_in,
+    check_out,
+    guests: int,
+) -> None:
+    """Fetch min rates for the no-price hotels and cache PER-ID so any
+    later page (with a different no_price_ids subset) can reuse them."""
+    no_price_ids = [
+        h["liteapi_hotel_id"]
+        for h in hotels
+        if h.get("liteapi_hotel_id")
+        and h["liteapi_hotel_id"] not in db_liteapi_ids
+        and h.get("min_room_price") is None
+    ]
+    if not no_price_ids:
+        return
+    rate_check_in = check_in or (date.today() + timedelta(days=7))
+    rate_check_out = check_out or (rate_check_in + timedelta(days=1))
+    _, missing = await _get_cached_rates_per_id(
+        redis, no_price_ids, rate_check_in, rate_check_out, guests, parsed_child_ages,
+    )
+    if not missing:
+        return
+    min_rates = await get_min_rates_batch(
+        missing, rate_check_in, rate_check_out, guests, children_ages=parsed_child_ages,
+    )
+    if min_rates:
+        await _set_cached_rates_per_id(
+            redis, min_rates, rate_check_in, rate_check_out, guests, parsed_child_ages,
+        )
+
+
+async def _background_fill_progressive_caches(
+    redis,
+    cache_key_mid: str,
     cache_key_full: str,
     db_liteapi_ids: set[str],
     parsed_child_ages: list[int],
     **search_kwargs,
 ) -> None:
-    """Fire-and-forget: fetch the full 200-hotel set AND pre-fetch their min
-    rates, so page-2+ requests hit Redis for both pieces and serve instantly.
+    """Fire-and-forget: progressively fill the :mid then :full caches so the
+    user sees pages 2-10 ready first (~5s), then pages 11-50 ready (~15s).
 
-    A Redis SET NX lock dedupes concurrent requests for the same search from
-    firing two background fetches.
+    A single limit=_FULL_LIMIT LiteAPI search supplies both tiers; the heavy
+    rate-batch work is split — rates for the first _MID_LIMIT hotels are
+    pre-warmed and the :mid hotel cache is published only after they land, so
+    a :mid hit guarantees the route has cached rates too. Then we do the same
+    for the remaining hotels and publish :full.
     """
     if redis is None:
         return
     lock_key = f"{cache_key_full}:bg-lock"
+    got_lock = await redis.set(lock_key, "1", nx=True, ex=120)
+    if not got_lock:
+        return
     try:
-        got_lock = await redis.set(lock_key, "1", nx=True, ex=60)
-        if not got_lock:
+        # One hotel-search call fetches everything; we slice from it.
+        if await redis.get(cache_key_full):
             return
-        existing = await redis.get(cache_key_full)
-        if existing:
-            return
-
         raw, total_available = await _liteapi_search_with_geo_fallback(
             limit=_FULL_LIMIT, **search_kwargs
         )
-        await _set_cached_hotel_block(redis, cache_key_full, raw, total_available)
-
-        # Pre-warm the min-rates cache for the same set the route will compute,
-        # so the route can serve subsequent pages without another LiteAPI hit.
-        # The rate cache key in the route is keyed by sorted(no_price_ids) +
-        # check_in/check_out — we mirror that derivation exactly here.
-        no_price_ids: list[str] = []
-        for h in raw:
-            lite_id = h.get("liteapi_hotel_id")
-            if not lite_id or lite_id in db_liteapi_ids:
-                continue
-            if h.get("min_room_price") is None:
-                no_price_ids.append(lite_id)
-        if not no_price_ids:
+        if not raw:
             return
 
         check_in = search_kwargs.get("check_in")
         check_out = search_kwargs.get("check_out")
         guests = search_kwargs.get("guests") or 1
-        rate_check_in = check_in or (date.today() + timedelta(days=7))
-        rate_check_out = check_out or (rate_check_in + timedelta(days=1))
-        rate_cache_key = (
-            f"liteapi:minrates:{','.join(sorted(no_price_ids))}:"
-            f"{rate_check_in}:{rate_check_out}"
+
+        # Tier 1 (mid): rates first, then publish hotels — so a route-side
+        # :mid hit always has its rate cache populated. ~5s wall clock.
+        if not await redis.get(cache_key_mid):
+            mid_slice = raw[:_MID_LIMIT]
+            await _prewarm_rate_cache(
+                redis, mid_slice, db_liteapi_ids, parsed_child_ages,
+                check_in, check_out, guests,
+            )
+            await _set_cached_hotel_block(redis, cache_key_mid, mid_slice, total_available)
+
+        # Tier 2 (full): same drill for the bigger set. ~10s more.
+        await _prewarm_rate_cache(
+            redis, raw, db_liteapi_ids, parsed_child_ages,
+            check_in, check_out, guests,
         )
-        if await redis.get(rate_cache_key):
-            return
-        min_rates = await get_min_rates_batch(
-            no_price_ids,
-            rate_check_in,
-            rate_check_out,
-            guests,
-            children_ages=parsed_child_ages,
-        )
-        if min_rates:
-            await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL)
+        await _set_cached_hotel_block(redis, cache_key_full, raw, total_available)
     except LiteAPIError as exc:
         if exc.status_code != 400:
-            logger.warning("background full-fetch failed for %s: %s", cache_key_full, exc.message)
+            logger.warning("background progressive-fill failed for %s: %s", cache_key_full, exc.message)
     except Exception as exc:
-        logger.warning("background full-fetch crashed for %s: %s", cache_key_full, exc)
+        logger.warning("background progressive-fill crashed for %s: %s", cache_key_full, exc)
     finally:
         try:
             await redis.delete(lock_key)
         except Exception:
             pass
+
+
+def _rate_key(hotel_id: str, ci, co, guests: int, ages_csv: str) -> str:
+    """Per-hotel rate cache key. Per-ID (not sorted-set) so any subset of
+    IDs — whether the dedicated /hotels/min-rates fetch sent 19 or the
+    backend route computed 20 — can read a shared cache."""
+    return f"liteapi:rate:{hotel_id}:{ci}:{co}:{guests}:{ages_csv}"
+
+
+async def _get_cached_rates_per_id(
+    redis, hotel_ids: list[str], ci, co, guests: int, ages: list[int] | None
+) -> tuple[dict[str, float], list[str]]:
+    """Bulk read per-ID rates. Returns (hits, missing_ids)."""
+    if redis is None or not hotel_ids:
+        return {}, list(hotel_ids)
+    ages_csv = ",".join(str(a) for a in (ages or []))
+    keys = [_rate_key(i, ci, co, guests, ages_csv) for i in hotel_ids]
+    try:
+        vals = await redis.mget(*keys)
+    except Exception:
+        return {}, list(hotel_ids)
+    hits: dict[str, float] = {}
+    missing: list[str] = []
+    for hid, v in zip(hotel_ids, vals):
+        if v is None:
+            missing.append(hid)
+            continue
+        try:
+            hits[hid] = float(v)
+        except (TypeError, ValueError):
+            missing.append(hid)
+    return hits, missing
+
+
+async def _set_cached_rates_per_id(
+    redis, rates: dict[str, float], ci, co, guests: int, ages: list[int] | None
+) -> None:
+    """Bulk write per-ID rates (pipelined)."""
+    if redis is None or not rates:
+        return
+    ages_csv = ",".join(str(a) for a in (ages or []))
+    try:
+        pipe = redis.pipeline()
+        for hid, price in rates.items():
+            pipe.set(_rate_key(hid, ci, co, guests, ages_csv), str(price), ex=_LITEAPI_CACHE_TTL)
+        await pipe.execute()
+    except Exception:
+        pass
 
 
 async def _set_cached_liteapi_hotels(redis, cache_key: str, data: list[dict]) -> None:
@@ -416,13 +498,20 @@ async def list_hotels(
     slugs_key = ",".join(sorted(selected_slugs)) if selected_slugs else ""
     types_key = ",".join(sorted(selected_type_slugs)) if selected_type_slugs else ""
     geo_key = f"{latitude}:{longitude}:{radius_km}" if geo_search else ""
-    # Two-tier cache keys (v4): :full = complete 200 set (canonical),
-    # :p1 = fast ≤20 set served on cold page-1 while :full is being filled
-    # in the background. v4 cache value is {hotels, total} so we can advertise
-    # the LiteAPI-reported full match count even on the fast preview.
-    cache_base = f"liteapi:hotels_v4:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}"
+    # Three-tier cache keys (v5):
+    #   :p1   = ≤20 hotels (cold page-1, instant)
+    #   :mid  = ≤200 hotels (pages 2-10, ready in ~5s after page-1)
+    #   :full = ≤1000 hotels (pages 11-50, ready in ~15s after page-1)
+    # v5 invalidates v4. Each cache value is {hotels, total}.
+    cache_base = f"liteapi:hotels_v5:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}"
     cache_key_full = f"{cache_base}:full"
+    cache_key_mid = f"{cache_base}:mid"
     cache_key_p1 = f"{cache_base}:p1"
+
+    # How many hotels we actually need to serve this page (LiteAPI side only,
+    # DB-local hotels are merged separately). The smallest cache tier that
+    # can satisfy this is the one we look for.
+    needed_count = page * per_page
 
     # Resolve country_code from our cities table when the request didn't
     # supply one (frontend autocomplete passes only `city`). Falls back to
@@ -462,54 +551,61 @@ async def list_hotels(
     raw_hotels: list[dict] = []
     liteapi_total_available = 0
 
+    # When any filter is active, :p1's 20 hotels may not include enough
+    # matching rows — the calendar's `?star_rating=3` query for instance can
+    # silently return 0 items. Skip :p1 entirely for filtered queries.
+    has_filter = bool(
+        star_rating or property_type or selected_type_slugs or facility_ids
+        or min_price is not None or max_price is not None
+    )
+
+    # Try caches in shrinking order: :full → :mid → :p1.
     cached_full = await _get_cached_hotel_block(redis, cache_key_full)
+    cached_mid = None
     if cached_full is not None:
         raw_hotels, liteapi_total_available = cached_full
-    elif page > 1:
-        # Pages 2-10: cannot serve from partial — need the full set. Fetch sync.
+    elif needed_count <= _MID_LIMIT and (
+        cached_mid := await _get_cached_hotel_block(redis, cache_key_mid)
+    ) is not None:
+        raw_hotels, liteapi_total_available = cached_mid
+    elif page == 1 and not has_filter and (
+        cached_p1 := await _get_cached_hotel_block(redis, cache_key_p1)
+    ) is not None:
+        raw_hotels, liteapi_total_available = cached_p1
+    else:
+        # Cache miss for the tier we need. Sync-fetch only the smallest
+        # tier that can serve this page → minimizes user-perceived latency.
+        if needed_count > _MID_LIMIT:
+            sync_limit, sync_cache_key, sync_ttl = _FULL_LIMIT, cache_key_full, _LITEAPI_CACHE_TTL
+        elif page > 1 or has_filter:
+            sync_limit, sync_cache_key, sync_ttl = _MID_LIMIT, cache_key_mid, _LITEAPI_CACHE_TTL
+        else:
+            sync_limit, sync_cache_key, sync_ttl = _FAST_LIMIT, cache_key_p1, _FAST_CACHE_TTL
         try:
             raw_hotels, liteapi_total_available = await _liteapi_search_with_geo_fallback(
-                limit=_FULL_LIMIT, **search_kwargs
+                limit=sync_limit, **search_kwargs
             )
-            await _set_cached_hotel_block(
-                redis, cache_key_full, raw_hotels, liteapi_total_available
-            )
+            if raw_hotels:
+                await _set_cached_hotel_block(
+                    redis, sync_cache_key, raw_hotels, liteapi_total_available, ttl=sync_ttl,
+                )
         except LiteAPIError as exc:
             if exc.status_code != 400:
                 logger.warning("LiteAPI search degraded: %s", exc.message)
-    else:
-        # Page 1 fast path: try short-TTL p1 cache, else fetch only 20 hotels.
-        cached_p1 = await _get_cached_hotel_block(redis, cache_key_p1)
-        if cached_p1 is not None:
-            raw_hotels, liteapi_total_available = cached_p1
-        else:
-            try:
-                raw_hotels, liteapi_total_available = await _liteapi_search_with_geo_fallback(
-                    limit=_FAST_LIMIT, **search_kwargs
-                )
-                if raw_hotels:
-                    await _set_cached_hotel_block(
-                        redis,
-                        cache_key_p1,
-                        raw_hotels,
-                        liteapi_total_available,
-                        ttl=_FAST_CACHE_TTL,
-                    )
-            except LiteAPIError as exc:
-                if exc.status_code != 400:
-                    logger.warning("LiteAPI search degraded: %s", exc.message)
-        # Kick off background fetch of the full 200 + pre-warm the rate
-        # cache so page-2+ requests are instant. FastAPI runs this AFTER the
-        # response is sent. Redis lock dedupes concurrent triggers.
-        if raw_hotels:
-            background_tasks.add_task(
-                _background_fill_full_cache,
-                redis,
-                cache_key_full,
-                db_liteapi_ids,
-                _parse_child_ages(child_ages),
-                **search_kwargs,
-            )
+
+    # On page-1 with no :full or :mid yet, fire a single BG task that fills
+    # :mid first (~5s) then :full (~15s) progressively, pre-warming both
+    # rate caches. The Redis lock inside the helper dedupes concurrent fires.
+    if page == 1 and raw_hotels and cached_full is None:
+        background_tasks.add_task(
+            _background_fill_progressive_caches,
+            redis,
+            cache_key_mid,
+            cache_key_full,
+            db_liteapi_ids,
+            _parse_child_ages(child_ages),
+            **search_kwargs,
+        )
 
     # Build initial list and collect IDs that have no static minRate
     no_price_ids: list[str] = []
@@ -524,40 +620,61 @@ async def list_hotels(
         if item.min_room_price is None and lite_id:
             no_price_ids.append(lite_id)
 
-    # Batch-fetch min rates for hotels that have no static pricing
+    # On the cold page-1 fast path the synchronous rate-batch is what makes
+    # the request 3-4s instead of ~1s. Skip it when only :p1 is available —
+    # the BG is already pre-warming rates and frontend polls. Filtered queries
+    # (e.g. calendar's star_rating=3) NEED prices to do their job, so we
+    # don't defer for those — they fall to the :mid sync path instead.
+    prices_pending = False
+    is_cold_p1_fast = (
+        page == 1 and cached_full is None and cached_mid is None and not has_filter
+    )
+
     if no_price_ids:
         rate_check_in = check_in or (date.today() + timedelta(days=7))
         rate_check_out = check_out or (rate_check_in + timedelta(days=1))
-        rate_cache_key = f"liteapi:minrates:{','.join(sorted(no_price_ids))}:{rate_check_in}:{rate_check_out}"
-        cached_rates = await _get_cached_liteapi_hotels(redis, rate_cache_key)
-        if cached_rates is not None:
-            min_rates = {k: v for k, v in (cached_rates if isinstance(cached_rates, dict) else {}).items()}
-        else:
-            parsed_child_ages = _parse_child_ages(child_ages)
-            min_rates = await get_min_rates_batch(
-                no_price_ids,
-                rate_check_in,
-                rate_check_out,
-                guests or 1,
-                children_ages=parsed_child_ages,
-            )
-            if min_rates:
-                await redis.set(rate_cache_key, json.dumps(min_rates), ex=_LITEAPI_CACHE_TTL) if redis else None
+        parsed_child_ages = _parse_child_ages(child_ages)
+        # Per-ID cache: dedicated /hotels/min-rates endpoint, BG prewarm, and
+        # this route all write into the same per-hotel slots → reads share.
+        hits, missing = await _get_cached_rates_per_id(
+            redis, no_price_ids, rate_check_in, rate_check_out, guests or 1, parsed_child_ages,
+        )
+        min_rates: dict[str, float] = dict(hits)
+        if missing:
+            if is_cold_p1_fast:
+                # Defer to BG. Only signal "pending" when we have ZERO cached
+                # prices — otherwise the user already sees most prices and
+                # frontend doesn't need to keep polling. Hotels remaining null
+                # likely have no availability anyway.
+                if not hits:
+                    prices_pending = True
+            else:
+                fetched = await get_min_rates_batch(
+                    missing, rate_check_in, rate_check_out, guests or 1,
+                    children_ages=parsed_child_ages,
+                )
+                if fetched:
+                    min_rates.update(fetched)
+                    await _set_cached_rates_per_id(
+                        redis, fetched, rate_check_in, rate_check_out, guests or 1, parsed_child_ages,
+                    )
         for item in liteapi_items:
             if item.min_room_price is None and item.liteapi_hotel_id in min_rates:
                 item.min_room_price = min_rates[item.liteapi_hotel_id]
 
-    # Apply price range filter to LiteAPI results after prices are populated
-    if min_price is not None:
-        liteapi_items = [
-            item for item in liteapi_items
-            if item.min_room_price is not None and item.min_room_price >= min_price
-        ]
-    if max_price is not None:
-        liteapi_items = [
-            item for item in liteapi_items
-            if item.min_room_price is not None and item.min_room_price <= max_price
-        ]
+    # Apply price range filter only when prices are populated — on cold p1
+    # most prices are null and the filter would empty out the page.
+    if not prices_pending:
+        if min_price is not None:
+            liteapi_items = [
+                item for item in liteapi_items
+                if item.min_room_price is not None and item.min_room_price >= min_price
+            ]
+        if max_price is not None:
+            liteapi_items = [
+                item for item in liteapi_items
+                if item.min_room_price is not None and item.min_room_price <= max_price
+            ]
 
     all_items = db_items + liteapi_items
 
@@ -604,6 +721,10 @@ async def list_hotels(
             "page": page,
             "per_page": per_page,
             "total_pages": total_pages,
+            # True when page-1 cold path returned hotels without min_room_price
+            # because the rate batch was deferred to BG. Frontend should poll
+            # every ~5s to pick up the rates once :mid finishes (≈10s).
+            "prices_pending": prices_pending,
         },
     )
 
@@ -745,6 +866,53 @@ async def get_liteapi_room_types(
 
 
 # ── Facilities proxy ─────────────────────────────────────────────────────────
+
+@router.get("/min-rates")
+async def get_min_rates(
+    request: Request,
+    hotel_ids: str = Query(..., description="Comma-separated LiteAPI hotel IDs"),
+    check_in: date | None = None,
+    check_out: date | None = None,
+    guests: int = Query(1, ge=1, le=10),
+    child_ages: str | None = Query(None, description="Comma-separated child ages"),
+):
+    """Fetch min prices for a specific list of hotel IDs.
+
+    Used by the frontend to populate page-1 prices fast (~3s, one LiteAPI
+    chunk) instead of waiting for the BG to fill :mid (~6-7s). Results are
+    cached under the same rate-cache key the /hotels route uses, so a
+    subsequent /hotels poll for the same hotels hits the cache instantly.
+    """
+    ids = [s.strip() for s in (hotel_ids or "").split(",") if s.strip()]
+    if not ids:
+        return {}
+    ids = ids[:100]  # safety cap — single page's worth
+    redis = getattr(request.app.state, "redis", None)
+    rate_check_in = check_in or (date.today() + timedelta(days=7))
+    rate_check_out = check_out or (rate_check_in + timedelta(days=1))
+    parsed_ages = _parse_child_ages(child_ages)
+    # Per-ID cache so any subsequent /hotels poll can pick these up even if
+    # its computed `no_price_ids` differs from the set sent here.
+    hits, missing = await _get_cached_rates_per_id(
+        redis, ids, rate_check_in, rate_check_out, guests, parsed_ages,
+    )
+    result = dict(hits)
+    if missing:
+        try:
+            fetched = await get_min_rates_batch(
+                missing, rate_check_in, rate_check_out, guests, children_ages=parsed_ages,
+            )
+        except LiteAPIError as exc:
+            if exc.status_code != 400:
+                logger.warning("min-rates fetch degraded: %s", exc.message)
+            fetched = {}
+        if fetched:
+            result.update(fetched)
+            await _set_cached_rates_per_id(
+                redis, fetched, rate_check_in, rate_check_out, guests, parsed_ages,
+            )
+    return result
+
 
 @router.get("/facilities")
 async def list_facilities(request: Request):

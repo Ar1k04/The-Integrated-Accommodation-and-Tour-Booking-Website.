@@ -1,6 +1,7 @@
 """LiteAPI hotel search, rates, prebook, and booking integration."""
 import asyncio
 import logging
+import time
 from datetime import date
 from typing import Any
 
@@ -10,6 +11,49 @@ from app.core.config import settings
 from app.services.facility_mapping import HOTEL_TYPE_SLUG_TO_ID
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Global LiteAPI rate limiter ─────────────────────────────────────────────
+# LiteAPI sandbox caps clients at ~5 req/s. Our background hotel-load fans out
+# rate-batch calls (limit=1000 → ~20 chunks via asyncio.gather), which used to
+# burst above the cap and trigger "Too many requests" rejections. A token
+# bucket smooths it: capacity=5 lets a single page or single chunk-batch fire
+# immediately, then refills at 5 tokens/sec so sustained traffic stays under
+# the limit. The bucket is attached as an httpx event_hook on _client(), so
+# every outgoing request automatically waits its turn — no per-call sprinkling.
+class _RateLimiter:
+    """GCRA (Generic Cell Rate Algorithm) limiter.
+
+    Allows `burst` immediate, then `rate_per_sec` sustained. Concurrent acquires
+    queue behind each other correctly (each reserves a future slot via the
+    theoretical arrival time TAT) — a simpler token-bucket would let multiple
+    acquires "see" the same refill window and burst above the limit.
+    """
+
+    def __init__(self, rate_per_sec: float, burst: int) -> None:
+        self._T = 1.0 / rate_per_sec  # inter-arrival interval
+        self._tau = self._T * burst   # burst tolerance — how many slots can be "ahead of schedule"
+        self._tat = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            new_tat = max(self._tat, now) + self._T
+            wait = max(0.0, new_tat - self._tau - now)
+            self._tat = new_tat
+        if wait > 0:
+            await asyncio.sleep(wait)
+
+
+# LiteAPI sandbox advertises ~5 req/s but in practice rate-limits more
+# aggressively (rolling-window detector flags bursts). 3/s with burst=3 leaves
+# headroom for transient spikes from concurrent requests sharing the same key.
+_LITEAPI_LIMITER = _RateLimiter(rate_per_sec=3.0, burst=3)
+
+
+async def _throttle_request(_request: httpx.Request) -> None:
+    await _LITEAPI_LIMITER.acquire()
 
 # Reverse lookup: LiteAPI hotelTypeId -> our local slug.
 _LITEAPI_TYPE_ID_TO_SLUG = {v: k for k, v in HOTEL_TYPE_SLUG_TO_ID.items()}
@@ -25,6 +69,7 @@ def _client() -> httpx.AsyncClient:
             base_url=settings.LITEAPI_BASE_URL,
             headers={"X-API-Key": settings.LITEAPI_KEY, "Accept": "application/json"},
             timeout=15.0,
+            event_hooks={"request": [_throttle_request]},
         )
     return _CLIENT
 
@@ -41,6 +86,7 @@ def _dashboard_client() -> httpx.AsyncClient:
             base_url=settings.LITEAPI_DASHBOARD_BASE_URL,
             headers={"X-API-Key": settings.LITEAPI_KEY, "Accept": "application/json"},
             timeout=15.0,
+            event_hooks={"request": [_throttle_request]},
         )
     return _DASHBOARD_CLIENT
 

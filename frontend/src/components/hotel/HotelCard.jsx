@@ -6,7 +6,7 @@ import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { useSearchStore } from '@/store/searchStore'
 import { format } from 'date-fns'
 
-export default function HotelCard({ hotel }) {
+export default function HotelCard({ hotel, pricesPending = false }) {
   const { t } = useTranslation('common')
   const fmt = useFormatCurrency()
   const { checkIn, checkOut, guests } = useSearchStore()
@@ -110,9 +110,15 @@ export default function HotelCard({ hotel }) {
         <div className="flex items-end justify-between mt-4 pt-3 border-t border-gray-100">
           <div>
             <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">From</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {hotel.min_room_price != null ? fmt(hotel.min_room_price) : '—'}
-            </p>
+            {hotel.min_room_price != null ? (
+              <p className="text-2xl font-bold text-gray-900">{fmt(hotel.min_room_price)}</p>
+            ) : pricesPending ? (
+              // Backend deferred the rate batch on the cold page-1 path; the
+              // query refetches every 5s and the price will fill in shortly.
+              <div className="h-7 w-20 bg-gray-200 rounded animate-pulse my-1" />
+            ) : (
+              <p className="text-2xl font-bold text-gray-900">—</p>
+            )}
             <p className="text-xs text-gray-500">{t('common.perNight')}</p>
           </div>
           <Link

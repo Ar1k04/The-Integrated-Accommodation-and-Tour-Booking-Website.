@@ -1,13 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
 import { toursApi } from '@/api/toursApi'
 import TourCard from '@/components/tour/TourCard'
 import TourFilters from '@/components/tour/TourFilters'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
-import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
+import Pagination from '@/components/common/Pagination'
 import { TOUR_CATEGORIES } from '@/utils/constants'
 import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search, Info } from 'lucide-react'
 
@@ -42,6 +42,7 @@ export default function ToursPage() {
   const [searchText, setSearchText] = useState(params.get('q') || '')
   const [submittedSearch, setSubmittedSearch] = useState(params.get('q') || '')
   const [filters, setFilters] = useState({ ...EMPTY_FILTERS, city: params.get('city') || '' })
+  const [page, setPage] = useState(1)
 
   const SORT_OPTIONS = [
     { label: t('common:sort.recommended'), value: 'created_at' },
@@ -102,10 +103,12 @@ export default function ToursPage() {
     end_date: filters.end_date || undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
-    per_page: 12,
+    per_page: 30,
   }), [submittedSearch, filters, category, sortBy, sortOrder])
 
+  // Reset to page 1 whenever filters/sort/search change.
   useEffect(() => {
+    setPage(1)
     if (isFirstRender.current) { isFirstRender.current = false; return }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [queryParams])
@@ -130,25 +133,22 @@ export default function ToursPage() {
     setSubmittedSearch('')
   }
 
-  const {
-    data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading,
-  } = useInfiniteQuery({
-    queryKey: ['tours-search', queryParams],
-    queryFn: ({ pageParam }) => toursApi.list({ ...queryParams, page: pageParam }),
-    initialPageParam: 1,
-    getNextPageParam: (lastPage) => {
-      const meta = lastPage.data?.meta
-      if (meta && meta.page < meta.total_pages) return meta.page + 1
-      return undefined
-    },
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['tours-search', queryParams, page],
+    queryFn: () => toursApi.list({ ...queryParams, page }),
+    placeholderData: keepPreviousData,
   })
 
-  const allTours = data?.pages.flatMap((p) => p.data?.items || []) || []
-  const total = data?.pages[0]?.data?.meta?.total || 0
+  const tours = data?.data?.items || []
+  const meta = data?.data?.meta
+  const total = meta?.total || 0
+  const totalPages = meta?.total_pages || 1
 
-  const loadMoreRef = useInfiniteScroll(() => {
-    if (hasNextPage && !isFetchingNextPage) fetchNextPage()
-  }, { enabled: hasNextPage })
+  const handlePageChange = (next) => {
+    if (next < 1 || next > totalPages || next === page) return
+    setPage(next)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   return (
     <>
@@ -276,10 +276,10 @@ export default function ToursPage() {
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+              <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5 ${isFetching && !isLoading ? 'opacity-60 transition-opacity' : ''}`}>
                 {isLoading
-                  ? Array.from({ length: 6 }, (_, i) => <TourCardSkeleton key={i} />)
-                  : allTours.map((tour) => (
+                  ? Array.from({ length: 30 }, (_, i) => <TourCardSkeleton key={i} />)
+                  : tours.map((tour) => (
                       <TourCard
                         key={tour.viator_product_code || String(tour.id)}
                         tour={tour}
@@ -287,18 +287,19 @@ export default function ToursPage() {
                     ))
                 }
               </div>
-              {!isLoading && allTours.length === 0 && (
+              {!isLoading && tours.length === 0 && (
                 <div className="text-center py-20">
                   <p className="text-gray-400 text-lg mb-2">{t('tours:page.noResults')}</p>
                   <p className="text-gray-400 text-sm">{t('tours:page.tryAdjusting')}</p>
                 </div>
               )}
-              {isFetchingNextPage && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5 mt-5">
-                  <TourCardSkeleton /><TourCardSkeleton /><TourCardSkeleton />
-                </div>
+              {!isLoading && totalPages > 1 && (
+                <Pagination
+                  currentPage={page}
+                  totalPages={totalPages}
+                  onPageChange={handlePageChange}
+                />
               )}
-              <div ref={loadMoreRef} />
             </div>
           </div>
         </div>
