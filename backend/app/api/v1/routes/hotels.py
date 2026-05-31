@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import math
@@ -204,10 +205,10 @@ async def _prewarm_rate_cache(
     min_rates = await get_min_rates_batch(
         missing, rate_check_in, rate_check_out, guests, children_ages=parsed_child_ages,
     )
-    if min_rates:
-        await _set_cached_rates_per_id(
-            redis, min_rates, rate_check_in, rate_check_out, guests, parsed_child_ages,
-        )
+    # Pass the FULL missing list so IDs without availability get sentinel-cached.
+    await _set_cached_rates_per_id(
+        redis, missing, min_rates or {}, rate_check_in, rate_check_out, guests, parsed_child_ages,
+    )
 
 
 async def _background_fill_progressive_caches(
@@ -285,7 +286,11 @@ def _rate_key(hotel_id: str, ci, co, guests: int, ages_csv: str) -> str:
 async def _get_cached_rates_per_id(
     redis, hotel_ids: list[str], ci, co, guests: int, ages: list[int] | None
 ) -> tuple[dict[str, float], list[str]]:
-    """Bulk read per-ID rates. Returns (hits, missing_ids)."""
+    """Bulk read per-ID rates. Returns (hits, missing_ids).
+
+    Sentinel "0" cached for IDs LiteAPI confirmed have no availability — those
+    are counted as neither hit nor missing (don't refetch, don't apply price).
+    """
     if redis is None or not hotel_ids:
         return {}, list(hotel_ids)
     ages_csv = ",".join(str(a) for a in (ages or []))
@@ -301,22 +306,35 @@ async def _get_cached_rates_per_id(
             missing.append(hid)
             continue
         try:
-            hits[hid] = float(v)
+            p = float(v)
         except (TypeError, ValueError):
             missing.append(hid)
+            continue
+        if p > 0:
+            hits[hid] = p
+        # else: sentinel — known no-rate, skip (no refetch, no apply)
     return hits, missing
 
 
 async def _set_cached_rates_per_id(
-    redis, rates: dict[str, float], ci, co, guests: int, ages: list[int] | None
+    redis,
+    queried_ids: list[str],
+    rates: dict[str, float],
+    ci, co, guests: int, ages: list[int] | None,
 ) -> None:
-    """Bulk write per-ID rates (pipelined)."""
-    if redis is None or not rates:
+    """Write per-ID rates AND sentinel '0' for queried IDs that returned no rate.
+
+    Caching the misses too — under the same TTL — avoids paying the LiteAPI
+    refetch on every subsequent page navigation for hotels LiteAPI consistently
+    has no availability for.
+    """
+    if redis is None or not queried_ids:
         return
     ages_csv = ",".join(str(a) for a in (ages or []))
     try:
         pipe = redis.pipeline()
-        for hid, price in rates.items():
+        for hid in queried_ids:
+            price = rates.get(hid, 0.0)  # 0 sentinel = no availability
             pipe.set(_rate_key(hid, ci, co, guests, ages_csv), str(price), ex=_LITEAPI_CACHE_TTL)
         await pipe.execute()
     except Exception:
@@ -581,17 +599,37 @@ async def list_hotels(
             sync_limit, sync_cache_key, sync_ttl = _MID_LIMIT, cache_key_mid, _LITEAPI_CACHE_TTL
         else:
             sync_limit, sync_cache_key, sync_ttl = _FAST_LIMIT, cache_key_p1, _FAST_CACHE_TTL
-        try:
-            raw_hotels, liteapi_total_available = await _liteapi_search_with_geo_fallback(
-                limit=sync_limit, **search_kwargs
-            )
-            if raw_hotels:
-                await _set_cached_hotel_block(
-                    redis, sync_cache_key, raw_hotels, liteapi_total_available, ttl=sync_ttl,
+
+        # If BG is already fetching this exact search, wait for it instead of
+        # starting a duplicate sync fetch — common when user clicks page 2/3
+        # right after page-1 load. BG only fills :mid and :full, so skip the
+        # wait for :p1 (which has no BG path).
+        bg_lock_key = f"{cache_key_full}:bg-lock"
+        bg_in_flight = (
+            redis is not None
+            and sync_cache_key != cache_key_p1
+            and await redis.get(bg_lock_key)
+        )
+        if bg_in_flight:
+            for _ in range(40):  # up to 8s @ 200ms poll
+                await asyncio.sleep(0.2)
+                cached = await _get_cached_hotel_block(redis, sync_cache_key)
+                if cached is not None:
+                    raw_hotels, liteapi_total_available = cached
+                    break
+
+        if not raw_hotels:
+            try:
+                raw_hotels, liteapi_total_available = await _liteapi_search_with_geo_fallback(
+                    limit=sync_limit, **search_kwargs
                 )
-        except LiteAPIError as exc:
-            if exc.status_code != 400:
-                logger.warning("LiteAPI search degraded: %s", exc.message)
+                if raw_hotels:
+                    await _set_cached_hotel_block(
+                        redis, sync_cache_key, raw_hotels, liteapi_total_available, ttl=sync_ttl,
+                    )
+            except LiteAPIError as exc:
+                if exc.status_code != 400:
+                    logger.warning("LiteAPI search degraded: %s", exc.message)
 
     # On page-1 with no :full or :mid yet, fire a single BG task that fills
     # :mid first (~5s) then :full (~15s) progressively, pre-warming both
@@ -655,9 +693,9 @@ async def list_hotels(
                 )
                 if fetched:
                     min_rates.update(fetched)
-                    await _set_cached_rates_per_id(
-                        redis, fetched, rate_check_in, rate_check_out, guests or 1, parsed_child_ages,
-                    )
+                await _set_cached_rates_per_id(
+                    redis, missing, fetched or {}, rate_check_in, rate_check_out, guests or 1, parsed_child_ages,
+                )
         for item in liteapi_items:
             if item.min_room_price is None and item.liteapi_hotel_id in min_rates:
                 item.min_room_price = min_rates[item.liteapi_hotel_id]
@@ -908,9 +946,9 @@ async def get_min_rates(
             fetched = {}
         if fetched:
             result.update(fetched)
-            await _set_cached_rates_per_id(
-                redis, fetched, rate_check_in, rate_check_out, guests, parsed_ages,
-            )
+        await _set_cached_rates_per_id(
+            redis, missing, fetched or {}, rate_check_in, rate_check_out, guests, parsed_ages,
+        )
     return result
 
 

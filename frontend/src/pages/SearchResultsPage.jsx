@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
 import { hotelsApi } from '@/api/hotelsApi'
@@ -63,7 +63,27 @@ function HotelResults({ city, cityDisplay, country, latitude, longitude, radiusK
   // Reset to page 1 whenever filters, sort, or the underlying search change.
   useEffect(() => { setPage(1) }, [queryParams])
 
-  const { data, isLoading, isFetching } = useQuery({
+  const queryClient = useQueryClient()
+  // When on page 1, pre-warm pages 2-5 in the background. By the time the
+  // user clicks pagination, React Query already has the data — instant render.
+  // Backend's wait-for-BG logic dedupes the LiteAPI calls so the prefetch
+  // doesn't burn extra requests once :mid is cached.
+  useEffect(() => {
+    if (page !== 1) return
+    const ids = [2, 3, 4, 5]
+    const timers = ids.map((p) =>
+      setTimeout(() => {
+        queryClient.prefetchQuery({
+          queryKey: ['hotels-search', queryParams, p],
+          queryFn: () => hotelsApi.list({ ...queryParams, page: p }),
+          staleTime: 60_000,
+        })
+      }, 500 * (p - 1)),  // stagger to avoid thundering-herd on backend
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [page, queryParams, queryClient])
+
+  const { data, isLoading } = useQuery({
     queryKey: ['hotels-search', queryParams, page],
     queryFn: () => hotelsApi.list({ ...queryParams, page }),
     placeholderData: keepPreviousData,
@@ -175,7 +195,7 @@ function HotelResults({ city, cityDisplay, country, latitude, longitude, radiusK
           ))}
         </div>
 
-        <div className={`space-y-4 ${isFetching && !isLoading ? 'opacity-60 transition-opacity' : ''}`}>
+        <div className="space-y-4">
           {isLoading
             ? Array.from({ length: 4 }, (_, i) => <HotelCardSkeleton key={i} />)
             : hotels.map((hotel) => (
