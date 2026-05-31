@@ -2,9 +2,12 @@ import asyncio
 import json
 import logging
 import math
+import re
 import uuid
 from datetime import date, timedelta
 from typing import Annotated
+
+from unidecode import unidecode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import and_, func, or_, select, text
@@ -32,6 +35,20 @@ from app.services.lock_service import RedisUnavailableError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hotels", tags=["Hotels"])
+
+
+def _norm_text(s: str) -> str:
+    """Strip diacritics + non-alphanumerics for resilient location matching.
+
+    "Hà Nội" → "hanoi", "Viet Nam"/"Vietnam"/"VN" all collapse so a partner
+    row stored as "Vietnam" matches a search sent as ISO-2 "VN". Mirrors the
+    SQL-side `_norm_col` so both ends produce the same token."""
+    return re.sub(r"[^a-z0-9]", "", unidecode(s or "").lower())
+
+
+def _norm_col(col):
+    """SQL twin of `_norm_text` applied to a column (f_unaccent lowercases)."""
+    return func.regexp_replace(func.f_unaccent(col), "[^a-z0-9]", "", "g")
 
 _LITEAPI_CACHE_TTL = 300  # 5 minutes
 # Three-tier progressive cache:
@@ -411,9 +428,39 @@ async def list_hotels(
     if owner_id:
         query = query.where(Hotel.owner_id == owner_id)
     if city:
-        query = query.where(Hotel.city.ilike(f"%{city}%"))
+        # Diacritic- and space-insensitive substring match so a partner row
+        # stored as "Hà Nội" matches a search sent as "Hanoi".
+        city_norm = _norm_text(city)
+        if city_norm:
+            query = query.where(_norm_col(Hotel.city).like(f"%{city_norm}%"))
     if country:
-        query = query.where(Hotel.country.ilike(f"%{country}%"))
+        # Accept either ISO-2 code or full name. The frontend autocomplete sends
+        # the ISO-2 code ("VN"), but partners store the full name ("Vietnam"),
+        # so resolve both into normalized candidates and match any of them.
+        candidates = {_norm_text(country)}
+        code = country.strip().upper()
+        if len(code) == 2:
+            row = (
+                await db.execute(
+                    text("SELECT name FROM countries WHERE code = :c"), {"c": code}
+                )
+            ).first()
+            if row:
+                candidates.add(_norm_text(row[0]))
+        else:
+            row = (
+                await db.execute(
+                    text(
+                        "SELECT code FROM countries WHERE name_norm = f_unaccent(:c) LIMIT 1"
+                    ),
+                    {"c": country},
+                )
+            ).first()
+            if row:
+                candidates.add(_norm_text(row[0]))
+        candidates.discard("")
+        if candidates:
+            query = query.where(_norm_col(Hotel.country).in_(list(candidates)))
     if latitude is not None and longitude is not None:
         # Haversine in SQL (km). Dataset is small enough that this beats adding PostGIS.
         r = float(radius_km or 5)
@@ -424,11 +471,19 @@ async def list_hotels(
             + func.sin(func.radians(latitude))
             * func.sin(func.radians(Hotel.latitude))
         )
-        query = (
-            query.where(Hotel.latitude.is_not(None))
-            .where(Hotel.longitude.is_not(None))
-            .where(dist_km <= r)
+        within = and_(
+            Hotel.latitude.is_not(None),
+            Hotel.longitude.is_not(None),
+            dist_km <= r,
         )
+        if city or country:
+            # Map-based (radius) searches always carry a city/country too. Partner
+            # hotels created without coordinates would otherwise be silently
+            # dropped from every such search — let the city/country filter above
+            # qualify them by treating "no coords" as a pass for the geo clause.
+            query = query.where(or_(within, Hotel.latitude.is_(None)))
+        else:
+            query = query.where(within)
     if star_rating:
         query = query.where(Hotel.star_rating == star_rating)
     if min_price is not None:

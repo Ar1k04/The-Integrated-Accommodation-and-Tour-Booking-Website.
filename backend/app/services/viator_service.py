@@ -174,6 +174,20 @@ def _normalize_dest_name(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", no_marks.lower())
 
 
+def normalize_destination_key(query: str) -> str:
+    """Normalized + alias-resolved match key for a free-text destination.
+
+    Returns the same canonical key Viator destination matching resolves to
+    (diacritics + spaces stripped, aliases applied), exposed so local data
+    such as partner tours can be filtered against the identical form. This is
+    what lets "Ha Noi" / "Hà Nội" / "Saigon" line partner rows up with the
+    Viator results for the same place. Returns '' when there is no
+    alphanumeric content to match on.
+    """
+    norm = _normalize_dest_name(query)
+    return _DESTINATION_ALIASES.get(norm, norm)
+
+
 def _type_priority(t: str | None) -> int:
     return _DEST_TYPE_PRIORITY.get((t or "").upper(), 0)
 

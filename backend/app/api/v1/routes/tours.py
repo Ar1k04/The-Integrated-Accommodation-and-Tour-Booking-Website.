@@ -446,7 +446,17 @@ async def list_tours(
         if owner_id:
             query = query.where(Tour.owner_id == owner_id)
         if city:
-            query = query.where(Tour.city.ilike(f"%{city}%"))
+            # Match partner tours using the SAME normalized + alias-resolved key
+            # Viator search uses, so "Ha Noi"/"Hà Nội"/"Saigon" surface partner
+            # rows alongside the Viator results instead of being dropped by a raw
+            # ilike. f_unaccent already lowercases + strips diacritics; the
+            # regexp_replace removes spaces/punctuation to mirror _normalize_dest_name.
+            norm_city = viator_service.normalize_destination_key(city)
+            if norm_city:
+                city_key = func.regexp_replace(func.f_unaccent(Tour.city), "[^a-z0-9]+", "", "g")
+                query = query.where(city_key.like(f"%{norm_city}%"))
+            else:
+                query = query.where(Tour.city.ilike(f"%{city}%"))
         if country:
             query = query.where(Tour.country.ilike(f"%{country}%"))
         if category:
