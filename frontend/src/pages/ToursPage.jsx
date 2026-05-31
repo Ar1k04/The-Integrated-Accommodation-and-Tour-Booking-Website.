@@ -8,7 +8,6 @@ import TourCard from '@/components/tour/TourCard'
 import TourFilters from '@/components/tour/TourFilters'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
 import Pagination from '@/components/common/Pagination'
-import { TOUR_CATEGORIES } from '@/utils/constants'
 import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search, Info } from 'lucide-react'
 
 const EMPTY_FILTERS = {
@@ -38,7 +37,6 @@ export default function ToursPage() {
   const { t } = useTranslation(['tours', 'common'])
   const [showFilters, setShowFilters] = useState(false)
   const [sort, setSort] = useState('created_at')
-  const [category, setCategory] = useState(params.get('category') || '')
   const [searchText, setSearchText] = useState(params.get('q') || '')
   const [submittedSearch, setSubmittedSearch] = useState(params.get('q') || '')
   const [filters, setFilters] = useState({ ...EMPTY_FILTERS, city: params.get('city') || '' })
@@ -91,7 +89,6 @@ export default function ToursPage() {
   const queryParams = useMemo(() => ({
     q: submittedSearch || undefined,
     city: filters.city || undefined,
-    category: category || undefined,
     min_price: filters.min_price || undefined,
     max_price: filters.max_price || undefined,
     tags: filters.tags?.length ? filters.tags : undefined,
@@ -104,7 +101,7 @@ export default function ToursPage() {
     sort_by: sortBy,
     sort_order: sortOrder,
     per_page: 30,
-  }), [submittedSearch, filters, category, sortBy, sortOrder])
+  }), [submittedSearch, filters, sortBy, sortOrder])
 
   // Reset to page 1 whenever filters/sort/search change.
   useEffect(() => {
@@ -128,7 +125,6 @@ export default function ToursPage() {
 
   const resetAll = () => {
     setFilters({ ...EMPTY_FILTERS })
-    setCategory('')
     setSearchText('')
     setSubmittedSearch('')
   }
@@ -211,28 +207,6 @@ export default function ToursPage() {
 
       <div className="bg-surface min-h-screen">
         <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex flex-wrap gap-2 mb-6">
-            <button
-              onClick={() => setCategory('')}
-              className={`px-4 py-2 rounded-full text-sm font-medium border transition-colors ${
-                !category ? 'bg-primary text-white border-primary' : 'hover:border-gray-400'
-              }`}
-            >
-              {t('tours:page.allTours')}
-            </button>
-            {TOUR_CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setCategory(cat === category ? '' : cat)}
-                className={`px-4 py-2 rounded-full text-sm font-medium border transition-colors capitalize ${
-                  category === cat ? 'bg-primary text-white border-primary' : 'hover:border-gray-400'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
           <div className="flex items-center justify-between mb-6">
             <h2 className="font-heading text-xl font-bold text-gray-900">
               {t('tours:page.toursFound', { count: total })}

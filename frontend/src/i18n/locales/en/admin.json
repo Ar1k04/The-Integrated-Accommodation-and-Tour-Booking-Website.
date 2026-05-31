@@ -88,7 +88,12 @@
     "cancel": "Cancel",
     "edit": "Edit",
     "delete": "Delete",
-    "backToDashboard": "← Dashboard"
+    "backToDashboard": "← Dashboard",
+    "addDay": "Add day",
+    "addBand": "Add age band",
+    "addHighlight": "Add highlight",
+    "addItem": "Add item",
+    "addImage": "Add image"
   },
   "form": {
     "name": "Name",
@@ -122,7 +127,26 @@
     "email": "Email",
     "role": "Role",
     "selectHotel": "Select Hotel",
-    "selectHotelPrompt": "— Select a hotel —"
+    "selectHotelPrompt": "— Select a hotel —",
+    "itinerary": "Itinerary",
+    "dayTitle": "Day title (e.g. Day 1: Old Quarter)",
+    "dayDescription": "What happens on this day",
+    "ageBands": "Age bands & pricing",
+    "ageBandHelp": "Define each age range and its price per person. An ADULT band is required; children are matched to a band by age.",
+    "bandName": "Band",
+    "startAge": "From age",
+    "endAge": "To age",
+    "bandPrice": "Price/person",
+    "highlights": "Highlights",
+    "highlightPlaceholder": "e.g. Skip-the-line entry",
+    "includes": "Includes",
+    "includePlaceholder": "e.g. Hotel pickup",
+    "excludes": "Excludes",
+    "excludePlaceholder": "e.g. Gratuities",
+    "imageUrl": "Image URL",
+    "adultBandRequired": "Define an ADULT band with a price greater than 0.",
+    "ageRangeInvalid": "Age band '{{band}}' has 'from age' greater than 'to age'.",
+    "dropImages": "Drag & drop images here, or click to browse"
   },
   "status": {
     "active": "Active",

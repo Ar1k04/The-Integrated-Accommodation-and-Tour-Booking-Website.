@@ -1,6 +1,19 @@
 export const ROOM_TYPES = ['single', 'double', 'suite', 'family', 'villa']
 
-export const TOUR_CATEGORIES = ['adventure', 'cultural', 'beach', 'city', 'nature', 'food']
+// Partner tour categories — aligned with Viator's product categories so
+// Partner-created tours share the same taxonomy as Viator tours.
+export const TOUR_CATEGORIES = [
+  'Walking Tours',
+  'Food & Drinks',
+  'Day Trips',
+  'Private Tours',
+  'Cultural Tours',
+  'Cooking Classes',
+  'Hiking Tours',
+  'City Tours',
+  'Cruises & Sailing',
+  'Multi-day Tours',
+]
 
 export const AMENITIES = [
   'wifi', 'pool', 'gym', 'spa', 'parking', 'restaurant',

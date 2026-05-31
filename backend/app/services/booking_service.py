@@ -17,7 +17,12 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.pricing import compute_room_subtotal, compute_tour_subtotal
+from app.core.pricing import (
+    AgeBandError,
+    compute_room_subtotal,
+    compute_tour_subtotal,
+    compute_tour_subtotal_from_bands,
+)
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemStatus, BookingItemType
 from app.models.flight_booking import FlightBooking
@@ -408,17 +413,29 @@ async def _reserve_tour_item(
 
     schedule.booked_slots += item.quantity
 
-    # Partner tours mirror hotel child pricing: adults full rate, children
-    # pay the default tier fraction (0–5 free, 6–12 50% off, 13–17 25% off).
     adults = item.adults or item.quantity
     children_ages = list(item.children_ages or [])
 
+    # Partner tours price by their own age bands (same model as Viator). Tours
+    # without bands (legacy/seeded) fall back to the default child tiers
+    # (0–5 free, 6–12 50% off, 13–17 25% off).
     unit_price = Decimal(str(tour.price_per_person))
-    subtotal = compute_tour_subtotal(
-        unit_price,
-        adults=adults,
-        children_ages=children_ages,
-    )
+    if tour.age_bands:
+        try:
+            subtotal = compute_tour_subtotal_from_bands(
+                tour.age_bands,
+                adults=adults,
+                children_ages=children_ages,
+                fallback_price=unit_price,
+            )
+        except AgeBandError as exc:
+            raise BookingServiceError(str(exc))
+    else:
+        subtotal = compute_tour_subtotal(
+            unit_price,
+            adults=adults,
+            children_ages=children_ages,
+        )
 
     bi = BookingItem(
         item_type=BookingItemType.tour.value,

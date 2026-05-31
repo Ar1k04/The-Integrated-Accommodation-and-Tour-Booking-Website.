@@ -92,8 +92,9 @@ def compute_tour_subtotal(
 
     Adults pay full ``price_per_person``; each child pays the tier fraction
     (default: 0–5 free, 6–12 50% off, 13–17 25% off). Used by
-    ``_reserve_tour_item`` so partner tours mirror the hotel child-pricing
-    behaviour. External suppliers (Viator) trust the supplier-quoted price.
+    ``_reserve_tour_item`` as the **fallback** for partner tours that have no
+    age bands defined. External suppliers (Viator) trust the supplier-quoted
+    price.
     """
     price = Decimal(str(price_per_person))
     adults = max(1, int(adults))
@@ -102,3 +103,71 @@ def compute_tour_subtotal(
     for age in children_ages or []:
         child_total += price * child_price_multiplier(age, tiers)
     return (adult_total + child_total).quantize(Decimal("0.01"))
+
+
+def _band_name(band: dict) -> str:
+    return str(band.get("age_band") or band.get("ageBand") or "").strip().upper()
+
+
+def _band_price(band: dict, fallback) -> Decimal:
+    """Per-person price for a band, falling back to the tour base price when
+    the band carries no explicit price (e.g. Viator-shaped bands)."""
+    raw = band.get("price")
+    if raw is None:
+        return Decimal(str(fallback))
+    return Decimal(str(raw))
+
+
+def adult_band_price(age_bands: list[dict] | None, fallback) -> Decimal:
+    """Price of the ADULT band, or ``fallback`` when there is no ADULT band."""
+    for band in age_bands or []:
+        if _band_name(band) == "ADULT":
+            return _band_price(band, fallback)
+    return Decimal(str(fallback))
+
+
+def match_age_band(age: int, age_bands: list[dict] | None) -> dict | None:
+    """Return the (non-ADULT) band whose range contains ``age``.
+
+    Mirrors ``viator_service._map_ages_to_paxmix``: ADULT is the catch-all
+    upper range and is excluded from child matching so an over-broad ADULT
+    band can't swallow infant ages. The most specific (lowest start_age)
+    child band wins. Returns ``None`` when no child band accepts the age.
+    """
+    child_bands = [b for b in (age_bands or []) if _band_name(b) != "ADULT"]
+    child_bands.sort(key=lambda b: int(b.get("start_age") or b.get("startAge") or 0))
+    for band in child_bands:
+        start = int(band.get("start_age") or band.get("startAge") or 0)
+        end = int(band.get("end_age") or band.get("endAge") or 99)
+        if start <= age <= end:
+            return band
+    return None
+
+
+class AgeBandError(ValueError):
+    """A child age falls outside every band the tour publishes."""
+
+
+def compute_tour_subtotal_from_bands(
+    age_bands: list[dict] | None,
+    adults: int,
+    children_ages: list[int] | None,
+    fallback_price,
+) -> Decimal:
+    """Compute booking subtotal for a partner tour using its own age bands.
+
+    Adults pay the ADULT band price; each child pays the price of the band
+    its age falls into. Ages outside every band raise ``AgeBandError`` so the
+    caller can reject the booking (mirrors Viator's age-band enforcement).
+    """
+    adults = max(1, int(adults))
+    adult_price = adult_band_price(age_bands, fallback_price)
+    total = adult_price * Decimal(adults)
+    for age in children_ages or []:
+        band = match_age_band(age, age_bands)
+        if band is None:
+            raise AgeBandError(
+                f"Age {age} is outside this tour's accepted age bands."
+            )
+        total += _band_price(band, fallback_price)
+    return total.quantize(Decimal("0.01"))

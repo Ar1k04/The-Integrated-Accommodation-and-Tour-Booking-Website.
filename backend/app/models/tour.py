@@ -27,6 +27,11 @@ class Tour(Base):
     includes: Mapped[dict | None] = mapped_column(JSONB, default=list)
     excludes: Mapped[dict | None] = mapped_column(JSONB, default=list)
     images: Mapped[dict | None] = mapped_column(JSONB, default=list)
+    # Supplier-style age bands (mirrors Viator `pricingInfo.ageBands[]`). Each
+    # entry: {age_band, start_age, end_age, min_travelers, max_travelers, price}.
+    # Partner tours define their own bands + per-person price so they share the
+    # same detail page, availability check, and child-pricing as Viator tours.
+    age_bands: Mapped[dict | None] = mapped_column(JSONB, default=list)
     avg_rating: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     total_reviews: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     viator_product_code: Mapped[str | None] = mapped_column(String(100), index=True)

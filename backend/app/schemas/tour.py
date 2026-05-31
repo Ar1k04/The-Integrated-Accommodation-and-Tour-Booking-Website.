@@ -2,12 +2,31 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class TourAgeBand(BaseModel):
+    """Supplier-defined age band for a tour product.
+
+    Mirrors Viator's ``pricingInfo.ageBands[]`` — each supplier (Viator OR a
+    platform Partner) publishes its own age ranges; the frontend uses this
+    list to validate child age input and render "Children 4-12 yrs only"
+    hints. ``price`` is the per-person price for the band: Partner tours set
+    it so the shared availability/booking flow can price each traveler by
+    band; Viator leaves it ``None`` (price comes from the live quote).
+    """
+    age_band: str
+    start_age: int = 0
+    end_age: int = 99
+    min_travelers: int = 0
+    max_travelers: int = 99
+    price: float | None = None
 
 
 class TourCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    slug: str = Field(min_length=1, max_length=255)
+    # Auto-generated from `name` server-side when omitted (mirrors HotelCreate).
+    slug: str | None = Field(None, max_length=255)
     description: str | None = None
     city: str = Field(min_length=1, max_length=100)
     country: str = Field(min_length=1, max_length=100)
@@ -20,6 +39,30 @@ class TourCreate(BaseModel):
     includes: list | None = None
     excludes: list | None = None
     images: list | None = None
+    # Partner must define age bands (incl. an ADULT band) so the tour shares
+    # the same age-band-aware detail page / availability / pricing as Viator.
+    age_bands: list[TourAgeBand] | None = None
+
+    @model_validator(mode="after")
+    def _require_adult_band(self) -> "TourCreate":
+        bands = self.age_bands or []
+        if not bands:
+            raise ValueError("age_bands is required: define at least an ADULT band")
+        adult = next(
+            (b for b in bands if (b.age_band or "").strip().upper() == "ADULT"), None
+        )
+        if adult is None:
+            raise ValueError("age_bands must include an ADULT band")
+        if not adult.price or adult.price <= 0:
+            raise ValueError("the ADULT age band must have a price > 0")
+        for b in bands:
+            if b.start_age > b.end_age:
+                raise ValueError(
+                    f"age band '{b.age_band}' has start_age > end_age"
+                )
+            if b.price is not None and b.price < 0:
+                raise ValueError(f"age band '{b.age_band}' price cannot be negative")
+        return self
 
 
 class TourUpdate(BaseModel):
@@ -36,20 +79,7 @@ class TourUpdate(BaseModel):
     includes: list | None = None
     excludes: list | None = None
     images: list | None = None
-
-
-class TourAgeBand(BaseModel):
-    """Supplier-defined age band for a Viator product.
-
-    Each Viator supplier publishes its own age ranges in
-    ``pricingInfo.ageBands[]``; the frontend uses this list to validate
-    child age input and to render "Children 4-12 yrs only" hints.
-    """
-    age_band: str
-    start_age: int = 0
-    end_age: int = 99
-    min_travelers: int = 0
-    max_travelers: int = 99
+    age_bands: list[TourAgeBand] | None = None
 
 
 class TourResponse(BaseModel):

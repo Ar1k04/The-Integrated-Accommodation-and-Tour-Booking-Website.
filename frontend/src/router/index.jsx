@@ -11,7 +11,6 @@ import ResetPasswordPage from '@/pages/ResetPasswordPage'
 import SearchResultsPage from '@/pages/SearchResultsPage'
 import HotelDetailPage from '@/pages/HotelDetailPage'
 import LiteapiHotelDetailPage from '@/pages/LiteapiHotelDetailPage'
-import ViatorTourDetailPage from '@/pages/ViatorTourDetailPage'
 import BookingPage from '@/pages/BookingPage'
 import BookingConfirmationPage from '@/pages/BookingConfirmationPage'
 import BookingFailurePage from '@/pages/BookingFailurePage'
@@ -73,7 +72,7 @@ export const router = createBrowserRouter([
         element: <ProtectedRoute userOnly><FlightChangeRequestPage /></ProtectedRoute>,
       },
       { path: '/tours', element: <RedirectIfAdmin><ToursPage /></RedirectIfAdmin> },
-      { path: '/tours/viator/:code', element: <RedirectIfAdmin><ViatorTourDetailPage /></RedirectIfAdmin> },
+      { path: '/tours/viator/:code', element: <RedirectIfAdmin><TourDetailPage /></RedirectIfAdmin> },
       { path: '/tours/:id', element: <RedirectIfAdmin><TourDetailPage /></RedirectIfAdmin> },
       {
         path: '/profile',

@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import uuid
 from datetime import date
 from typing import Annotated
@@ -12,9 +13,18 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import StaffUser, CurrentUser
+from app.core.pricing import (
+    AgeBandError,
+    adult_band_price,
+    compute_tour_subtotal,
+    compute_tour_subtotal_from_bands,
+    match_age_band,
+)
 from app.db.session import get_db
 from app.models.tour import Tour
+from app.models.tour_schedule import TourSchedule
 from app.schemas.tour import (
+    TourAgeBand,
     TourAvailabilityResponse,
     TourCreate,
     TourListResponse,
@@ -42,9 +52,22 @@ def _tour_response(tour: Tour) -> TourResponse:
     data = TourResponse.model_validate(tour)
     data.source = "local"
     data.viator_product_code = tour.viator_product_code
+    data.age_bands = (
+        [TourAgeBand(**b) for b in tour.age_bands] if tour.age_bands else None
+    )
     if tour.owner:
         data.owner_name = tour.owner.full_name
     return data
+
+
+def _sync_price_to_adult_band(tour: Tour) -> None:
+    """Keep ``price_per_person`` aligned with the ADULT band price so list
+    cards, sorting, and price filters (which all read ``price_per_person``)
+    stay consistent with the band a Partner defined."""
+    if tour.age_bands:
+        tour.price_per_person = float(
+            adult_band_price(tour.age_bands, tour.price_per_person)
+        )
 
 
 def _viator_tour_to_response(raw: dict) -> TourResponse:
@@ -71,6 +94,11 @@ def _viator_tour_to_response(raw: dict) -> TourResponse:
         destinations=raw.get("destinations") or None,
         departs_from=raw.get("departs_from") or None,
     )
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^\w\s-]", "", text.lower())
+    return re.sub(r"[\s_-]+", "-", slug).strip("-")
 
 
 def _parse_child_ages_csv(raw: str | None) -> list[int]:
@@ -605,6 +633,89 @@ async def get_tour(tour_id: uuid.UUID, db: Annotated[AsyncSession, Depends(get_d
     return _tour_response(tour)
 
 
+@router.get("/{tour_id}/availability", response_model=TourAvailabilityResponse)
+async def get_tour_availability(
+    tour_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tour_date: date = Query(...),
+    adults: int = Query(default=1, ge=1),
+    child_ages: str | None = Query(
+        default=None,
+        description="Comma-separated child ages (0–17), e.g. '8,11'",
+    ),
+):
+    """Check remaining slots + per-person price for a Partner tour on a date.
+
+    Returns the same `TourAvailabilityResponse` shape as the Viator
+    availability endpoint so the unified tour detail page can drive one
+    "Check availability" widget for both sources. Read-only — it does NOT
+    create a `tour_schedule` row (that happens at booking time).
+    """
+    tour = (
+        await db.execute(select(Tour).where(Tour.id == tour_id))
+    ).scalar_one_or_none()
+    if not tour:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+
+    children = _parse_child_ages_csv(child_ages)
+    total_travelers = adults + len(children)
+    age_bands = tour.age_bands or []
+
+    # Per-person price: age bands when defined, else legacy default tiers.
+    try:
+        if age_bands:
+            subtotal = compute_tour_subtotal_from_bands(
+                age_bands,
+                adults=adults,
+                children_ages=children,
+                fallback_price=tour.price_per_person,
+            )
+        else:
+            subtotal = compute_tour_subtotal(
+                tour.price_per_person, adults=adults, children_ages=children
+            )
+    except AgeBandError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    per_person = float(subtotal) / total_travelers if total_travelers else float(subtotal)
+
+    # Remaining slots (read-only): no schedule row yet ⇒ full capacity.
+    schedule = (
+        await db.execute(
+            select(TourSchedule).where(
+                TourSchedule.tour_id == tour_id,
+                TourSchedule.available_date == tour_date,
+            )
+        )
+    ).scalar_one_or_none()
+    remaining = (
+        schedule.total_slots - schedule.booked_slots
+        if schedule is not None
+        else tour.max_participants
+    )
+
+    # paxMix breakdown (mirrors Viator response): adults + children grouped by band.
+    paxmix: list[dict] = []
+    if adults > 0:
+        paxmix.append({"ageBand": "ADULT", "numberOfTravelers": adults})
+    if children:
+        band_counts: dict[str, int] = {}
+        for age in children:
+            band = match_age_band(age, age_bands) if age_bands else None
+            name = str((band or {}).get("age_band") or "CHILD").upper()
+            band_counts[name] = band_counts.get(name, 0) + 1
+        for name, n in band_counts.items():
+            paxmix.append({"ageBand": name, "numberOfTravelers": n})
+
+    return TourAvailabilityResponse(
+        available=remaining >= total_travelers,
+        price=round(per_person, 2),
+        currency="USD",
+        tour_date=tour_date.isoformat(),
+        paxmix_used=paxmix or None,
+    )
+
+
 def _assert_tour_owner_or_admin(tour: Tour, user) -> None:
     if user.role == "admin":
         return
@@ -621,11 +732,20 @@ async def create_tour(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
-    existing = await db.execute(select(Tour).where(Tour.slug == data.slug))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already exists")
+    payload = data.model_dump()
+    slug = payload.get("slug") or _slugify(data.name)
+    base_slug = slug
+    suffix = 1
+    while True:
+        existing = await db.execute(select(Tour).where(Tour.slug == slug))
+        if not existing.scalar_one_or_none():
+            break
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+    payload["slug"] = slug
 
-    tour = Tour(**data.model_dump(), owner_id=current_user.id)
+    tour = Tour(**payload, owner_id=current_user.id)
+    _sync_price_to_adult_band(tour)
     db.add(tour)
     await db.flush()
     await db.refresh(tour)
@@ -646,7 +766,11 @@ async def replace_tour(
     _assert_tour_owner_or_admin(tour, current_user)
 
     for field, value in data.model_dump().items():
+        # slug is auto-managed; don't let an omitted (None) slug null the column.
+        if field == "slug" and value is None:
+            continue
         setattr(tour, field, value)
+    _sync_price_to_adult_band(tour)
     await db.flush()
     await db.refresh(tour)
     return _tour_response(tour)
@@ -667,6 +791,7 @@ async def update_tour(
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(tour, field, value)
+    _sync_price_to_adult_band(tour)
     await db.flush()
     await db.refresh(tour)
     return _tour_response(tour)

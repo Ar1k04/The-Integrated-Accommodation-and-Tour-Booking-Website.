@@ -88,7 +88,12 @@
     "cancel": "Hủy",
     "edit": "Chỉnh sửa",
     "delete": "Xóa",
-    "backToDashboard": "← Tổng quan"
+    "backToDashboard": "← Tổng quan",
+    "addDay": "Thêm ngày",
+    "addBand": "Thêm nhóm tuổi",
+    "addHighlight": "Thêm điểm nổi bật",
+    "addItem": "Thêm mục",
+    "addImage": "Thêm ảnh"
   },
   "form": {
     "name": "Tên",
@@ -122,7 +127,26 @@
     "email": "Email",
     "role": "Vai trò",
     "selectHotel": "Chọn khách sạn",
-    "selectHotelPrompt": "— Chọn khách sạn —"
+    "selectHotelPrompt": "— Chọn khách sạn —",
+    "itinerary": "Lịch trình",
+    "dayTitle": "Tiêu đề ngày (vd: Ngày 1: Phố cổ)",
+    "dayDescription": "Hoạt động trong ngày",
+    "ageBands": "Nhóm tuổi & giá",
+    "ageBandHelp": "Định nghĩa từng khoảng tuổi và giá/người. Bắt buộc có nhóm ADULT; trẻ em được khớp vào nhóm theo tuổi.",
+    "bandName": "Nhóm",
+    "startAge": "Từ tuổi",
+    "endAge": "Đến tuổi",
+    "bandPrice": "Giá/người",
+    "highlights": "Điểm nổi bật",
+    "highlightPlaceholder": "vd: Vào cửa ưu tiên",
+    "includes": "Bao gồm",
+    "includePlaceholder": "vd: Đón tại khách sạn",
+    "excludes": "Không bao gồm",
+    "excludePlaceholder": "vd: Tiền tip",
+    "imageUrl": "Link ảnh",
+    "adultBandRequired": "Cần định nghĩa nhóm ADULT với giá lớn hơn 0.",
+    "ageRangeInvalid": "Nhóm tuổi '{{band}}' có 'từ tuổi' lớn hơn 'đến tuổi'.",
+    "dropImages": "Kéo thả ảnh vào đây, hoặc bấm để chọn"
   },
   "status": {
     "active": "Đang hoạt động",
