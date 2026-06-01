@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { loadStripe } from '@stripe/stripe-js'
@@ -132,11 +132,19 @@ export default function FlightCheckoutPage() {
   const paxCount = selectedFlight.quantity || paxList.length || 1
 
   // ── Voucher / loyalty handlers ──────────────────────────────────────────
-  const handleApplyVoucher = async () => {
-    if (!voucherInput.trim()) return
+  const { data: availableVouchers } = useQuery({
+    queryKey: ['available-vouchers'],
+    queryFn: () => vouchersApi.available(),
+    select: (res) => res.data || [],
+  })
+
+  const handleApplyVoucher = async (codeArg) => {
+    const code = (typeof codeArg === 'string' ? codeArg : voucherInput).trim()
+    if (!code) return
+    setVoucherInput(code)
     setVoucherLoading(true)
     try {
-      const res = await vouchersApi.validate(voucherInput.trim(), subtotal)
+      const res = await vouchersApi.validate(code, subtotal)
       if (res.data?.valid) {
         setAppliedVoucher({
           code: res.data.code,
@@ -196,6 +204,8 @@ export default function FlightCheckoutPage() {
       }
       const bookingRes = await bookingsApi.create(bookingPayload)
       const bId = bookingRes.data?.id || bookingRes.data?.data?.id
+      // FE-03: don't carry an undefined booking id forward.
+      if (!bId) throw new Error('Booking creation failed — no booking id returned')
       setBookingId(bId)
 
       // 2. Redeem loyalty (best-effort)
@@ -214,8 +224,14 @@ export default function FlightCheckoutPage() {
         booking_id: bId,
         currency: 'usd',
       })
-      setClientSecret(paymentRes.data?.data?.client_secret)
-      setStripePaymentId(paymentRes.data?.data?.payment_id)
+      const clientSecret = paymentRes.data?.data?.client_secret
+      const stripePaymentId = paymentRes.data?.data?.payment_id
+      // FE-03: don't render the Stripe step without a usable client secret.
+      if (!clientSecret || !stripePaymentId) {
+        throw new Error('Failed to start payment — please try again')
+      }
+      setClientSecret(clientSecret)
+      setStripePaymentId(stripePaymentId)
       setStep('payment')
     } catch (err) {
       const detail = err.response?.data?.detail
@@ -351,12 +367,26 @@ export default function FlightCheckoutPage() {
                         className="flex-1 border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                       />
                       <button
-                        onClick={handleApplyVoucher}
+                        onClick={() => handleApplyVoucher()}
                         disabled={voucherLoading || !voucherInput.trim()}
                         className="bg-primary text-white font-semibold px-4 py-2 rounded-lg hover:bg-primary/90 disabled:bg-gray-300 text-sm"
                       >
                         {voucherLoading ? 'Checking…' : 'Apply'}
                       </button>
+                    </div>
+                  )}
+                  {!appliedVoucher && availableVouchers?.length > 0 && (
+                    <div className="pt-1">
+                      <p className="text-xs text-gray-500 mb-1.5">Available vouchers</p>
+                      <div className="flex flex-wrap gap-2">
+                        {availableVouchers.slice(0, 6).map((v) => (
+                          <button key={v.code} type="button" onClick={() => handleApplyVoucher(v.code)}
+                            title={v.name}
+                            className="inline-flex items-center gap-1 border border-dashed border-primary/40 text-primary px-2.5 py-1 rounded-lg text-xs font-mono font-semibold hover:bg-primary/5">
+                            <Tag className="w-3 h-3" /> {v.code}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

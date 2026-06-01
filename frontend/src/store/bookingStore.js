@@ -1,6 +1,7 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
-export const useBookingStore = create((set) => ({
+export const useBookingStore = create(persist((set) => ({
   selectedRoom: null,
   selectedRoomGroup: null,
   selectedItems: null,
@@ -43,6 +44,27 @@ export const useBookingStore = create((set) => ({
       tourDate: null,
       selectedFlight: null,
     }),
+}), {
+  // FE-04: survive a page reload mid-checkout (sessionStorage, not local —
+  // the selection should not outlive the browser tab). clearBooking() still
+  // resets everything after a successful booking.
+  name: 'booking-flow',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: (s) => ({
+    selectedRoom: s.selectedRoom,
+    selectedRoomGroup: s.selectedRoomGroup,
+    selectedItems: s.selectedItems,
+    hotel: s.hotel,
+    checkIn: s.checkIn,
+    checkOut: s.checkOut,
+    adults: s.adults,
+    childAges: s.childAges,
+    rooms: s.rooms,
+    guests: s.guests,
+    selectedTour: s.selectedTour,
+    tourDate: s.tourDate,
+    selectedFlight: s.selectedFlight,
+  }),
 }))
 
 export const isLiteapiRoom = (room) => Boolean(room?.liteapi_rate_id)

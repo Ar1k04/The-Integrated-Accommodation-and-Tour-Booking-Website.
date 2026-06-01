@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +21,14 @@ export default function BookingConfirmationPage() {
     queryKey: ['booking', id],
     queryFn: () => bookingsApi.get(id),
     select: (res) => res.data,
+    // FE-01: while the supplier side is still being confirmed (status stays
+    // `pending`), poll until it reaches a terminal state so we never show a
+    // "confirmed" page for a booking that hasn't actually been finalized.
+    refetchInterval: (query) => {
+      const raw = query.state.data
+      const s = raw?.data?.status ?? raw?.status
+      return s && ['confirmed', 'completed', 'cancelled'].includes(s) ? false : 2500
+    },
   })
 
   const copyRef = () => {
@@ -36,6 +44,25 @@ export default function BookingConfirmationPage() {
         <Skeleton className="h-16 w-16 rounded-full mx-auto" />
         <Skeleton className="h-8 w-1/2 mx-auto" />
         <Skeleton className="h-40 w-full" />
+      </div>
+    )
+  }
+
+  // FE-01: a fully-failed booking is cancelled by the backend — route to the
+  // failure page instead of rendering a success screen.
+  if (booking?.status === 'cancelled') {
+    return <Navigate to={`/bookings/${id}/failure`} replace />
+  }
+
+  // Still finalizing with the provider — show a neutral "in progress" state
+  // (the query keeps polling until confirmed/completed/cancelled).
+  if (booking && !['confirmed', 'completed'].includes(booking.status)) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-4">
+        <Helmet><title>{t('confirmation.finalizingTitle')} — TravelBooking</title></Helmet>
+        <div className="w-16 h-16 mx-auto rounded-full border-4 border-primary/30 border-t-primary animate-spin" />
+        <h1 className="font-heading text-2xl font-bold text-gray-900">{t('confirmation.finalizingTitle')}</h1>
+        <p className="text-gray-500">{t('confirmation.finalizingSubtitle')}</p>
       </div>
     )
   }

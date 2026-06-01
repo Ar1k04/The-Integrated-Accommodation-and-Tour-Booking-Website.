@@ -4,8 +4,17 @@
     "bookings": "Đặt phòng của tôi",
     "reviews": "Đánh giá của tôi",
     "wishlist": "Danh sách yêu thích",
+    "vouchers": "Mã giảm giá",
     "loyalty": "Điểm thưởng",
     "security": "Bảo mật"
+  },
+  "vouchers": {
+    "empty": "Hiện chưa có mã giảm giá khả dụng.",
+    "copied": "Đã sao chép {{code}}",
+    "off": "Giảm {{amount}}",
+    "upTo": "tối đa",
+    "minOrder": "Đơn tối thiểu {{amount}}",
+    "expires": "HSD {{date}}"
   },
   "bookings": {
     "hotels": "Đặt khách sạn",

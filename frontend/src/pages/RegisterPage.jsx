@@ -4,13 +4,14 @@ import { useAuth } from '@/hooks/useAuth'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
+import { GoogleLogin } from '@react-oauth/google'
 import { Eye, EyeOff, Mail, Lock, User, ShieldCheck, ChevronDown } from 'lucide-react'
 import { isValidEmail, isStrongPassword } from '@/utils/validators'
 
 export default function RegisterPage() {
-  const { register, isAuthenticated, user } = useAuth()
+  const { register, loginWithGoogle, isAuthenticated, user } = useAuth()
   const navigate = useNavigate()
-  const { t } = useTranslation('auth')
+  const { t, i18n } = useTranslation('auth')
 
   const [form, setForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '' })
   const [adminForm, setAdminForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '' })
@@ -76,11 +77,26 @@ export default function RegisterPage() {
         password: adminForm.password,
         role: 'partner',
       })
-      toast.success(t('register.createPartner'))
+      // Partner dashboard stays locked until they confirm via email.
+      toast.success(t('register.partnerCheckEmail'))
       navigate('/admin', { replace: true })
     } catch (err) {
       const detail = err.response?.data?.detail
       setAdminError(typeof detail === 'string' ? detail : t('register.validation.registrationFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleGoogle = async (credentialResponse) => {
+    setLoading(true)
+    try {
+      const u = await loginWithGoogle(credentialResponse.credential)
+      toast.success(t('register.register'))
+      navigate(u.role === 'partner' || u.role === 'admin' ? '/admin' : '/', { replace: true })
+    } catch (err) {
+      const detail = err.response?.data?.detail
+      setErrors({ server: typeof detail === 'string' ? detail : t('register.validation.registrationFailed') })
     } finally {
       setLoading(false)
     }
@@ -176,6 +192,23 @@ export default function RegisterPage() {
               </button>
             </form>
 
+            <div className="flex items-center gap-3 my-6">
+              <div className="h-px flex-1 bg-gray-200" />
+              <span className="text-xs text-gray-400 uppercase">{t('login.orContinueWith')}</span>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+
+            <div className="flex justify-center">
+              <GoogleLogin
+                key={i18n.language}
+                onSuccess={handleGoogle}
+                onError={() => setErrors({ server: t('login.googleFailed') })}
+                locale={i18n.language}
+                text="signup_with"
+                width="320"
+              />
+            </div>
+
             <p className="text-center text-sm text-gray-500 mt-6">
               {t('register.haveAccount')}{' '}
               <Link to="/login" className="text-primary font-semibold hover:underline">{t('register.signIn')}</Link>
@@ -197,7 +230,12 @@ export default function RegisterPage() {
 
             {showAdminRegister && (
               <div className="px-8 pb-8 pt-2">
-                <p className="text-gray-500 text-sm mb-6">{t('register.partnerSubtitle')}</p>
+                <p className="text-gray-500 text-sm mb-4">{t('register.partnerSubtitle')}</p>
+
+                <div className="flex items-start gap-2 bg-blue-50 text-blue-800 text-sm px-4 py-3 rounded-lg mb-6">
+                  <Mail className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>{t('register.partnerEmailNote')}</span>
+                </div>
 
                 {adminError && (
                   <div className="bg-red-50 text-error text-sm px-4 py-3 rounded-lg mb-6">{adminError}</div>

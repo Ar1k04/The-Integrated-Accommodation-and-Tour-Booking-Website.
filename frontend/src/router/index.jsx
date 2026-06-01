@@ -8,6 +8,7 @@ import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import ForgotPasswordPage from '@/pages/ForgotPasswordPage'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
+import PartnerConfirmPage from '@/pages/PartnerConfirmPage'
 import SearchResultsPage from '@/pages/SearchResultsPage'
 import HotelDetailPage from '@/pages/HotelDetailPage'
 import LiteapiHotelDetailPage from '@/pages/LiteapiHotelDetailPage'
@@ -26,6 +27,8 @@ import ManageTours from '@/pages/admin/ManageTours'
 import ManageBookings from '@/pages/admin/ManageBookings'
 import ManageUsers from '@/pages/admin/ManageUsers'
 import ManageVouchers from '@/pages/admin/ManageVouchers'
+import ManageTiers from '@/pages/admin/ManageTiers'
+import ManagePartners from '@/pages/admin/ManagePartners'
 import FlightsSearchPage from '@/pages/FlightsSearchPage'
 import FlightOfferDetailPage from '@/pages/FlightOfferDetailPage'
 import FlightManageBookingPage from '@/pages/FlightManageBookingPage'
@@ -42,6 +45,7 @@ export const router = createBrowserRouter([
       { path: '/register', element: <RedirectIfAdmin><RegisterPage /></RedirectIfAdmin> },
       { path: '/forgot-password', element: <ForgotPasswordPage /> },
       { path: '/reset-password', element: <ResetPasswordPage /> },
+      { path: '/partner/confirm', element: <PartnerConfirmPage /> },
       { path: '/hotels/search', element: <RedirectIfAdmin><SearchResultsPage /></RedirectIfAdmin> },
       { path: '/hotels/liteapi/:liteapiId', element: <RedirectIfAdmin><LiteapiHotelDetailPage /></RedirectIfAdmin> },
       { path: '/hotels/:id', element: <RedirectIfAdmin><HotelDetailPage /></RedirectIfAdmin> },
@@ -112,6 +116,14 @@ export const router = createBrowserRouter([
       {
         path: '/admin/users',
         element: <ProtectedRoute requireAdmin><ManageUsers /></ProtectedRoute>,
+      },
+      {
+        path: '/admin/partners',
+        element: <ProtectedRoute requireAdmin><ManagePartners /></ProtectedRoute>,
+      },
+      {
+        path: '/admin/loyalty-tiers',
+        element: <ProtectedRoute requireAdmin><ManageTiers /></ProtectedRoute>,
       },
       {
         path: '/admin/vouchers',

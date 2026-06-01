@@ -12,4 +12,13 @@ export const adminApi = {
   listWishlists: (params) => api.get('/wishlists', { params }),
   addToWishlist: (data) => api.post('/wishlists', data),
   removeFromWishlist: (id) => api.delete(`/wishlists/${id}`),
+  // Partner approval (UC_A_PARTNERS)
+  listPartners: (params) => api.get('/admin/partners', { params }),
+  updatePartnerStatus: (id, partner_status) => api.patch(`/admin/partners/${id}`, { partner_status }),
+  // Loyalty tiers (UC_A_TIERS)
+  listTiers: () => api.get('/admin/loyalty-tiers'),
+  createTier: (data) => api.post('/admin/loyalty-tiers', data),
+  updateTier: (id, data) => api.patch(`/admin/loyalty-tiers/${id}`, data),
+  deleteTier: (id) => api.delete(`/admin/loyalty-tiers/${id}`),
+  recomputeTiers: () => api.post('/admin/loyalty-tiers/recompute'),
 }

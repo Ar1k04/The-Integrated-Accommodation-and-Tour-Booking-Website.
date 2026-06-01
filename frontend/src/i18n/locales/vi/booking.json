@@ -47,6 +47,8 @@
     "bookingRef": "Mã đặt chỗ",
     "downloadPdf": "Tải PDF",
     "returnHome": "Về trang chủ",
-    "viewBookings": "Xem đặt phòng của tôi"
+    "viewBookings": "Xem đặt phòng của tôi",
+    "finalizingTitle": "Đang hoàn tất đặt chỗ…",
+    "finalizingSubtitle": "Đã nhận thanh toán. Chúng tôi đang xác nhận đặt chỗ với nhà cung cấp — chỉ mất một lát."
   }
 }

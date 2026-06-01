@@ -7,6 +7,8 @@
     "bookings": "Bookings",
     "vouchers": "Vouchers",
     "users": "Users",
+    "partners": "Partners",
+    "tiers": "Loyalty Tiers",
     "partnerSubtitle": "Partner Dashboard",
     "adminSubtitle": "Admin Panel",
     "signOut": "Sign Out",
@@ -192,5 +194,48 @@
     "syncFailed": "Could not refresh LiteAPI status",
     "liteapiManaged": "Managed by LiteAPI — manual changes disabled",
     "syncedAt": "Synced {{when}}"
+  },
+  "tiers": {
+    "title": "Loyalty Tiers",
+    "subtitle": "Configure tiers, point thresholds, and member discounts.",
+    "add": "Add Tier",
+    "addTitle": "Add Loyalty Tier",
+    "editTitle": "Edit Loyalty Tier",
+    "name": "Name",
+    "minPoints": "Min Points",
+    "maxPoints": "Max Points",
+    "discount": "Discount",
+    "benefits": "Benefits",
+    "empty": "No tiers yet. Add one to get started.",
+    "nameRequired": "Tier name is required",
+    "confirmDelete": "Delete this tier? Members will fall back to no tier.",
+    "saved": "Tier saved",
+    "saveFailed": "Could not save tier",
+    "deleted": "Tier deleted",
+    "deleteFailed": "Could not delete tier",
+    "recompute": "Recompute members",
+    "recomputed": "Re-mapped {{count}} members to their tier",
+    "recomputeFailed": "Could not recompute tiers"
+  },
+  "partners": {
+    "title": "Partners",
+    "subtitle": "Review and approve partner accounts before they can manage listings.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approved": "Partner approved",
+    "rejected": "Partner rejected",
+    "actionFailed": "Could not update partner",
+    "empty": "No partners in this category.",
+    "status": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
+    "notice": {
+      "pendingTitle": "Confirm your email",
+      "pendingBody": "We've sent a confirmation link to your email. Click it to activate your partner account, then sign in again to manage your listings.",
+      "rejectedTitle": "Account not approved",
+      "rejectedBody": "Your partner account was not approved. Please contact support for details."
+    }
   }
 }

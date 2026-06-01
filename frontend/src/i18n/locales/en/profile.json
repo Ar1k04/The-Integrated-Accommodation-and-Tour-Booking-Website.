@@ -4,8 +4,17 @@
     "bookings": "My Bookings",
     "reviews": "My Reviews",
     "wishlist": "Wishlist",
+    "vouchers": "Vouchers",
     "loyalty": "Loyalty Points",
     "security": "Security"
+  },
+  "vouchers": {
+    "empty": "No vouchers available right now.",
+    "copied": "Copied {{code}}",
+    "off": "{{amount}} off",
+    "upTo": "up to",
+    "minOrder": "Min order {{amount}}",
+    "expires": "Expires {{date}}"
   },
   "bookings": {
     "hotels": "Hotel Bookings",

@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { GoogleLogin } from '@react-oauth/google'
 import { useAuth } from '@/hooks/useAuth'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react'
 
 export default function LoginPage() {
-  const { t } = useTranslation('auth')
-  const { login, isAuthenticated, isStaff } = useAuth()
+  const { t, i18n } = useTranslation('auth')
+  const { login, loginWithGoogle, isAuthenticated, isStaff } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from = location.state?.from?.pathname || '/'
@@ -37,6 +38,24 @@ export default function LoginPage() {
       }
     } catch (err) {
       setError(err.response?.data?.detail || 'Invalid email or password')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleGoogle = async (credentialResponse) => {
+    setError('')
+    setLoading(true)
+    try {
+      const user = await loginWithGoogle(credentialResponse.credential)
+      toast.success('Welcome back!')
+      if (user.role === 'partner' || user.role === 'admin') {
+        navigate('/admin', { replace: true })
+      } else {
+        navigate(from, { replace: true })
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || t('login.googleFailed'))
     } finally {
       setLoading(false)
     }
@@ -111,6 +130,23 @@ export default function LoginPage() {
                 {loading ? t('login.signingIn') : t('login.signIn')}
               </button>
             </form>
+
+            <div className="flex items-center gap-3 my-6">
+              <div className="h-px flex-1 bg-gray-200" />
+              <span className="text-xs text-gray-400 uppercase">{t('login.orContinueWith')}</span>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+
+            <div className="flex justify-center">
+              <GoogleLogin
+                key={i18n.language}
+                onSuccess={handleGoogle}
+                onError={() => setError(t('login.googleFailed'))}
+                locale={i18n.language}
+                text="signin_with"
+                width="320"
+              />
+            </div>
 
             <p className="text-center text-sm text-gray-500 mt-6">
               {t('login.noAccount')}{' '}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { loadStripe } from '@stripe/stripe-js'
@@ -158,11 +158,13 @@ export default function BookingPage() {
     )
   }
 
-  const handleApplyVoucher = async () => {
-    if (!voucherInput.trim()) return
+  const handleApplyVoucher = async (codeArg) => {
+    const code = (typeof codeArg === 'string' ? codeArg : voucherInput).trim()
+    if (!code) return
+    setVoucherInput(code)
     setVoucherLoading(true)
     try {
-      const res = await vouchersApi.validate(voucherInput.trim(), subtotal)
+      const res = await vouchersApi.validate(code, subtotal)
       if (res.data?.valid) {
         setAppliedVoucher({
           code: res.data.code,
@@ -190,12 +192,33 @@ export default function BookingPage() {
   }
 
   const handleProceedToPayment = async () => {
+    // FE-05: validate guest details client-side before creating anything.
+    if (!form.full_name?.trim()) {
+      toast.error('Please enter the guest full name')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email?.trim() || '')) {
+      toast.error('Please enter a valid email address')
+      return
+    }
+    if (!form.phone?.trim()) {
+      toast.error('Please enter a contact phone number')
+      return
+    }
     if (!isViatorTour && !isRegularTour && (!effectiveCheckIn || !effectiveCheckOut)) {
       toast.error('Please select check-in and check-out dates')
       return
     }
+    if (!isViatorTour && !isRegularTour && effectiveCheckOut <= effectiveCheckIn) {
+      toast.error('Check-out date must be after check-in date')
+      return
+    }
     if ((isViatorTour || isRegularTour) && !tourDate) {
       toast.error('Please select a tour date')
+      return
+    }
+    if ((isViatorTour || isRegularTour) && tourDate < format(new Date(), 'yyyy-MM-dd')) {
+      toast.error('Tour date cannot be in the past')
       return
     }
     setProceeding(true)
@@ -271,6 +294,9 @@ export default function BookingPage() {
           }
       const bookingRes = await bookingsApi.create(bookingPayload)
       const bId = bookingRes.data?.id || bookingRes.data?.data?.id
+      // FE-03: fail loudly instead of silently carrying an undefined id
+      // into the payment-intent call.
+      if (!bId) throw new Error('Booking creation failed — no booking id returned')
       setBookingId(bId)
 
       // 2. Redeem loyalty points if applied
@@ -289,8 +315,14 @@ export default function BookingPage() {
         booking_id: bId,
         currency: 'usd',
       })
-      setClientSecret(paymentRes.data?.data?.client_secret)
-      setStripePaymentId(paymentRes.data?.data?.payment_id)
+      const clientSecret = paymentRes.data?.data?.client_secret
+      const stripePaymentId = paymentRes.data?.data?.payment_id
+      // FE-03: don't switch to the payment step with a broken Stripe element.
+      if (!clientSecret || !stripePaymentId) {
+        throw new Error('Failed to start payment — please try again')
+      }
+      setClientSecret(clientSecret)
+      setStripePaymentId(stripePaymentId)
 
       setStep('payment')
     } catch (err) {
@@ -619,7 +651,7 @@ function DetailsStep({
               className="flex-1 border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <button
-              onClick={onApplyVoucher}
+              onClick={() => onApplyVoucher()}
               disabled={voucherLoading || !voucherInput.trim()}
               className="bg-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors"
             >
@@ -627,6 +659,7 @@ function DetailsStep({
             </button>
           </div>
         )}
+        {!appliedVoucher && <AvailableVoucherPicker onPick={onApplyVoucher} />}
       </div>
 
       {/* Loyalty points */}
@@ -750,6 +783,29 @@ function PaymentStep({
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+function AvailableVoucherPicker({ onPick }) {
+  const { data: vouchers } = useQuery({
+    queryKey: ['available-vouchers'],
+    queryFn: () => vouchersApi.available(),
+    select: (res) => res.data || [],
+  })
+  if (!vouchers?.length) return null
+  return (
+    <div className="pt-1">
+      <p className="text-xs text-gray-500 mb-1.5">Available vouchers</p>
+      <div className="flex flex-wrap gap-2">
+        {vouchers.slice(0, 6).map((v) => (
+          <button key={v.code} type="button" onClick={() => onPick(v.code)}
+            title={v.name}
+            className="inline-flex items-center gap-1 border border-dashed border-primary/40 text-primary px-2.5 py-1 rounded-lg text-xs font-mono font-semibold hover:bg-primary/5">
+            <Tag className="w-3 h-3" /> {v.code}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

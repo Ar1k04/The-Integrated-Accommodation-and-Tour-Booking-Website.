@@ -47,6 +47,8 @@
     "bookingRef": "Booking Reference",
     "downloadPdf": "Download PDF",
     "returnHome": "Return to Home",
-    "viewBookings": "View My Bookings"
+    "viewBookings": "View My Bookings",
+    "finalizingTitle": "Finalizing your booking…",
+    "finalizingSubtitle": "Payment received. We're confirming your booking with the provider — this only takes a moment."
   }
 }

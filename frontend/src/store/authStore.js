@@ -40,6 +40,16 @@ export const useAuthStore = create((set, get) => ({
     return me.data
   },
 
+  loginWithGoogle: async (credential, role = 'user') => {
+    const res = await authApi.google({ id_token: credential, role })
+    const { access_token } = res.data
+    set({ accessToken: access_token, isAuthenticated: true })
+    const me = await authApi.getMe(access_token)
+    set({ user: me.data, isLoading: false })
+    hydrateUiPrefs(me.data)
+    return me.data
+  },
+
   logout: async () => {
     try {
       await authApi.logout()

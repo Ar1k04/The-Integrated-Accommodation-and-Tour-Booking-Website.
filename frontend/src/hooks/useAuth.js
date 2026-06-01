@@ -5,6 +5,7 @@ export function useAuth() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const isLoading = useAuthStore((s) => s.isLoading)
   const login = useAuthStore((s) => s.login)
+  const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle)
   const logout = useAuthStore((s) => s.logout)
   const register = useAuthStore((s) => s.register)
   const refreshToken = useAuthStore((s) => s.refreshToken)
@@ -27,6 +28,7 @@ export function useAuth() {
     // Legacy aliases kept so existing consumers don't break while we migrate
     isSuperAdmin: isAdmin,
     login,
+    loginWithGoogle,
     logout,
     register,
     refreshToken,

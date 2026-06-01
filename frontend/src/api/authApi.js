@@ -3,6 +3,8 @@ import api from './axiosInstance'
 export const authApi = {
   register: (data) => api.post('/auth/register', data),
   login: (data) => api.post('/auth/login', data),
+  google: (data) => api.post('/auth/google', data),
+  confirmPartner: (token) => api.post('/auth/partner/confirm', { token }),
   logout: () => api.post('/auth/logout'),
   refreshToken: () => api.post('/auth/token/refresh', null, { _retry: true }),
   forgotPassword: (email) => api.post('/auth/password/forgot', { email }),

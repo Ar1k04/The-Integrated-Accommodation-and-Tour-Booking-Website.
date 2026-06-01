@@ -17,10 +17,11 @@ import TourBookingCard from '@/components/booking/TourBookingCard'
 import ReviewCard from '@/components/review/ReviewCard'
 import Skeleton from '@/components/common/Skeleton'
 import { formatDate } from '@/utils/formatters'
+import { vouchersApi } from '@/api/vouchersApi'
 import {
   User, Briefcase, Star, Heart, Award, Shield,
   Camera, Trash2, MapPin, Clock, Calendar, Eye, TrendingUp, TrendingDown,
-  PlaneTakeoff, AlertTriangle, X,
+  PlaneTakeoff, AlertTriangle, X, Tag, Copy,
 } from 'lucide-react'
 
 export default function ProfilePage() {
@@ -34,6 +35,7 @@ export default function ProfilePage() {
     { key: 'bookings', label: t('tabs.bookings'), icon: Briefcase },
     { key: 'reviews', label: t('tabs.reviews'), icon: Star },
     { key: 'wishlist', label: t('tabs.wishlist'), icon: Heart },
+    { key: 'vouchers', label: t('tabs.vouchers'), icon: Tag },
     { key: 'loyalty', label: t('tabs.loyalty'), icon: Award },
     { key: 'security', label: t('tabs.security'), icon: Shield },
   ]
@@ -69,6 +71,7 @@ export default function ProfilePage() {
           {activeTab === 'bookings' && <BookingsTab />}
           {activeTab === 'reviews' && <ReviewsTab />}
           {activeTab === 'wishlist' && <WishlistTab />}
+          {activeTab === 'vouchers' && <VouchersTab />}
           {activeTab === 'loyalty' && <LoyaltyTab />}
           {activeTab === 'security' && <SecurityTab />}
         </div>
@@ -481,6 +484,57 @@ function ReviewsTab() {
     </div>
   ) : (
     <EmptyState message="You haven't written any reviews yet" />
+  )
+}
+
+function VouchersTab() {
+  const { t } = useTranslation('profile')
+  const fmt = useFormatCurrency()
+
+  const { data: vouchers, isLoading } = useQuery({
+    queryKey: ['my-available-vouchers'],
+    queryFn: () => vouchersApi.available(),
+    select: (res) => res.data || [],
+  })
+
+  const copyCode = (code) => {
+    navigator.clipboard.writeText(code)
+    toast.success(t('vouchers.copied', { code }))
+  }
+
+  if (isLoading) return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+
+  if (!vouchers?.length) {
+    return <div className="bg-white rounded-xl border p-12 text-center text-gray-400">{t('vouchers.empty')}</div>
+  }
+
+  const fmtDiscount = (v) => v.discount_type === 'percentage'
+    ? `${v.discount_value}%${v.maximum_discount_amount ? ` (${t('vouchers.upTo')} ${fmt(v.maximum_discount_amount)})` : ''}`
+    : fmt(v.discount_value)
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {vouchers.map((v) => (
+        <div key={v.code} className="bg-white rounded-xl border p-5 flex items-start gap-4">
+          <div className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+            <Tag className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-sm">{v.name}</p>
+            <p className="text-primary font-bold text-sm mt-0.5">{t('vouchers.off', { amount: fmtDiscount(v) })}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {v.min_order_value > 0 && <>{t('vouchers.minOrder', { amount: fmt(v.min_order_value) })} · </>}
+              {v.applicable_to && v.applicable_to !== 'all' && <>{v.applicable_to} · </>}
+              {v.valid_to && <>{t('vouchers.expires', { date: formatDate(v.valid_to) })}</>}
+            </p>
+            <button onClick={() => copyCode(v.code)}
+              className="mt-2 inline-flex items-center gap-1.5 border border-dashed border-primary/40 text-primary px-2.5 py-1 rounded-lg text-xs font-mono font-semibold hover:bg-primary/5">
+              <Copy className="w-3.5 h-3.5" /> {v.code}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 

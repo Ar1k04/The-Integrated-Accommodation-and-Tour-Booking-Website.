@@ -6,7 +6,7 @@ import PageTransition from './PageTransition'
 import { Toaster } from 'sonner'
 import {
   LayoutDashboard, Hotel, MapPin, Briefcase,
-  CalendarCheck, UserCheck, LogOut, ChevronRight, Crown, Tag,
+  CalendarCheck, UserCheck, LogOut, ChevronRight, Crown, Tag, Award,
 } from 'lucide-react'
 
 export default function AdminLayout() {
@@ -26,6 +26,8 @@ export default function AdminLayout() {
 
   const SUPERADMIN_LINKS = [
     { label: t('sidebar.users'), to: '/admin/users', icon: UserCheck },
+    { label: t('sidebar.partners'), to: '/admin/partners', icon: UserCheck },
+    { label: t('sidebar.tiers'), to: '/admin/loyalty-tiers', icon: Award },
   ]
 
   const sidebarLinks = isAdmin
@@ -35,6 +37,31 @@ export default function AdminLayout() {
   const handleLogout = async () => {
     await logout()
     navigate('/login')
+  }
+
+  // Partner approval gate: a pending/rejected partner can log in but cannot use
+  // the dashboard until an admin approves (backend enforces this too).
+  if (isPartner && user?.partner_status && user.partner_status !== 'approved') {
+    const rejected = user.partner_status === 'rejected'
+    return (
+      <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl border shadow-sm max-w-md w-full p-8 text-center">
+          <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 ${rejected ? 'bg-red-100' : 'bg-amber-100'}`}>
+            <UserCheck className={`w-8 h-8 ${rejected ? 'text-error' : 'text-amber-600'}`} aria-hidden="true" />
+          </div>
+          <h1 className="font-heading text-xl font-bold text-gray-900 mb-2">
+            {rejected ? t('partners.notice.rejectedTitle') : t('partners.notice.pendingTitle')}
+          </h1>
+          <p className="text-gray-500 text-sm mb-6">
+            {rejected ? t('partners.notice.rejectedBody') : t('partners.notice.pendingBody')}
+          </p>
+          <button onClick={handleLogout}
+            className="inline-flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-4 py-2.5 rounded-lg text-sm font-semibold">
+            <LogOut className="w-4 h-4" /> {t('sidebar.signOut')}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (

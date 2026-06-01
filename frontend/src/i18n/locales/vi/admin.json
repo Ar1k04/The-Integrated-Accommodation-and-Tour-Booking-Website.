@@ -7,6 +7,8 @@
     "bookings": "Đặt chỗ",
     "vouchers": "Mã giảm giá",
     "users": "Người dùng",
+    "partners": "Đối tác",
+    "tiers": "Hạng thành viên",
     "partnerSubtitle": "Bảng điều khiển đối tác",
     "adminSubtitle": "Bảng quản trị",
     "signOut": "Đăng xuất",
@@ -192,5 +194,48 @@
     "syncFailed": "Không thể cập nhật trạng thái LiteAPI",
     "liteapiManaged": "Do LiteAPI quản lý — không thể chỉnh thủ công",
     "syncedAt": "Đồng bộ {{when}}"
+  },
+  "tiers": {
+    "title": "Hạng thành viên",
+    "subtitle": "Cấu hình hạng, ngưỡng điểm và mức giảm cho thành viên.",
+    "add": "Thêm hạng",
+    "addTitle": "Thêm hạng thành viên",
+    "editTitle": "Sửa hạng thành viên",
+    "name": "Tên",
+    "minPoints": "Điểm tối thiểu",
+    "maxPoints": "Điểm tối đa",
+    "discount": "Giảm giá",
+    "benefits": "Quyền lợi",
+    "empty": "Chưa có hạng nào. Thêm để bắt đầu.",
+    "nameRequired": "Cần nhập tên hạng",
+    "confirmDelete": "Xóa hạng này? Thành viên sẽ không còn hạng.",
+    "saved": "Đã lưu hạng",
+    "saveFailed": "Không thể lưu hạng",
+    "deleted": "Đã xóa hạng",
+    "deleteFailed": "Không thể xóa hạng",
+    "recompute": "Tính lại thành viên",
+    "recomputed": "Đã gán lại {{count}} thành viên vào hạng",
+    "recomputeFailed": "Không thể tính lại hạng"
+  },
+  "partners": {
+    "title": "Đối tác",
+    "subtitle": "Duyệt tài khoản đối tác trước khi họ được quản lý listing.",
+    "approve": "Duyệt",
+    "reject": "Từ chối",
+    "approved": "Đã duyệt đối tác",
+    "rejected": "Đã từ chối đối tác",
+    "actionFailed": "Không thể cập nhật đối tác",
+    "empty": "Không có đối tác trong mục này.",
+    "status": {
+      "pending": "Chờ duyệt",
+      "approved": "Đã duyệt",
+      "rejected": "Từ chối"
+    },
+    "notice": {
+      "pendingTitle": "Xác nhận email của bạn",
+      "pendingBody": "Chúng tôi đã gửi liên kết xác nhận tới email của bạn. Bấm vào liên kết để kích hoạt tài khoản đối tác, sau đó đăng nhập lại để quản lý listing.",
+      "rejectedTitle": "Tài khoản chưa được duyệt",
+      "rejectedBody": "Tài khoản đối tác của bạn chưa được duyệt. Vui lòng liên hệ hỗ trợ để biết thêm."
+    }
   }
 }
