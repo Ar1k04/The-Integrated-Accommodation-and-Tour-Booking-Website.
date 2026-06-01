@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.security import create_access_token, hash_password
 from app.db.base import Base
@@ -27,7 +28,10 @@ TEST_DB_URL = os.getenv(
     "postgresql+asyncpg://travel_user:travel_password@postgres:5432/travel_test_db",
 )
 
-engine = create_async_engine(TEST_DB_URL, echo=False)
+# NullPool: never reuse a connection across event loops. Harmless on the pinned
+# pytest-asyncio (one session loop) and required on newer pytest-asyncio (a fresh
+# loop per test) — avoids asyncpg "another operation is in progress" errors.
+engine = create_async_engine(TEST_DB_URL, echo=False, poolclass=NullPool)
 TestSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -39,7 +43,13 @@ def event_loop():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def setup_db():
+async def setup_db(request):
+    # Pure unit tests marked ``nodb`` need no database, so we skip the Postgres
+    # schema create/drop. This lets pure-logic suites (pricing, security, vnpay,
+    # mappings, schemas) run on a fast lane without a running database.
+    if request.node.get_closest_marker("nodb"):
+        yield
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
