@@ -14,6 +14,7 @@ vi.mock('@/store/uiStore', () => ({
     selector({
       currency: _currency,
       locale: 'en',
+      usdToVnd: 25000,
       setCurrency: (c) => { _currency = c },
       setLocale: vi.fn(),
     }),

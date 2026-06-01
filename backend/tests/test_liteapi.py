@@ -39,8 +39,10 @@ async def test_search_hotels_normalizes_response():
         mock_client.get = AsyncMock(return_value=_mock_response(200, raw))
         mock_client_fn.return_value = mock_client
 
-        results = await liteapi_service.search_hotels(city="Hanoi", country_code="VN")
+        # search_hotels returns a (hotels, total) tuple.
+        results, total = await liteapi_service.search_hotels(city="Hanoi", country_code="VN")
 
+    assert total == 1
     assert len(results) == 1
     h = results[0]
     assert h["liteapi_hotel_id"] == "HOTEL_123"
@@ -59,8 +61,10 @@ async def test_search_hotels_degrades_on_502():
         mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
         mock_client_fn.return_value = mock_client
 
+        # country_code supplied so the call reaches the (failing) HTTP layer and
+        # exercises the 502 degrade path, not the 400 "resolve country code" guard.
         with pytest.raises(LiteAPIError) as exc_info:
-            await liteapi_service.search_hotels(city="Hanoi")
+            await liteapi_service.search_hotels(city="Hanoi", country_code="VN")
 
     assert exc_info.value.status_code == 502
 
@@ -561,9 +565,11 @@ async def test_hybrid_search_deduplicates_by_liteapi_id(client):
         },
     ]
 
-    with patch.object(liteapi_service, "search_hotels", new=AsyncMock(return_value=[
-        liteapi_service._normalize_hotel(h) for h in fake_liteapi_results
-    ])):
+    # search_hotels now returns a (hotels, total) tuple — the mock must mirror that.
+    with patch.object(liteapi_service, "search_hotels", new=AsyncMock(return_value=(
+        [liteapi_service._normalize_hotel(h) for h in fake_liteapi_results],
+        len(fake_liteapi_results),
+    ))):
         resp = await client.get("/api/v1/hotels?city=Hanoi")
 
     assert resp.status_code == 200

@@ -18,6 +18,19 @@ vi.mock('@/store/searchStore', () => ({
   })),
 }))
 
+// SearchBar đã chuyển sang i18n; trả nhãn tiếng Anh cho các key được test query.
+vi.mock('react-i18next', () => {
+  const dict = {
+    'searchBar.whereGoing': 'Where are you going?',
+    'searchBar.hotels': 'Hotels',
+    'searchBar.toursActivities': 'Tours & Activities',
+    'common.search': 'Search',
+  }
+  // Key chưa map → trả segment cuối (vd 'searchBar.rooms' → 'rooms') để chữ
+  // "search" trong prefix không lẫn vào accessible name của các nút khác.
+  return { useTranslation: () => ({ t: (k) => dict[k] ?? k.split('.').pop(), i18n: { language: 'en' } }) }
+})
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },
 })

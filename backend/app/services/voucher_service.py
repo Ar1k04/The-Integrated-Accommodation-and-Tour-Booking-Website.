@@ -53,7 +53,13 @@ async def validate_voucher(
 ) -> Voucher:
     """Fetch the voucher, check it is usable by this user for this subtotal."""
 
-    voucher = await peek_voucher(db, code)
+    # Lock the voucher row for the remainder of the transaction so two
+    # concurrent redemptions can't both pass the max_uses / budget checks
+    # (check-then-act race). Per-user reuse is already guarded by the
+    # UNIQUE(voucher_id, user_id) constraint; this protects the global limits.
+    voucher = (
+        await db.execute(select(Voucher).where(Voucher.code == code).with_for_update())
+    ).scalar_one_or_none()
     if not voucher:
         raise VoucherError("Voucher not found")
     if voucher.status != VoucherStatus.active.value:
@@ -161,6 +167,41 @@ async def record_usage_only(
     booking.discount_amount = supplier_discount.quantize(Decimal("0.01"))
     await db.flush()
     return supplier_discount
+
+
+async def reverse_voucher_for_booking(db: AsyncSession, booking_id: uuid.UUID) -> None:
+    """Release a voucher consumed by a booking that is being cancelled/failed.
+
+    Deletes the ``VoucherUsage`` row, decrements ``used_count`` (floored at 0),
+    and subtracts the booking's discount from ``budget_used`` — so the customer
+    can reuse the voucher and the budget pool is restored. No-op when the
+    booking used no voucher. Mirrors ``loyalty_service.reverse_booking_points``.
+    """
+    usage = (
+        await db.execute(select(VoucherUsage).where(VoucherUsage.booking_id == booking_id))
+    ).scalar_one_or_none()
+    if usage is None:
+        return
+
+    voucher = (
+        await db.execute(
+            select(Voucher).where(Voucher.id == usage.voucher_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    booking = (
+        await db.execute(select(Booking).where(Booking.id == booking_id))
+    ).scalar_one_or_none()
+
+    if voucher is not None:
+        voucher.used_count = max(0, (voucher.used_count or 0) - 1)
+        if voucher.budget is not None and booking is not None and booking.discount_amount:
+            voucher.budget_used = max(
+                Decimal("0"),
+                Decimal(str(voucher.budget_used)) - Decimal(str(booking.discount_amount)),
+            ).quantize(Decimal("0.01"))
+
+    await db.delete(usage)
+    await db.flush()
 
 
 # ---------------------------------------------------------------------------

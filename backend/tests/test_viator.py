@@ -584,5 +584,7 @@ async def test_hybrid_search_forwards_advanced_filters(client):
     assert kwargs["end_date"] == date(2026, 6, 30)
     assert kwargs["sort"] == "PRICE"
     assert kwargs["order"] == "ASCENDING"
-    assert kwargs["start"] == 6
-    assert kwargs["count"] == 5
+    # Tour search caches a batch and paginates in-memory, so it always fetches
+    # from start=1; the page-2 cold path requests the full batch size (50).
+    assert kwargs["start"] == 1
+    assert kwargs["count"] == 50

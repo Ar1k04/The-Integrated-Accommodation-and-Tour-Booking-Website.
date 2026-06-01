@@ -949,10 +949,15 @@ async def confirm_booking(
     if booking.status in (BookingStatus.confirmed.value, BookingStatus.cancelled.value):
         return booking, _outcome_from_persisted_state(booking)
 
-    failed_flight_entries: list[dict] = []
+    failed_items: list[dict] = []
     confirmed_items: list[dict] = []
 
     for item in booking.items:
+        # Tracks a supplier (LiteAPI/Viator) booking failure for this item so
+        # the non-flight branch below can route it into the refund path instead
+        # of silently marking it confirmed.
+        supplier_failed_entry: dict | None = None
+
         # ─── LiteAPI rooms ────────────────────────────────────────────
         # Existing silent-warning pattern kept as-is — out of scope for this
         # bug fix. Item is marked confirmed regardless so the user sees the
@@ -986,12 +991,20 @@ async def confirm_booking(
                 item.supplier_status_synced_at = datetime.now(timezone.utc)
             except LiteAPIError as exc:
                 logger.warning(
-                    "LiteAPI book failed for prebook %s: %s — booking recorded locally",
+                    "LiteAPI book failed for prebook %s: %s — item will be refunded",
                     item.liteapi_prebook_id,
                     exc.message,
                 )
                 item.supplier_status = "BOOK_FAILED"
                 item.supplier_status_synced_at = datetime.now(timezone.utc)
+                supplier_failed_entry = {
+                    "item_id": str(item.id),
+                    "type": "room",
+                    "error_code": getattr(exc, "code", None),
+                    "error_type": "liteapi_error",
+                    "message": exc.message,
+                    "user_message": "We couldn't confirm this room with the hotel. You will be refunded.",
+                }
 
         # ─── Viator tours ─────────────────────────────────────────────
         if item.viator_product_code and not item.viator_booking_ref:
@@ -1011,10 +1024,18 @@ async def confirm_booking(
                 item.viator_booking_ref = result["viator_booking_ref"]
             except ViatorError as exc:
                 logger.warning(
-                    "Viator book failed for %s: %s — booking recorded locally",
+                    "Viator book failed for %s: %s — item will be refunded",
                     item.viator_product_code,
                     exc.message,
                 )
+                supplier_failed_entry = {
+                    "item_id": str(item.id),
+                    "type": "tour",
+                    "error_code": getattr(exc, "code", None),
+                    "error_type": "viator_error",
+                    "message": exc.message,
+                    "user_message": "We couldn't confirm this tour with the operator. You will be refunded.",
+                }
 
         # ─── Duffel flights ───────────────────────────────────────────
         # Real fix: retry transient failures, persist permanent ones, and
@@ -1030,22 +1051,26 @@ async def confirm_booking(
                     confirmed_items.append({"item_id": str(item.id), "type": "flight"})
                 else:
                     # Leave item.status as pending and skip to next item.
-                    failed_flight_entries.append(_build_failed_item_entry(item, flight, last_error))
+                    failed_items.append(_build_failed_item_entry(item, flight, last_error))
                     continue
             else:
                 item.status = BookingItemStatus.confirmed.value
                 confirmed_items.append({"item_id": str(item.id), "type": "flight"})
         else:
-            # Non-flight items (room/tour) — keep the existing
-            # mark-as-confirmed-even-if-supplier-warned behavior.
-            item.status = BookingItemStatus.confirmed.value
-            confirmed_items.append({
-                "item_id": str(item.id),
-                "type": "room" if item.item_type == BookingItemType.room.value else item.item_type,
-            })
+            # Non-flight items (room/tour). If the supplier booking failed,
+            # route the item into the failed set so it gets refunded — mirrors
+            # the Duffel flow — instead of silently marking it confirmed.
+            if supplier_failed_entry is not None:
+                failed_items.append(supplier_failed_entry)
+            else:
+                item.status = BookingItemStatus.confirmed.value
+                confirmed_items.append({
+                    "item_id": str(item.id),
+                    "type": "room" if item.item_type == BookingItemType.room.value else item.item_type,
+                })
 
     # ─── Booking-level outcome ────────────────────────────────────────────
-    if not failed_flight_entries:
+    if not failed_items:
         # Happy path — every item finalized successfully.
         booking.status = BookingStatus.confirmed.value
         points = int(Decimal(str(booking.total_price)))
@@ -1079,8 +1104,8 @@ async def confirm_booking(
         # Partial — confirm what worked, refund pro-rata share of failed items.
         booking.status = BookingStatus.confirmed.value
         refund_amount = sum(
-            _failed_flight_refund_share(booking, item_id=entry["item_id"])
-            for entry in failed_flight_entries
+            _failed_item_refund_share(booking, item_id=entry["item_id"])
+            for entry in failed_items
         )
         refund_info = await _attempt_stripe_refund(
             db, booking, amount=refund_amount, partial=True
@@ -1101,7 +1126,7 @@ async def confirm_booking(
         await lock_service.release_booking_locks(redis, booking.id)
         try:
             await email_service.send_booking_partial_failure(
-                booking, guest_email, failed_flight_entries, refund_info,
+                booking, guest_email, failed_items, refund_info,
             )
         except Exception as exc:
             logger.warning("Partial-failure email failed for booking %s: %s", booking.id, exc)
@@ -1109,7 +1134,7 @@ async def confirm_booking(
         return booking, {
             "status": status_str,
             "confirmed_items": confirmed_items,
-            "failed_items": failed_flight_entries,
+            "failed_items": failed_items,
             "refund": refund_info,
         }
 
@@ -1119,10 +1144,22 @@ async def confirm_booking(
         if item.status != BookingItemStatus.confirmed.value:
             item.status = BookingItemStatus.cancelled.value
     refund_info = await _attempt_stripe_refund(db, booking, amount=None, partial=False)
+    # The whole booking is cancelled — restore redeemed points and release the
+    # voucher so the customer doesn't lose what they spent on a failed booking.
+    try:
+        await loyalty_service.reverse_booking_points(db, booking.id)
+        booking.points_redeemed = 0
+        booking.points_earned = 0
+    except Exception as exc:
+        logger.warning("Loyalty reversal failed for failed booking %s: %s", booking.id, exc)
+    try:
+        await voucher_service.reverse_voucher_for_booking(db, booking.id)
+    except Exception as exc:
+        logger.warning("Voucher reversal failed for failed booking %s: %s", booking.id, exc)
     await db.flush()
     await db.refresh(booking)
     await lock_service.release_booking_locks(redis, booking.id)
-    primary_failure = failed_flight_entries[0] if failed_flight_entries else {}
+    primary_failure = failed_items[0] if failed_items else {}
     try:
         await email_service.send_flight_booking_failed(
             booking, guest_email, primary_failure, refund_info,
@@ -1133,12 +1170,12 @@ async def confirm_booking(
     return booking, {
         "status": status_str,
         "confirmed_items": [],
-        "failed_items": failed_flight_entries,
+        "failed_items": failed_items,
         "refund": refund_info,
     }
 
 
-def _failed_flight_refund_share(booking: Booking, *, item_id: str) -> float:
+def _failed_item_refund_share(booking: Booking, *, item_id: str) -> float:
     """Pro-rata USD share of booking.total_price owed back for one failed item.
 
     Uses the persisted ``subtotal`` per item so we refund what was actually
@@ -1226,7 +1263,7 @@ def _outcome_from_persisted_state(booking: Booking) -> dict:
     to recover the supplier error that was persisted.
     """
     confirmed_items: list[dict] = []
-    failed_flight_entries: list[dict] = []
+    failed_items: list[dict] = []
     for item in booking.items or []:
         item_type = item.item_type
         if item_type == BookingItemType.flight.value:
@@ -1235,7 +1272,7 @@ def _outcome_from_persisted_state(booking: Booking) -> dict:
             if flight and flight.duffel_order_id:
                 confirmed_items.append({"item_id": str(item.id), "type": "flight"})
             elif err:
-                failed_flight_entries.append({
+                failed_items.append({
                     "item_id": str(item.id),
                     "type": "flight",
                     "error_code": err.get("error_code"),
@@ -1254,14 +1291,14 @@ def _outcome_from_persisted_state(booking: Booking) -> dict:
 
     if booking.status == BookingStatus.cancelled.value:
         status_str = "failed"
-    elif failed_flight_entries:
+    elif failed_items:
         status_str = "partial"
     else:
         status_str = "confirmed"
     return {
         "status": status_str,
         "confirmed_items": confirmed_items,
-        "failed_items": failed_flight_entries,
+        "failed_items": failed_items,
         "refund": None,  # caller can re-read the Payment row if needed
     }
 
@@ -1410,6 +1447,13 @@ async def cancel_booking(
         booking.points_redeemed = 0
     except Exception as exc:
         logger.warning("Loyalty reversal failed for booking %s: %s", booking.id, exc)
+
+    # Release the voucher (if any) so the customer can reuse it and the budget
+    # pool is restored — mirrors the loyalty reversal above.
+    try:
+        await voucher_service.reverse_voucher_for_booking(db, booking.id)
+    except Exception as exc:
+        logger.warning("Voucher reversal failed for booking %s: %s", booking.id, exc)
 
     # Stripe refund — only refund what the supplier confirmed as refundable.
     # If every supplier reports non-refundable, no refund is issued and the

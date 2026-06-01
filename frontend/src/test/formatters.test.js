@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { formatCurrency, nightsBetween, truncate, slugify, starArray } from '@/utils/formatters'
+import { setDisplayCurrency, setUsdToVnd } from '@/utils/rateStore'
 
 describe('formatCurrency', () => {
   it('formats USD correctly', () => {
@@ -17,9 +18,14 @@ describe('formatCurrency', () => {
   })
 
   it('formats VND with multiplied amount', () => {
-    const vnd = formatCurrency(50, 'VND')
+    // formatCurrency cố ý bỏ qua tham số thứ 2 — tiền tệ hiển thị lấy từ singleton
+    // rateStore, nên đặt VND cho case này rồi khôi phục USD.
+    setUsdToVnd(25000)
+    setDisplayCurrency('VND')
+    const vnd = formatCurrency(50)
     expect(vnd).toContain('₫')
     expect(vnd).toContain('1.250.000')
+    setDisplayCurrency('USD')
   })
 })
 
