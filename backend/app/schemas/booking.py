@@ -16,8 +16,14 @@ class BookingCreate(BaseModel):
 
 
 class BookingUpdate(BaseModel):
+    """User-editable booking fields. ``status`` is intentionally excluded —
+    state transitions happen only via confirm_booking/cancel_booking or admin
+    routes, never by the customer self-setting confirmed/completed (AUTHZ-02).
+    """
+
+    model_config = {"extra": "forbid"}
+
     special_requests: str | None = None
-    status: str | None = None
 
 
 class BookingResponse(BaseModel):

@@ -248,3 +248,91 @@ async def test_partial_failure_confirms_good_item_refunds_failed_tour(db_session
     statuses = {i.item_type: i.status for i in reloaded.items}
     assert statuses["room"] == BookingItemStatus.confirmed.value
     assert statuses["tour"] != BookingItemStatus.confirmed.value  # failed tour not confirmed
+
+
+# ── AUTHZ-05 + FE-02: loyalty redeem ownership + idempotency ───────────────────
+@pytest.mark.asyncio
+async def test_redeem_rejects_booking_of_other_user(db_session, admin_user, test_user):
+    """A redemption tied to a booking must target the caller's own booking."""
+    test_user.loyalty_points = 500
+    other = Booking(id=uuid.uuid4(), user_id=admin_user.id, total_price=Decimal("100"), status=BookingStatus.pending.value)
+    db_session.add(other)
+    await db_session.flush()
+    with pytest.raises(loyalty_service.LoyaltyError):
+        await loyalty_service.redeem_points(
+            db_session, user_id=test_user.id, booking_id=other.id, points=100
+        )
+
+
+@pytest.mark.asyncio
+async def test_redeem_is_idempotent_per_booking(db_session, test_user):
+    """Redeeming twice for the same booking deducts points only once (FE-02)."""
+    test_user.loyalty_points = 1000
+    booking = Booking(id=uuid.uuid4(), user_id=test_user.id, total_price=Decimal("100"), status=BookingStatus.pending.value)
+    db_session.add(booking)
+    await db_session.flush()
+
+    txn1, disc1 = await loyalty_service.redeem_points(db_session, user_id=test_user.id, booking_id=booking.id, points=300)
+    await db_session.refresh(test_user)
+    assert test_user.loyalty_points == 700
+
+    # Second call (retry / lost response) is a no-op that echoes the first.
+    txn2, disc2 = await loyalty_service.redeem_points(db_session, user_id=test_user.id, booking_id=booking.id, points=300)
+    await db_session.refresh(test_user)
+    assert test_user.loyalty_points == 700  # NOT 400
+    assert txn2.id == txn1.id
+    assert disc2 == disc1
+
+
+# ── MONEY-03: prebook TTL parsing falls back instead of clamping to 1s ─────────
+@pytest.mark.nodb
+def test_parse_expiry_seconds_past_falls_back_to_default():
+    from datetime import datetime, timedelta, timezone
+
+    # Negative "seconds from now" → None (caller uses default TTL).
+    assert booking_service._parse_expiry_seconds(-5) is None
+    assert booking_service._parse_expiry_seconds(0) is None
+    # A future numeric value is preserved.
+    assert booking_service._parse_expiry_seconds(120) == 120
+    # A past ISO timestamp → None; a future one → positive.
+    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    assert booking_service._parse_expiry_seconds(past) is None
+    assert booking_service._parse_expiry_seconds(future) > 0
+
+
+# ── RACE-01/03: confirm_booking is idempotent under the new row lock ───────────
+@pytest.mark.asyncio
+async def test_confirm_booking_second_call_is_noop(db_session, test_user, test_room):
+    """Once confirmed, a re-entrant confirm returns the cached outcome and does
+    NOT re-run supplier calls (locks + terminal short-circuit)."""
+    booking = Booking(id=uuid.uuid4(), user_id=test_user.id, total_price=Decimal("200"), status=BookingStatus.pending.value)
+    db_session.add(booking)
+    await db_session.flush()
+    item = BookingItem(
+        id=uuid.uuid4(), booking_id=booking.id, item_type=BookingItemType.room.value,
+        room_id=test_room.id, check_in=date.today() + timedelta(days=3),
+        check_out=date.today() + timedelta(days=5), unit_price=Decimal("200"),
+        subtotal=Decimal("200"), quantity=1, status=BookingItemStatus.pending.value,
+    )
+    db_session.add(item)
+    await db_session.flush()
+
+    loaded = await _reload(db_session, booking.id)
+    with patch.object(booking_service.email_service, "send_booking_confirmation", new=AsyncMock(return_value=True)):
+        _, outcome1 = await confirm_booking(db_session, loaded, guest_email="u@test.com")
+    assert outcome1["status"] == "confirmed"
+
+    reloaded = await _reload(db_session, booking.id)
+    assert reloaded.status == BookingStatus.confirmed.value
+
+    # A second confirm must not touch suppliers.
+    liteapi_book = AsyncMock(side_effect=AssertionError("supplier called on idempotent re-confirm"))
+    viator_book = AsyncMock(side_effect=AssertionError("supplier called on idempotent re-confirm"))
+    with patch.object(booking_service.liteapi_service, "book", new=liteapi_book), \
+         patch.object(booking_service.viator_service, "book_tour", new=viator_book), \
+         patch.object(booking_service.email_service, "send_booking_confirmation", new=AsyncMock(return_value=True)):
+        _, outcome2 = await confirm_booking(db_session, reloaded, guest_email="u@test.com")
+    assert outcome2["status"] == "confirmed"
+    liteapi_book.assert_not_called()
+    viator_book.assert_not_called()

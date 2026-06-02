@@ -51,9 +51,20 @@ async def get_current_user(
 
 
 async def require_staff(current_user=Depends(get_current_user)):
-    """Allow partner OR admin (any platform staff)."""
+    """Allow partner OR admin (any platform staff).
+
+    Partners must be approved by an admin first (partner_status == 'approved').
+    A pending/rejected partner can still log in (to see the awaiting-approval
+    screen) but every staff action is blocked here — the single chokepoint for
+    all StaffUser-protected endpoints.
+    """
     if current_user.role not in STAFF_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required")
+    if current_user.role == "partner" and getattr(current_user, "partner_status", None) != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Partner account is pending admin approval",
+        )
     return current_user
 
 

@@ -115,7 +115,10 @@ def _parse_expiry_seconds(expires_at) -> int | None:
         return None
     try:
         if isinstance(expires_at, (int, float)):
-            return max(int(expires_at), 1)
+            # MONEY-03: a non-positive "seconds from now" means the supplier
+            # hold is already gone — fall back to the default lock TTL instead
+            # of clamping to a near-zero 1s window.
+            return int(expires_at) if expires_at > 0 else None
         if isinstance(expires_at, str):
             s = expires_at.replace("Z", "+00:00")
             dt = datetime.fromisoformat(s)
@@ -943,6 +946,16 @@ async def confirm_booking(
     (confirmed or cancelled) returns the cached outcome derived from the
     persisted state without re-running supplier calls.
     """
+
+    # RACE-01/03: serialize concurrent confirmations of the same booking
+    # (Stripe webhook vs /confirm-stripe, VNPay return vs IPN). Take a row
+    # lock and re-read the latest status BEFORE the terminal short-circuit so
+    # a second caller waits, then sees the terminal state and returns the
+    # cached outcome instead of re-running supplier calls / re-awarding points.
+    await db.execute(
+        select(Booking.id).where(Booking.id == booking.id).with_for_update()
+    )
+    await db.refresh(booking, attribute_names=["status"])
 
     # Idempotency: terminal-state short-circuit. Re-derive the outcome from
     # what's already persisted so the caller can render the same response.

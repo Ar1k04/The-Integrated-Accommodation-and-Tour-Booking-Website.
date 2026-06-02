@@ -17,7 +17,7 @@ import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -43,6 +43,31 @@ async def peek_voucher(db: AsyncSession, code: str) -> Voucher | None:
     return (
         await db.execute(select(Voucher).where(Voucher.code == code))
     ).scalar_one_or_none()
+
+
+async def list_available_for_user(db: AsyncSession, user_id: uuid.UUID) -> list[Voucher]:
+    """Vouchers a customer can still use today (UC_VIEW_VOUCHER).
+
+    Mirrors the gates in ``validate_voucher`` (status/date/uses/budget/guest)
+    minus the per-order subtotal check, and excludes vouchers this user has
+    already redeemed (UNIQUE(voucher_id, user_id)).
+    """
+    today = date.today()
+    used_subq = select(VoucherUsage.voucher_id).where(VoucherUsage.user_id == user_id)
+    query = (
+        select(Voucher)
+        .where(
+            Voucher.status == VoucherStatus.active.value,
+            Voucher.used_count < Voucher.max_uses,
+            or_(Voucher.valid_from.is_(None), Voucher.valid_from <= today),
+            or_(Voucher.valid_to.is_(None), Voucher.valid_to >= today),
+            or_(Voucher.guest_id.is_(None), Voucher.guest_id == user_id),
+            or_(Voucher.budget.is_(None), Voucher.budget_used < Voucher.budget),
+            Voucher.id.notin_(used_subq),
+        )
+        .order_by(Voucher.valid_to.asc().nullslast())
+    )
+    return list((await db.execute(query)).scalars().all())
 
 
 async def validate_voucher(

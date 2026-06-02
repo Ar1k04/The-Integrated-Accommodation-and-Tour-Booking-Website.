@@ -42,6 +42,24 @@ def event_loop():
     loop.close()
 
 
+@pytest.fixture(autouse=True)
+def _lax_locks_by_default():
+    """Run the suite with REDIS_LOCK_STRICT=False by default.
+
+    Production defaults to strict (RACE-02): a Redis outage fails bookings with
+    503 rather than risk overbooking external inventory. The test harness, by
+    contrast, exercises business logic by passing ``redis=None`` or a partial
+    fake — that degraded path only makes sense in lax mode. Tests that assert
+    the strict behaviour flip the flag to True themselves and restore it.
+    """
+    from app.core.config import settings
+
+    original = settings.REDIS_LOCK_STRICT
+    settings.REDIS_LOCK_STRICT = False
+    yield
+    settings.REDIS_LOCK_STRICT = original
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db(request):
     # Pure unit tests marked ``nodb`` need no database, so we skip the Postgres
@@ -79,6 +97,8 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     mock_redis.eval.return_value = 1
     mock_redis.expire.return_value = True
     mock_redis.delete.return_value = 1
+    # SCAN returns (cursor, keys); an empty match means "no active lock".
+    mock_redis.scan.return_value = (0, [])
 
     app.dependency_overrides[get_db] = _override_get_db
     app.state.redis = mock_redis
@@ -138,6 +158,7 @@ async def partner_user(db_session: AsyncSession):
         full_name="Partner User",
         role="partner",
         is_active=True,
+        partner_status="approved",  # gated by require_staff; tests assume an active partner
         loyalty_points=0,
     )
     db_session.add(user)

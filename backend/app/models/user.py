@@ -18,12 +18,17 @@ class User(Base):
     __tablename__ = "users"
 
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nullable: accounts created via Google OAuth have no local password.
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Google OAuth subject ("sub" claim). NULL for password-only accounts.
+    google_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(50))
     avatar_url: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default=UserRole.user.value, server_default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Partner approval workflow: pending | approved | rejected; NULL for non-partners.
+    partner_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     loyalty_points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     lifetime_loyalty_points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     preferred_locale: Mapped[str] = mapped_column(String(2), default="en", server_default="en", nullable=False)

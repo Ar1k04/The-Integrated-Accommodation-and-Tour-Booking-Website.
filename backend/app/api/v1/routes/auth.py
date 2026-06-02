@@ -9,20 +9,27 @@ from app.core.dependencies import get_current_user
 from app.db.session import get_db
 from app.schemas.auth import (
     ForgotPasswordRequest,
+    GoogleAuthRequest,
     LoginRequest,
+    PartnerConfirmRequest,
     ResetPasswordRequest,
     TokenResponse,
 )
-from app.schemas.user import UserCreate, UserResponse, UserUpdate
-from app.services.email_service import send_password_reset
+from app.schemas.user import SelfProfileUpdate, UserCreate, UserResponse
+from app.models.user import UserRole
+from app.services.email_service import send_partner_confirmation, send_password_reset
 from app.services.auth_service import (
+    approve_partner,
+    authenticate_google,
     authenticate_user,
     blacklist_token,
+    create_partner_confirm_token,
     create_password_reset_token,
     issue_tokens,
     register_user,
     reset_user_password,
     validate_refresh_token,
+    verify_partner_confirm_token,
     verify_password_reset_token,
 )
 
@@ -48,18 +55,30 @@ def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(key=REFRESH_COOKIE, path="/api/v1/auth")
 
 
+def _queue_partner_confirmation(background_tasks: BackgroundTasks, user) -> None:
+    """Email a pending partner a link to confirm their account."""
+    token = create_partner_confirm_token(user.id)
+    confirm_link = f"{settings.FRONTEND_URL}/partner/confirm?token={token}"
+    background_tasks.add_task(_send_partner_confirm_email, user.email, confirm_link)
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 async def register(
     request: Request,
     response: Response,
     data: UserCreate,
+    background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     try:
         user = await register_user(db, data)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    # Partners must confirm their email before the dashboard unlocks.
+    if user.role == UserRole.partner.value:
+        _queue_partner_confirmation(background_tasks, user)
 
     access, refresh = issue_tokens(user.id, user.role)
     _set_refresh_cookie(response, refresh)
@@ -82,6 +101,49 @@ async def login(
     access, refresh = issue_tokens(user.id, user.role)
     _set_refresh_cookie(response, refresh)
     return TokenResponse(access_token=access)
+
+
+@router.post("/google", response_model=TokenResponse)
+@limiter.limit("5/minute")
+async def google_login(
+    request: Request,
+    response: Response,
+    data: GoogleAuthRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        user, created = await authenticate_google(db, data.access_token, data.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+
+    # A brand-new partner account still goes through email confirmation.
+    if created and user.role == UserRole.partner.value:
+        _queue_partner_confirmation(background_tasks, user)
+
+    access, refresh = issue_tokens(user.id, user.role)
+    _set_refresh_cookie(response, refresh)
+    return TokenResponse(access_token=access)
+
+
+@router.post("/partner/confirm", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
+async def confirm_partner(
+    request: Request,
+    data: PartnerConfirmRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    try:
+        user_id = verify_partner_confirm_token(data.token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
+        await approve_partner(db, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return {"message": "Partner account confirmed. You can now sign in."}
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -183,7 +245,7 @@ async def get_me(current_user=Depends(get_current_user)):
 
 @router.patch("/me", response_model=UserResponse)
 async def update_me(
-    data: UserUpdate,
+    data: SelfProfileUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user=Depends(get_current_user),
 ):
@@ -200,3 +262,10 @@ async def _send_reset_email(email: str, reset_link: str) -> None:
     sent = await send_password_reset(email, reset_link)
     if not sent:
         logging.getLogger(__name__).info("Reset email to %s: %s", email, reset_link)
+
+
+async def _send_partner_confirm_email(email: str, confirm_link: str) -> None:
+    import logging
+    sent = await send_partner_confirmation(email, confirm_link)
+    if not sent:
+        logging.getLogger(__name__).info("Partner confirm email to %s: %s", email, confirm_link)

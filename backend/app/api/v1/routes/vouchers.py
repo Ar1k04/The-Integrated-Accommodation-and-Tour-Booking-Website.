@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.voucher import Voucher, VoucherLiteAPISyncStatus
 from app.models.voucher_usage import VoucherUsage
 from app.schemas.voucher import (
+    PublicVoucherResponse,
     VoucherCreate,
     VoucherResponse,
     VoucherStatusUpdate,
@@ -53,6 +54,16 @@ async def validate_voucher(
         discount_amount=float(discount),
         message=f"Voucher applied ({voucher.discount_value} {voucher.discount_type})",
     )
+
+
+@router.get("/available", response_model=list[PublicVoucherResponse])
+async def list_available_vouchers(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """Vouchers the current customer can still redeem (UC_VIEW_VOUCHER)."""
+    vouchers = await voucher_service.list_available_for_user(db, current_user.id)
+    return [PublicVoucherResponse.model_validate(v) for v in vouchers]
 
 
 def _enforce_sync_disabled_for_non_hotel(payload: dict) -> dict:

@@ -3,7 +3,7 @@ from typing import Annotated
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,7 +13,12 @@ from app.core.config import settings
 from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
+from app.models.booking_item import BookingItem
+from app.models.hotel import Hotel
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
+from app.models.room import Room
+from app.models.tour import Tour
+from app.models.tour_schedule import TourSchedule
 from app.schemas.payment import PaymentCreate, PaymentResponse, VnpayCreateRequest
 from app.services import vnpay_service
 from app.services.payment_service import (
@@ -28,11 +33,34 @@ from app.services.payment_service import (
 WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
-def _owns_payment(payment: Payment, user) -> bool:
-    if user.role in ("partner", "admin"):
+async def _user_can_access_payment(db: AsyncSession, payment: Payment, user) -> bool:
+    """Authorize read access to a payment (AUTHZ-03).
+
+    - admin: any payment.
+    - the customer who owns the booking: their own payment.
+    - partner: ONLY if the booking contains an item belonging to one of the
+      partner's own local hotels/tours (owner_id). Previously every partner
+      could read every payment.
+    """
+    if user.role == "admin":
         return True
     booking = payment.booking
-    return bool(booking and booking.user_id == user.id)
+    if booking and booking.user_id == user.id:
+        return True
+    if user.role == "partner" and booking is not None:
+        partner_item = (
+            select(BookingItem.id)
+            .join(Room, BookingItem.room_id == Room.id, isouter=True)
+            .join(Hotel, Room.hotel_id == Hotel.id, isouter=True)
+            .join(TourSchedule, BookingItem.tour_schedule_id == TourSchedule.id, isouter=True)
+            .join(Tour, TourSchedule.tour_id == Tour.id, isouter=True)
+            .where(
+                BookingItem.booking_id == booking.id,
+                or_(Hotel.owner_id == user.id, Tour.owner_id == user.id),
+            )
+        )
+        return bool((await db.execute(select(partner_item.exists()))).scalar())
+    return False
 
 
 async def _load_payment_for_user(
@@ -44,7 +72,7 @@ async def _load_payment_for_user(
         .where(Payment.id == payment_id)
     )
     payment = result.scalar_one_or_none()
-    if not payment or not _owns_payment(payment, user):
+    if not payment or not await _user_can_access_payment(db, payment, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
     return payment
 
@@ -366,6 +394,26 @@ async def vnpay_return(
 
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    # RACE-03: idempotency parity with /vnpay/ipn. If this VNPay transaction
+    # was already processed (e.g. IPN landed first), don't re-confirm — return
+    # the outcome derived from the persisted state.
+    if txn_no:
+        already = (
+            await db.execute(
+                select(Payment).where(Payment.vnpay_transaction_id == txn_no)
+            )
+        ).scalar_one_or_none()
+        if already is not None:
+            from app.services.booking_service import _outcome_from_persisted_state
+            booking_with_items = await _load_booking_with_items(db, booking.id)
+            outcome = _outcome_from_persisted_state(booking_with_items)
+            body = _confirm_response_body(already, booking_with_items, outcome)
+            body["message"] = (
+                "Payment successful" if outcome.get("status") == "confirmed"
+                else "Payment captured, booking finalization issue"
+            )
+            return body
 
     # Find the pending VNPay payment for this booking
     payment = (

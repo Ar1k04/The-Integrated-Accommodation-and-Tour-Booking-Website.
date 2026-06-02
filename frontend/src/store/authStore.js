@@ -40,8 +40,8 @@ export const useAuthStore = create((set, get) => ({
     return me.data
   },
 
-  loginWithGoogle: async (credential, role = 'user') => {
-    const res = await authApi.google({ id_token: credential, role })
+  loginWithGoogle: async (accessToken, role = 'user') => {
+    const res = await authApi.google({ access_token: accessToken, role })
     const { access_token } = res.data
     set({ accessToken: access_token, isAuthenticated: true })
     const me = await authApi.getMe(access_token)

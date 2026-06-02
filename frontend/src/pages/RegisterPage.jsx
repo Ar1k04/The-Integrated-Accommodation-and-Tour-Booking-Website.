@@ -4,14 +4,14 @@ import { useAuth } from '@/hooks/useAuth'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
-import { GoogleLogin } from '@react-oauth/google'
+import GoogleButton from '@/components/common/GoogleButton'
 import { Eye, EyeOff, Mail, Lock, User, ShieldCheck, ChevronDown } from 'lucide-react'
 import { isValidEmail, isStrongPassword } from '@/utils/validators'
 
 export default function RegisterPage() {
   const { register, loginWithGoogle, isAuthenticated, user } = useAuth()
   const navigate = useNavigate()
-  const { t, i18n } = useTranslation('auth')
+  const { t } = useTranslation('auth')
 
   const [form, setForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '' })
   const [adminForm, setAdminForm] = useState({ full_name: '', email: '', password: '', confirmPassword: '' })
@@ -88,10 +88,10 @@ export default function RegisterPage() {
     }
   }
 
-  const handleGoogle = async (credentialResponse) => {
+  const handleGoogle = async (accessToken) => {
     setLoading(true)
     try {
-      const u = await loginWithGoogle(credentialResponse.credential)
+      const u = await loginWithGoogle(accessToken)
       toast.success(t('register.register'))
       navigate(u.role === 'partner' || u.role === 'admin' ? '/admin' : '/', { replace: true })
     } catch (err) {
@@ -198,16 +198,12 @@ export default function RegisterPage() {
               <div className="h-px flex-1 bg-gray-200" />
             </div>
 
-            <div className="flex justify-center">
-              <GoogleLogin
-                key={i18n.language}
-                onSuccess={handleGoogle}
-                onError={() => setErrors({ server: t('login.googleFailed') })}
-                locale={i18n.language}
-                text="signup_with"
-                width="320"
-              />
-            </div>
+            <GoogleButton
+              mode="signup"
+              disabled={loading}
+              onSuccess={handleGoogle}
+              onError={() => setErrors({ server: t('login.googleFailed') })}
+            />
 
             <p className="text-center text-sm text-gray-500 mt-6">
               {t('register.haveAccount')}{' '}

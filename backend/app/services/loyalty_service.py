@@ -12,6 +12,7 @@ from decimal import Decimal
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.booking import Booking
 from app.models.loyalty_tier import LoyaltyTier
 from app.models.loyalty_transaction import LoyaltyTransaction, LoyaltyTransactionType
 from app.models.user import User
@@ -72,6 +73,33 @@ async def redeem_points(
 
     if points <= 0:
         raise LoyaltyError("Redemption amount must be positive")
+
+    # AUTHZ-05: a redemption tied to a booking must target the caller's own
+    # booking — never let a user redeem against someone else's order.
+    if booking_id is not None:
+        booking = (
+            await db.execute(select(Booking).where(Booking.id == booking_id))
+        ).scalar_one_or_none()
+        if booking is None:
+            raise LoyaltyError("Booking not found")
+        if booking.user_id != user_id:
+            raise LoyaltyError("Booking does not belong to this user")
+
+        # FE-02: idempotent per booking. If a redeem already exists for this
+        # booking, return it instead of deducting again (safe FE retries /
+        # lost responses).
+        existing = (
+            await db.execute(
+                select(LoyaltyTransaction).where(
+                    and_(
+                        LoyaltyTransaction.booking_id == booking_id,
+                        LoyaltyTransaction.type == LoyaltyTransactionType.redeem.value,
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing, (Decimal(-existing.points) * REDEEM_RATE).quantize(Decimal("0.01"))
 
     user = await _lock_user(db, user_id)
     if (user.loyalty_points or 0) < points:
@@ -163,12 +191,22 @@ async def reverse_booking_points(
         to_deduct_lifetime = min(earned, user.lifetime_loyalty_points or 0)
         user.loyalty_points = (user.loyalty_points or 0) - to_deduct_balance
         user.lifetime_loyalty_points = (user.lifetime_loyalty_points or 0) - to_deduct_lifetime
+        # MONEY-02: the deduction is capped at the current balance (we never
+        # drive points negative). When capped, record the shortfall in the
+        # audit trail so earned≠reversed is explainable.
+        if to_deduct_balance < earned:
+            reverse_desc = (
+                f"Reversed earn (capped {to_deduct_balance}/{earned}) "
+                f"from cancelled booking {booking_id}"
+            )
+        else:
+            reverse_desc = f"Reversed earn from cancelled booking {booking_id}"
         db.add(LoyaltyTransaction(
             user_id=user.id,
             booking_id=booking_id,
             points=-to_deduct_balance,
             type=LoyaltyTransactionType.adjust.value,
-            description=f"Reversed earn from cancelled booking {booking_id}",
+            description=reverse_desc,
         ))
 
     if redeemed > 0:

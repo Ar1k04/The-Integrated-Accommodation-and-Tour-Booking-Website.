@@ -17,9 +17,16 @@ from app.models.payment import Payment
 from app.models.room import Room
 from app.models.tour import Tour
 from app.models.tour_schedule import TourSchedule
+from app.models.loyalty_tier import LoyaltyTier
 from app.models.user import User
-from app.schemas.user import UserListResponse, UserResponse, UserUpdate
-from app.services import booking_service
+from app.schemas.loyalty import LoyaltyTierCreate, LoyaltyTierResponse, LoyaltyTierUpdate
+from app.schemas.user import (
+    PartnerStatusUpdate,
+    UserListResponse,
+    UserResponse,
+    UserUpdate,
+)
+from app.services import booking_service, loyalty_service
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -54,36 +61,64 @@ async def dashboard_stats(
     else:
         start = now - timedelta(days=365)
 
-    total_revenue = (
-        await db.execute(
-            select(func.coalesce(func.sum(Payment.amount), 0)).where(
-                Payment.status == "succeeded",
-                Payment.created_at >= start,
+    # AUTHZ-04: partners see ONLY metrics for bookings/listings they own.
+    # `partner_exists` correlates on the outer Booking row, mirroring
+    # list_all_bookings(); revenue queries (on Payment) join Booking first.
+    is_partner = current_user.role == "partner"
+    partner_exists = (
+        select(BookingItem.id)
+        .join(Room, BookingItem.room_id == Room.id, isouter=True)
+        .join(Hotel, Room.hotel_id == Hotel.id, isouter=True)
+        .join(TourSchedule, BookingItem.tour_schedule_id == TourSchedule.id, isouter=True)
+        .join(Tour, TourSchedule.tour_id == Tour.id, isouter=True)
+        .where(
+            BookingItem.booking_id == Booking.id,
+            BookingItem.liteapi_prebook_id.is_(None),
+            BookingItem.liteapi_booking_id.is_(None),
+            BookingItem.viator_product_code.is_(None),
+            BookingItem.flight_booking_id.is_(None),
+            or_(Hotel.owner_id == current_user.id, Tour.owner_id == current_user.id),
+        )
+        .exists()
+    ) if is_partner else None
+
+    revenue_q = select(func.coalesce(func.sum(Payment.amount), 0)).where(
+        Payment.status == "succeeded",
+        Payment.created_at >= start,
+    )
+    if is_partner:
+        revenue_q = revenue_q.join(Booking, Payment.booking_id == Booking.id).where(partner_exists)
+    total_revenue = (await db.execute(revenue_q)).scalar()
+
+    bookings_count_q = select(func.count(Booking.id)).where(Booking.created_at >= start)
+    if is_partner:
+        bookings_count_q = bookings_count_q.where(partner_exists)
+    bookings_count = (await db.execute(bookings_count_q)).scalar()
+
+    # Platform-wide user growth is admin-only; partners get 0.
+    if is_partner:
+        new_users = 0
+    else:
+        new_users = (
+            await db.execute(
+                select(func.count(User.id)).where(User.created_at >= start)
             )
-        )
-    ).scalar()
+        ).scalar()
 
-    bookings_count = (
-        await db.execute(
-            select(func.count(Booking.id)).where(Booking.created_at >= start)
+    total_rooms_q = select(func.coalesce(func.sum(Room.total_quantity), 0))
+    if is_partner:
+        total_rooms_q = total_rooms_q.join(Hotel, Room.hotel_id == Hotel.id).where(
+            Hotel.owner_id == current_user.id
         )
-    ).scalar()
+    total_rooms = (await db.execute(total_rooms_q)).scalar()
 
-    new_users = (
-        await db.execute(
-            select(func.count(User.id)).where(User.created_at >= start)
-        )
-    ).scalar()
-
-    total_rooms = (await db.execute(select(func.coalesce(func.sum(Room.total_quantity), 0)))).scalar()
-    booked_rooms = (
-        await db.execute(
-            select(func.count(Booking.id)).where(
-                Booking.status.in_(["confirmed", "completed"]),
-                Booking.created_at >= start,
-            )
-        )
-    ).scalar()
+    booked_rooms_q = select(func.count(Booking.id)).where(
+        Booking.status.in_(["confirmed", "completed"]),
+        Booking.created_at >= start,
+    )
+    if is_partner:
+        booked_rooms_q = booked_rooms_q.where(partner_exists)
+    booked_rooms = (await db.execute(booked_rooms_q)).scalar()
     occupancy_rate = round((booked_rooms / total_rooms * 100) if total_rooms else 0, 1)
 
     revenue_chart_q = (
@@ -95,6 +130,10 @@ async def dashboard_stats(
         .group_by("day")
         .order_by("day")
     )
+    if is_partner:
+        revenue_chart_q = revenue_chart_q.join(
+            Booking, Payment.booking_id == Booking.id
+        ).where(partner_exists)
     revenue_rows = (await db.execute(revenue_chart_q)).all()
     revenue_chart_data = [{"date": str(r.day), "revenue": float(r.revenue)} for r in revenue_rows]
 
@@ -103,6 +142,8 @@ async def dashboard_stats(
         .where(Booking.created_at >= start)
         .group_by(Booking.status)
     )
+    if is_partner:
+        bookings_by_status_q = bookings_by_status_q.where(partner_exists)
     status_rows = (await db.execute(bookings_by_status_q)).all()
     bookings_by_status = {r.status: r.count for r in status_rows}
 
@@ -112,6 +153,8 @@ async def dashboard_stats(
         .order_by(Booking.created_at.desc())
         .limit(10)
     )
+    if is_partner:
+        recent_bookings_q = recent_bookings_q.where(partner_exists)
     recent = (await db.execute(recent_bookings_q)).scalars().all()
     recent_bookings = []
     for b in recent:
@@ -444,5 +487,131 @@ async def admin_sync_liteapi_booking(
     await db.flush()
 
     return {"success": True, "data": {"booking_id": str(booking.id), "items": synced}}
+
+
+# ── Partner approval (UC_A_PARTNERS) ─────────────────────────────────────────
+@router.get("/partners", response_model=UserListResponse)
+async def list_partners(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+    partner_status: str | None = Query(None, alias="status", pattern="^(pending|approved|rejected)$"),
+    q: str | None = None,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+):
+    query = select(User).where(User.role == "partner")
+    if partner_status:
+        query = query.where(User.partner_status == partner_status)
+    if q:
+        pattern = f"%{q}%"
+        query = query.where(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
+
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar() or 0
+    query = query.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
+    users = (await db.execute(query)).scalars().all()
+
+    return UserListResponse(
+        items=[UserResponse.model_validate(u) for u in users],
+        meta={
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": math.ceil(total / per_page) if total else 0,
+        },
+    )
+
+
+@router.patch("/partners/{user_id}", response_model=UserResponse)
+async def set_partner_status(
+    user_id: uuid.UUID,
+    data: PartnerStatusUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+):
+    user = (
+        await db.execute(select(User).where(User.id == user_id, User.role == "partner"))
+    ).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Partner not found")
+    user.partner_status = data.partner_status
+    await db.flush()
+    await db.refresh(user)
+    return user
+
+
+# ── Loyalty tier management (UC_A_TIERS) ─────────────────────────────────────
+@router.get("/loyalty-tiers", response_model=list[LoyaltyTierResponse])
+async def list_loyalty_tiers(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+):
+    rows = (await db.execute(select(LoyaltyTier).order_by(LoyaltyTier.min_points.asc()))).scalars().all()
+    return [LoyaltyTierResponse.model_validate(t) for t in rows]
+
+
+@router.post("/loyalty-tiers", response_model=LoyaltyTierResponse, status_code=status.HTTP_201_CREATED)
+async def create_loyalty_tier(
+    data: LoyaltyTierCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+):
+    dup = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.name == data.name))).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tier name already exists")
+    tier = LoyaltyTier(**data.model_dump())
+    db.add(tier)
+    await db.flush()
+    await db.refresh(tier)
+    return tier
+
+
+@router.patch("/loyalty-tiers/{tier_id}", response_model=LoyaltyTierResponse)
+async def update_loyalty_tier(
+    tier_id: uuid.UUID,
+    data: LoyaltyTierUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+):
+    tier = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.id == tier_id))).scalar_one_or_none()
+    if not tier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tier not found")
+    payload = data.model_dump(exclude_unset=True)
+    if "name" in payload and payload["name"] != tier.name:
+        dup = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.name == payload["name"]))).scalar_one_or_none()
+        if dup:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tier name already exists")
+    for field, value in payload.items():
+        setattr(tier, field, value)
+    await db.flush()
+    await db.refresh(tier)
+    return tier
+
+
+@router.delete("/loyalty-tiers/{tier_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_loyalty_tier(
+    tier_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+):
+    tier = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.id == tier_id))).scalar_one_or_none()
+    if not tier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tier not found")
+    # FK users.loyalty_tier_id is ON DELETE SET NULL — affected users fall to
+    # no-tier and are re-mapped on their next points mutation.
+    await db.delete(tier)
+    await db.flush()
+
+
+@router.post("/loyalty-tiers/recompute")
+async def recompute_loyalty_tiers(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: AdminUser,
+):
+    """Re-map every user to the correct tier (e.g. after editing thresholds)."""
+    users = (await db.execute(select(User))).scalars().all()
+    for u in users:
+        await loyalty_service.recompute_tier(db, u)
+    await db.flush()
+    return {"success": True, "data": {"recomputed": len(users)}}
 
 

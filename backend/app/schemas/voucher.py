@@ -52,6 +52,25 @@ class VoucherStatusUpdate(BaseModel):
     status: Literal["active", "disabled"]
 
 
+class PublicVoucherResponse(BaseModel):
+    """Customer-facing voucher (UC_VIEW_VOUCHER).
+
+    Only safe, public fields — never expose budget/used_count/owner/sync state.
+    """
+
+    code: str
+    name: str
+    discount_type: str
+    discount_value: float
+    maximum_discount_amount: float | None = None
+    min_order_value: float = 0
+    applicable_to: str = "all"
+    valid_to: date | None = None
+    description: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class VoucherResponse(BaseModel):
     id: uuid.UUID
     admin_id: uuid.UUID

@@ -26,9 +26,13 @@ def _fixed_secret(monkeypatch):
 
 
 class _FakeUser:
-    def __init__(self, role="user", is_active=True):
+    def __init__(self, role="user", is_active=True, partner_status=None):
         self.role = role
         self.is_active = is_active
+        # Partners are gated by approval; default approved for non-pending cases.
+        self.partner_status = partner_status if partner_status is not None else (
+            "approved" if role == "partner" else None
+        )
         self.id = uuid.uuid4()
 
 
@@ -69,6 +73,13 @@ class TestRoleGuards:
     async def test_require_staff_allows_partner_and_admin(self):
         assert (await require_staff(_FakeUser(role="partner"))).role == "partner"
         assert (await require_staff(_FakeUser(role="admin"))).role == "admin"
+
+    async def test_require_staff_blocks_unapproved_partner(self):
+        # Pending/rejected partners can log in but cannot use staff endpoints.
+        for status_val in ("pending", "rejected"):
+            with pytest.raises(HTTPException) as exc:
+                await require_staff(_FakeUser(role="partner", partner_status=status_val))
+            assert exc.value.status_code == 403
 
     async def test_require_admin_blocks_partner(self):
         with pytest.raises(HTTPException) as exc:

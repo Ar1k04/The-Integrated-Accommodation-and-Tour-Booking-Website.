@@ -12,14 +12,21 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
     # When True, Redis outages fail booking requests with HTTP 503 instead of
-    # silently degrading to DB-only locking. Keep False in dev/staging.
-    REDIS_LOCK_STRICT: bool = False
+    # silently degrading to DB-only locking. Default True (RACE-02): DB-only
+    # locking can't protect external LiteAPI/Viator inventory, so a Redis
+    # outage would otherwise allow overbooking. Set False only in local dev
+    # where running Redis is inconvenient.
+    REDIS_LOCK_STRICT: bool = True
 
     # Auth / JWT
     SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Google OAuth (Login with Google) — ID tokens are verified server-side
+    # against this client ID as the expected audience.
+    GOOGLE_CLIENT_ID: str = ""
 
     # Stripe
     STRIPE_SECRET_KEY: str = ""

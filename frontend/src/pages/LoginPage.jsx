@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { GoogleLogin } from '@react-oauth/google'
+import GoogleButton from '@/components/common/GoogleButton'
 import { useAuth } from '@/hooks/useAuth'
 import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react'
 
 export default function LoginPage() {
-  const { t, i18n } = useTranslation('auth')
+  const { t } = useTranslation('auth')
   const { login, loginWithGoogle, isAuthenticated, isStaff } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -43,11 +43,11 @@ export default function LoginPage() {
     }
   }
 
-  const handleGoogle = async (credentialResponse) => {
+  const handleGoogle = async (accessToken) => {
     setError('')
     setLoading(true)
     try {
-      const user = await loginWithGoogle(credentialResponse.credential)
+      const user = await loginWithGoogle(accessToken)
       toast.success('Welcome back!')
       if (user.role === 'partner' || user.role === 'admin') {
         navigate('/admin', { replace: true })
@@ -137,16 +137,12 @@ export default function LoginPage() {
               <div className="h-px flex-1 bg-gray-200" />
             </div>
 
-            <div className="flex justify-center">
-              <GoogleLogin
-                key={i18n.language}
-                onSuccess={handleGoogle}
-                onError={() => setError(t('login.googleFailed'))}
-                locale={i18n.language}
-                text="signin_with"
-                width="320"
-              />
-            </div>
+            <GoogleButton
+              mode="signin"
+              disabled={loading}
+              onSuccess={handleGoogle}
+              onError={() => setError(t('login.googleFailed'))}
+            />
 
             <p className="text-center text-sm text-gray-500 mt-6">
               {t('login.noAccount')}{' '}

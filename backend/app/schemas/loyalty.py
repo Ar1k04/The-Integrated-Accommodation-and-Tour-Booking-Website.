@@ -16,6 +16,22 @@ class LoyaltyTierResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LoyaltyTierCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    min_points: int = Field(ge=0)
+    max_points: int = Field(default=0, ge=0)
+    benefits: str | None = None
+    discount_percent: float = Field(default=0, ge=0, le=100)
+
+
+class LoyaltyTierUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    min_points: int | None = Field(default=None, ge=0)
+    max_points: int | None = Field(default=None, ge=0)
+    benefits: str | None = None
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+
+
 class LoyaltyTransactionResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
