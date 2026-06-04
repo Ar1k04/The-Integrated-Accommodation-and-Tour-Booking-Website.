@@ -2,7 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.core.tour_taxonomy import PARTNER_SETTABLE_FLAGS
 
 
 class TourAgeBand(BaseModel):
@@ -32,6 +34,8 @@ class TourCreate(BaseModel):
     country: str = Field(min_length=1, max_length=100)
     category: str | None = None
     duration_days: int = Field(default=1, ge=1)
+    # Total run-time in minutes; powers the minute-based "Duration" filter.
+    duration_minutes: int | None = Field(default=None, ge=0)
     max_participants: int = Field(default=20, ge=1)
     price_per_person: float = Field(gt=0)
     highlights: list | None = None
@@ -39,9 +43,25 @@ class TourCreate(BaseModel):
     includes: list | None = None
     excludes: list | None = None
     images: list | None = None
+    # Supplier feature flags the Partner guarantees (subset of Viator flags).
+    flags: list[str] | None = None
     # Partner must define age bands (incl. an ADULT band) so the tour shares
     # the same age-band-aware detail page / availability / pricing as Viator.
     age_bands: list[TourAgeBand] | None = None
+
+    @field_validator("flags")
+    @classmethod
+    def _validate_flags(cls, v: list[str] | None) -> list[str] | None:
+        if not v:
+            return v
+        invalid = [f for f in v if f not in PARTNER_SETTABLE_FLAGS]
+        if invalid:
+            raise ValueError(
+                f"Unsupported tour flags: {invalid}. "
+                f"Allowed: {PARTNER_SETTABLE_FLAGS}"
+            )
+        # De-dupe while preserving order.
+        return list(dict.fromkeys(v))
 
     @model_validator(mode="after")
     def _require_adult_band(self) -> "TourCreate":
@@ -72,6 +92,7 @@ class TourUpdate(BaseModel):
     country: str | None = None
     category: str | None = None
     duration_days: int | None = Field(None, ge=1)
+    duration_minutes: int | None = Field(None, ge=0)
     max_participants: int | None = Field(None, ge=1)
     price_per_person: float | None = Field(None, gt=0)
     highlights: list | None = None
@@ -79,7 +100,21 @@ class TourUpdate(BaseModel):
     includes: list | None = None
     excludes: list | None = None
     images: list | None = None
+    flags: list[str] | None = None
     age_bands: list[TourAgeBand] | None = None
+
+    @field_validator("flags")
+    @classmethod
+    def _validate_flags(cls, v: list[str] | None) -> list[str] | None:
+        if not v:
+            return v
+        invalid = [f for f in v if f not in PARTNER_SETTABLE_FLAGS]
+        if invalid:
+            raise ValueError(
+                f"Unsupported tour flags: {invalid}. "
+                f"Allowed: {PARTNER_SETTABLE_FLAGS}"
+            )
+        return list(dict.fromkeys(v))
 
 
 class TourResponse(BaseModel):
@@ -91,6 +126,7 @@ class TourResponse(BaseModel):
     country: str | None = None
     category: str | None = None
     duration_days: int = 1
+    duration_minutes: int | None = None
     max_participants: int = 20
     price_per_person: float = 0
     highlights: list | None = None
@@ -98,6 +134,7 @@ class TourResponse(BaseModel):
     includes: list | None = None
     excludes: list | None = None
     images: list | None = None
+    flags: list[str] | None = None
     avg_rating: float = 0
     total_reviews: int = 0
     owner_id: uuid.UUID | None = None

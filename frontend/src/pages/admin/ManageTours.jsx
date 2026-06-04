@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import Skeleton from '@/components/common/Skeleton'
 import { formatCurrency } from '@/utils/formatters'
 import { Link } from 'react-router-dom'
-import { TOUR_CATEGORIES } from '@/utils/constants'
+import { TOUR_CATEGORIES, PARTNER_TOUR_FLAGS } from '@/utils/constants'
 import {
   Plus, Search, Pencil, Trash2, ChevronLeft, ChevronRight, X, Clock, Upload,
 } from 'lucide-react'
@@ -284,8 +284,12 @@ function TourModal({ tour, onClose, onSave, saving }) {
     country: tour.country || '',
     category: tour.category || TOUR_CATEGORIES[0],
     duration_days: tour.duration_days || 1,
+    // Run-time split into hours + minutes for the form; recombined on save.
+    duration_hours: Math.floor((tour.duration_minutes || 0) / 60),
+    duration_mins: (tour.duration_minutes || 0) % 60,
     max_participants: tour.max_participants || 20,
     description: tour.description || '',
+    flags: tour.flags || [],
     highlights: tour.highlights || [],
     itinerary: tour.itinerary || [],
     includes: tour.includes || [],
@@ -350,15 +354,19 @@ function TourModal({ tour, onClose, onSave, saving }) {
     for (const b of bands) {
       if (b.start_age > b.end_age) { toast.error(t('form.ageRangeInvalid', { band: b.age_band })); return }
     }
+    const durationMinutes =
+      (Number(form.duration_hours) || 0) * 60 + (Number(form.duration_mins) || 0)
     const payload = {
       name: form.name,
       city: form.city,
       country: form.country,
       category: form.category,
       duration_days: Number(form.duration_days),
+      duration_minutes: durationMinutes > 0 ? durationMinutes : undefined,
       max_participants: Number(form.max_participants),
       price_per_person: adult.price, // canonical base = ADULT band price
       description: form.description || undefined,
+      flags: form.flags,
       highlights: cleanStrings(form.highlights),
       itinerary: form.itinerary
         .filter((d) => (d.title || '').trim() || (d.description || '').trim())
@@ -401,7 +409,7 @@ function TourModal({ tour, onClose, onSave, saving }) {
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.category')}</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.tourType')}</label>
               <select value={form.category} onChange={(e) => set({ category: e.target.value })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm">
                 {TOUR_CATEGORIES.map((c) => <option key={c} value={c} className="capitalize">{c}</option>)}
@@ -416,6 +424,50 @@ function TourModal({ tour, onClose, onSave, saving }) {
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.maxParticipants')}</label>
               <input type="number" min={1} value={form.max_participants} onChange={(e) => set({ max_participants: Number(e.target.value) })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.duration')}</label>
+            <p className="text-xs text-gray-500 mb-2">{t('form.durationHint')}</p>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <input type="number" min={0} value={form.duration_hours}
+                  onChange={(e) => set({ duration_hours: Math.max(0, Number(e.target.value)) })}
+                  className="w-20 border rounded-lg px-3 py-2.5 text-sm" />
+                <span className="text-sm text-gray-600">{t('form.hours')}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="number" min={0} max={59} value={form.duration_mins}
+                  onChange={(e) => set({ duration_mins: Math.min(59, Math.max(0, Number(e.target.value))) })}
+                  className="w-20 border rounded-lg px-3 py-2.5 text-sm" />
+                <span className="text-sm text-gray-600">{t('form.minutes')}</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.features')}</label>
+            <p className="text-xs text-gray-500 mb-2">{t('form.featuresHint')}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {PARTNER_TOUR_FLAGS.map((flag) => {
+                const active = (form.flags || []).includes(flag)
+                return (
+                  <label key={flag} className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={active}
+                      onChange={() =>
+                        set({
+                          flags: active
+                            ? form.flags.filter((f) => f !== flag)
+                            : [...(form.flags || []), flag],
+                        })
+                      }
+                      className="rounded border-gray-300"
+                    />
+                    {t(`form.flag_${flag}`)}
+                  </label>
+                )
+              })}
             </div>
           </div>
           <div>

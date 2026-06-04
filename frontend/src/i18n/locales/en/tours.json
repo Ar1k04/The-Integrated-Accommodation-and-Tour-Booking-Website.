@@ -84,9 +84,7 @@
       "duration_multiDay": "Multi-day",
       "dateRange": "Travel dates",
       "startDate": "From",
-      "endDate": "To",
-      "viatorOnlyBanner": "Showing Viator tours only — partner tours are hidden because advanced filters apply only to Viator listings. Clear filters to see all tours.",
-      "viatorNeedsDestinationBanner": "Choose a destination to use Viator tour-type filters. Viator product search requires a city or country."
+      "endDate": "To"
     }
   }
 }

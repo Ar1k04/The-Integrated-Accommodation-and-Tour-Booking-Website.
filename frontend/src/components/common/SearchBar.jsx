@@ -163,6 +163,10 @@ export default function SearchBar({ variant = 'hero' }) {
       // filter with a value Viator /destinations recognizes.
       const cityForTours = pickedViatorDest?.name || localDest
       if (cityForTours) params.set('city', cityForTours)
+      // Carry the picked travel dates so the Tours page seeds its "Travel
+      // dates" filter; left off when no dates were chosen.
+      if (checkIn) params.set('start_date', format(checkIn, 'yyyy-MM-dd'))
+      if (checkOut) params.set('end_date', format(checkOut, 'yyyy-MM-dd'))
       navigate(`/tours?${params.toString()}`)
     }
   }

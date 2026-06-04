@@ -9,10 +9,11 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import StaffUser, CurrentUser
+from app.core.tour_taxonomy import tags_to_categories
 from app.core.pricing import (
     AgeBandError,
     adult_band_price,
@@ -420,17 +421,12 @@ async def list_tours(
                 detail=f"Unknown Viator flags: {invalid}",
             )
 
-    # Determine effective source. Activating any Viator-only filter implicitly
-    # restricts results to Viator unless the caller pinned source explicitly.
-    viator_only_active = bool(
-        tags or flags or rating_min is not None
-        or duration_min is not None or duration_max is not None
-        or start_date is not None or end_date is not None
-    )
-    if source is None:
-        effective_source = "viator" if viator_only_active else "all"
-    else:
-        effective_source = source
+    # Effective source. The Tours filters (tour type / features / rating /
+    # duration / dates) now apply to BOTH Partner (DB) and Viator products, so
+    # activating one no longer hides Partner tours — we translate each filter
+    # into its DB equivalent below and keep the hybrid merge. `source` is only
+    # honoured when the caller pins it explicitly (all | viator | local).
+    effective_source = source or "all"
 
     db_items: list[TourResponse] = []
     total_db = 0
@@ -461,10 +457,39 @@ async def list_tours(
             query = query.where(Tour.country.ilike(f"%{country}%"))
         if category:
             query = query.where(Tour.category == category)
+        # "Tour type" filter: the UI sends Viator tag IDs. Map them to the
+        # Partner category labels they pair with so a Partner "Walking Tours"
+        # product matches tags=[12046] alongside the Viator listings. When the
+        # selected tags have no Partner equivalent (niche tags from the "More
+        # categories" modal), no Partner tour can match → exclude them all.
+        if tags:
+            tag_categories = tags_to_categories(tags)
+            query = query.where(
+                Tour.category.in_(tag_categories) if tag_categories else false()
+            )
         if min_price is not None:
             query = query.where(Tour.price_per_person >= min_price)
         if max_price is not None:
             query = query.where(Tour.price_per_person <= max_price)
+        if rating_min is not None:
+            query = query.where(Tour.avg_rating >= rating_min)
+        # "Duration" filter (minutes). Partner tours store duration_minutes when
+        # set; otherwise approximate from duration_days (1 day ≈ 1440 min) so a
+        # multi-day Partner tour still lands in the "Multi-day" bucket.
+        if duration_min is not None or duration_max is not None:
+            dur_expr = func.coalesce(Tour.duration_minutes, Tour.duration_days * 1440)
+            if duration_min is not None:
+                query = query.where(dur_expr >= duration_min)
+            if duration_max is not None:
+                query = query.where(dur_expr <= duration_max)
+        # "Features" filter: Partner tour must carry all requested flags
+        # (JSONB array containment, matching Viator's AND semantics).
+        if flags:
+            query = query.where(Tour.flags.contains(list(flags)))
+        # NOTE: start_date / end_date are intentionally NOT applied to Partner
+        # tours — they are capacity-based and bookable on any future date, so a
+        # date range narrows the Viator set without hiding available Partner
+        # tours.
         if duration:
             query = query.where(Tour.duration_days == duration)
         if q:

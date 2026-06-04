@@ -1,19 +1,26 @@
 export const ROOM_TYPES = ['single', 'double', 'suite', 'family', 'villa']
 
-// Partner tour categories — aligned with Viator's product categories so
-// Partner-created tours share the same taxonomy as Viator tours.
-export const TOUR_CATEGORIES = [
-  'Walking Tours',
-  'Food & Drinks',
-  'Day Trips',
-  'Private Tours',
-  'Cultural Tours',
-  'Cooking Classes',
-  'Hiking Tours',
-  'City Tours',
-  'Cruises & Sailing',
-  'Multi-day Tours',
+// ── Canonical tour-type taxonomy ─────────────────────────────────────────────
+// Single source of truth pairing each Viator tag ID with the Partner category
+// label it represents. The Partner "Tour type" dropdown uses `category`; the
+// Tours-page "Tour type" filter sends `tag_id`. The backend maps tag IDs back
+// to category labels so ONE filter narrows both Partner and Viator products.
+// Keep in sync with backend/app/core/tour_taxonomy.py::TOUR_TYPES.
+export const TOUR_TYPES = [
+  { tag_id: 12046, category: 'Walking Tours' },
+  { tag_id: 21911, category: 'Food & Drinks' },
+  { tag_id: 11889, category: 'Day Trips' },
+  { tag_id: 12050, category: 'Private Tours' },
+  { tag_id: 12028, category: 'Cultural Tours' },
+  { tag_id: 12034, category: 'Cooking Classes' },
+  { tag_id: 11902, category: 'Hiking Tours' },
+  { tag_id: 12075, category: 'City Tours' },
+  { tag_id: 21701, category: 'Cruises & Sailing' },
+  { tag_id: 11922, category: 'Multi-day Tours' },
 ]
+
+// Partner tour categories (the 10 fixed types offered in the create form).
+export const TOUR_CATEGORIES = TOUR_TYPES.map((t) => t.category)
 
 export const AMENITIES = [
   'wifi', 'pool', 'gym', 'spa', 'parking', 'restaurant',
@@ -71,21 +78,14 @@ export const DEFAULT_CURRENCY = 'USD'
 
 export const ITEMS_PER_PAGE = 20
 
-// Viator tag IDs surfaced as quick-pick chips in the Tours filter sidebar.
-// Each entry is a top-level Viator tag (parent_tag_id = null) chosen for broad appeal.
-// `label` is a fallback shown until the live tag tree (/tours/viator/tags) loads.
-export const POPULAR_VIATOR_TAGS = [
-  { id: 12046, label: 'Walking Tours' },
-  { id: 21911, label: 'Food & Drink' },
-  { id: 11889, label: 'Day Trips' },
-  { id: 12050, label: 'Private Tours' },
-  { id: 12028, label: 'Cultural Tours' },
-  { id: 12034, label: 'Cooking Classes' },
-  { id: 11902, label: 'Hiking Tours' },
-  { id: 12075, label: 'City Tours' },
-  { id: 21701, label: 'Cruises & Sailing' },
-  { id: 11922, label: 'Multi-day Tours' },
-]
+// Viator tag IDs surfaced as quick-pick chips in the Tours "Tour type" filter.
+// Derived from the canonical TOUR_TYPES so the filter chips and the Partner
+// create-form dropdown always offer the identical 10 types. `label` is a
+// fallback shown until the live tag tree (/tours/viator/tags) loads.
+export const POPULAR_VIATOR_TAGS = TOUR_TYPES.map((t) => ({
+  id: t.tag_id,
+  label: t.category,
+}))
 
 // Whitelist of Viator product search flags (must match backend VIATOR_FLAGS).
 export const VIATOR_FLAGS = [
@@ -95,6 +95,16 @@ export const VIATOR_FLAGS = [
   'SPECIAL_OFFER',
   'LIKELY_TO_SELL_OUT',
   'NEW_ON_VIATOR',
+]
+
+// Subset of VIATOR_FLAGS a Partner can truthfully guarantee on their own tour
+// (the other two are Viator-computed/dynamic). Offered in the Partner create
+// form's "Features" section. Must match backend PARTNER_SETTABLE_FLAGS.
+export const PARTNER_TOUR_FLAGS = [
+  'FREE_CANCELLATION',
+  'SKIP_THE_LINE',
+  'PRIVATE_TOUR',
+  'SPECIAL_OFFER',
 ]
 
 // Preset duration ranges in minutes, mapped to Viator durationInMinutes filter.

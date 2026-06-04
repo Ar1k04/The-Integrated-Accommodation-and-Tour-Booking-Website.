@@ -8,7 +8,7 @@ import TourCard from '@/components/tour/TourCard'
 import TourFilters from '@/components/tour/TourFilters'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
 import Pagination from '@/components/common/Pagination'
-import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search, Info } from 'lucide-react'
+import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search } from 'lucide-react'
 
 const EMPTY_FILTERS = {
   min_price: null,
@@ -23,15 +23,6 @@ const EMPTY_FILTERS = {
   end_date: '',
 }
 
-const isViatorOnlyActive = (f) =>
-  (f.tags && f.tags.length > 0)
-  || (f.flags && f.flags.length > 0)
-  || f.rating_min != null
-  || f.duration_min != null
-  || f.duration_max != null
-  || (f.start_date && f.start_date !== '')
-  || (f.end_date && f.end_date !== '')
-
 export default function ToursPage() {
   const [params] = useSearchParams()
   const { t } = useTranslation(['tours', 'common'])
@@ -39,7 +30,14 @@ export default function ToursPage() {
   const [sort, setSort] = useState('created_at')
   const [searchText, setSearchText] = useState(params.get('q') || '')
   const [submittedSearch, setSubmittedSearch] = useState(params.get('q') || '')
-  const [filters, setFilters] = useState({ ...EMPTY_FILTERS, city: params.get('city') || '' })
+  // Travel dates seed from the main-page tour search bar (?start_date/&end_date);
+  // left empty when the search bar had no dates picked.
+  const [filters, setFilters] = useState({
+    ...EMPTY_FILTERS,
+    city: params.get('city') || '',
+    start_date: params.get('start_date') || '',
+    end_date: params.get('end_date') || '',
+  })
   const [page, setPage] = useState(1)
 
   const SORT_OPTIONS = [
@@ -81,9 +79,6 @@ export default function ToursPage() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-
-  const viatorOnly = isViatorOnlyActive(filters)
-  const viatorNeedsDestination = viatorOnly && !filters.city && !submittedSearch
 
   const isFirstRender = useRef(true)
   const queryParams = useMemo(() => ({
@@ -227,17 +222,6 @@ export default function ToursPage() {
             </div>
 
             <div className="flex-1 min-w-0">
-              {viatorOnly && (
-                <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 text-sm">
-                  <Info className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>
-                    {t(viatorNeedsDestination
-                      ? 'tours:page.filters.viatorNeedsDestinationBanner'
-                      : 'tours:page.filters.viatorOnlyBanner')}
-                  </span>
-                </div>
-              )}
-
               <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
                 <ArrowUpDown className="w-4 h-4 text-gray-400 shrink-0" />
                 {SORT_OPTIONS.map((opt) => (
