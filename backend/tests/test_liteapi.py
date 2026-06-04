@@ -580,3 +580,165 @@ async def test_hybrid_search_deduplicates_by_liteapi_id(client):
     # (it would only be deduped if a DB hotel had liteapi_hotel_id=HOTEL_LOCAL)
     # Since we don't seed that here, both may appear — this tests the flow runs
     assert len(items) >= 1
+
+
+@pytest.mark.asyncio
+async def test_dated_search_unavailable_hotels_priceless_and_last(client):
+    """A dated search keeps LiteAPI hotels that have no inventory for the
+    requested nights visible, but WITHOUT a price (min_room_price=None) and
+    pushed below the available ones — even though /data/hotels advertised a
+    static minRate.
+
+    Regression: hotels showing a "from $X" card whose detail page then has zero
+    rooms for the selected dates. Card price now comes from a dated /hotels/min-rates
+    lookup; sold-out hotels render "—" and sort to the bottom."""
+    # Both hotels advertise a static minRate from /data/hotels (date-blind).
+    fake_results = [
+        {
+            "hotelId": "HOTEL_AVAIL",
+            "name": "Available Hotel",
+            "cityName": "Paris",
+            "countryCode": "FR",
+            "starRating": 4,
+            "minRate": 150.0,
+            "amenities": [],
+            "hotelImages": [],
+        },
+        {
+            "hotelId": "HOTEL_SOLDOUT",
+            "name": "Sold Out Hotel",
+            "cityName": "Paris",
+            "countryCode": "FR",
+            "starRating": 4,
+            "minRate": 120.0,
+            "amenities": [],
+            "hotelImages": [],
+        },
+    ]
+    # The dated min-rates lookup only returns a price for the available hotel;
+    # the sold-out one is absent (LiteAPI omits no-availability hotels).
+    dated_rates = {"HOTEL_AVAIL": 175.0}
+
+    # Run the route's no-cache path so the dated min-rates lookup is exercised
+    # directly (the conftest mock_redis doesn't model mget for the rate cache).
+    from app.main import app
+    app.state.redis = None
+
+    with patch.object(
+        liteapi_service,
+        "search_hotels",
+        new=AsyncMock(
+            return_value=(
+                [liteapi_service._normalize_hotel(h) for h in fake_results],
+                len(fake_results),
+            )
+        ),
+    ), patch(
+        "app.api.v1.routes.hotels.get_min_rates_batch",
+        new=AsyncMock(return_value=dated_rates),
+    ):
+        resp = await client.get(
+            "/api/v1/hotels?city=Paris&country=FR"
+            "&check_in=2026-06-04&check_out=2026-06-06&guests=2"
+        )
+
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    lite = [i for i in items if i.get("source") == "liteapi"]
+    by_name = {i["name"]: i for i in lite}
+    # Both hotels remain visible.
+    assert "Available Hotel" in by_name
+    assert "Sold Out Hotel" in by_name
+    # Available hotel's price reflects the dated lookup (175), not static minRate (150).
+    assert by_name["Available Hotel"]["min_room_price"] == 175.0
+    # Sold-out hotel has no price (renders "—"), despite its static minRate of 120.
+    assert by_name["Sold Out Hotel"]["min_room_price"] is None
+    # Available (priced) hotel is ordered before the sold-out (price-less) one.
+    names = [i["name"] for i in lite]
+    assert names.index("Available Hotel") < names.index("Sold Out Hotel")
+
+
+def _paris_pair():
+    """Two 4-star Paris hotels with date-blind static minRates; only the first
+    has dated inventory. Returns (normalized_search_results, dated_rates)."""
+    raw = [
+        {"hotelId": "HOTEL_AVAIL", "name": "Available Hotel", "cityName": "Paris",
+         "countryCode": "FR", "starRating": 4, "minRate": 150.0,
+         "amenities": [], "hotelImages": []},
+        {"hotelId": "HOTEL_SOLDOUT", "name": "Sold Out Hotel", "cityName": "Paris",
+         "countryCode": "FR", "starRating": 4, "minRate": 120.0,
+         "amenities": [], "hotelImages": []},
+    ]
+    normalized = [liteapi_service._normalize_hotel(h) for h in raw]
+    return normalized, {"HOTEL_AVAIL": 175.0}
+
+
+def _dated_search_patches(normalized):
+    """Patch search_hotels + the dated min-rates batch for a route-level test."""
+    return (
+        patch.object(
+            liteapi_service, "search_hotels",
+            new=AsyncMock(return_value=(normalized, len(normalized))),
+        ),
+        patch(
+            "app.api.v1.routes.hotels.get_min_rates_batch",
+            new=AsyncMock(return_value={"HOTEL_AVAIL": 175.0}),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra_qs", [
+    "star_rating=4",         # star filter
+    "amenities=wifi",        # facility filter (1 → non-strict)
+    "amenities=wifi,pool",   # facility filter (2 → strict)
+    "hotel_types=hotels",    # hotel-type filter
+])
+async def test_dated_search_with_filter_no_phantom_price(client, extra_qs):
+    """With a filter active on a dated search, sold-out hotels must NOT fall back
+    to their static minRate ("giá ảo"). The dated min-rates lookup still drives
+    the card price for every hotel, so the sold-out one stays price-less."""
+    normalized, _ = _paris_pair()
+    from app.main import app
+    app.state.redis = None
+
+    p_search, p_rates = _dated_search_patches(normalized)
+    with p_search, p_rates:
+        resp = await client.get(
+            "/api/v1/hotels?city=Paris&country=FR"
+            "&check_in=2026-06-04&check_out=2026-06-06&guests=2"
+            f"&{extra_qs}"
+        )
+
+    assert resp.status_code == 200
+    by_name = {i["name"]: i for i in resp.json()["items"] if i.get("source") == "liteapi"}
+    # Available hotel: dated price (175), never the static 150.
+    assert by_name["Available Hotel"]["min_room_price"] == 175.0
+    # Sold-out hotel: still visible, still NO phantom price (not the static 120).
+    assert "Sold Out Hotel" in by_name
+    assert by_name["Sold Out Hotel"]["min_room_price"] is None
+
+
+@pytest.mark.asyncio
+async def test_dated_search_price_filter_excludes_priceless(client):
+    """A min/max PRICE filter on a dated search legitimately drops sold-out
+    hotels — a hotel with no price can't satisfy a price range. The kept hotel
+    still shows the dated price, not the static minRate."""
+    normalized, _ = _paris_pair()
+    from app.main import app
+    app.state.redis = None
+
+    p_search, p_rates = _dated_search_patches(normalized)
+    with p_search, p_rates:
+        resp = await client.get(
+            "/api/v1/hotels?city=Paris&country=FR"
+            "&check_in=2026-06-04&check_out=2026-06-06&guests=2"
+            "&min_price=100&max_price=500"
+        )
+
+    assert resp.status_code == 200
+    by_name = {i["name"]: i for i in resp.json()["items"] if i.get("source") == "liteapi"}
+    # Available hotel within range → kept with dated price.
+    assert by_name["Available Hotel"]["min_room_price"] == 175.0
+    # Sold-out (price-less) hotel can't match a price range → excluded.
+    assert "Sold Out Hotel" not in by_name

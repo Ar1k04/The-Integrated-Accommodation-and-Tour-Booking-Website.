@@ -203,12 +203,16 @@ async def _prewarm_rate_cache(
 ) -> None:
     """Fetch min rates for the no-price hotels and cache PER-ID so any
     later page (with a different no_price_ids subset) can reuse them."""
+    # For a dated search the static minRate is unreliable (not availability-checked
+    # for the requested nights), so pre-warm a real rate for EVERY hotel — not just
+    # the ones missing a static price — so later pages can filter on true inventory.
+    dated = check_in is not None and check_out is not None
     no_price_ids = [
         h["liteapi_hotel_id"]
         for h in hotels
         if h.get("liteapi_hotel_id")
         and h["liteapi_hotel_id"] not in db_liteapi_ids
-        and h.get("min_room_price") is None
+        and (dated or h.get("min_room_price") is None)
     ]
     if not no_price_ids:
         return
@@ -509,7 +513,17 @@ async def list_hotels(
         for amenity in amenities.split(","):
             query = query.where(Hotel.amenities.contains([amenity.strip()]))
 
-    if check_in and check_out:
+    geo_search = latitude is not None and longitude is not None
+    use_liteapi = (city or country or geo_search) and not owner_id and not search
+
+    # Date-unavailable handling differs by path:
+    #  • Combined LiteAPI path → KEEP partner hotels with no availability for the
+    #    nights (min_room_price NULL). They render price-less and the dated
+    #    null-last sort below pushes them under available hotels — matching how
+    #    sold-out LiteAPI hotels are shown.
+    #  • Local-only path (owner/admin lists, free-text search) → no merge/sort, so
+    #    drop date-unavailable rows as before to avoid blank "—" cards.
+    if check_in and check_out and not use_liteapi:
         query = query.where(room_price_subq.c.min_room_price.isnot(None))
 
     if sort_by == "base_price":
@@ -521,9 +535,6 @@ async def list_hotels(
         query = query.order_by(sort_col.desc().nulls_last() if sort_by == "base_price" else sort_col.desc())
     else:
         query = query.order_by(sort_col.asc().nulls_last() if sort_by == "base_price" else sort_col.asc())
-
-    geo_search = latitude is not None and longitude is not None
-    use_liteapi = (city or country or geo_search) and not owner_id and not search
 
     # When LiteAPI is in the mix, we fetch *all* matching DB rows so we can merge,
     # sort, and paginate the combined list locally. DB rows are typically few
@@ -700,7 +711,14 @@ async def list_hotels(
             **search_kwargs,
         )
 
-    # Build initial list and collect IDs that have no static minRate
+    # When the user searched specific dates, the static minRate from /data/hotels
+    # is NOT availability-checked for those nights — a hotel can advertise a "from"
+    # price yet have zero rooms for the requested stay. Discard it and force a dated
+    # /hotels/min-rates lookup for every hotel so a card only carries a price when
+    # the hotel truly has inventory; price-less hotels are dropped further below.
+    dated_search = bool(check_in and check_out)
+
+    # Build initial list and collect IDs that need a (dated) min-rate lookup.
     no_price_ids: list[str] = []
     for raw in raw_hotels:
         lite_id = raw.get("liteapi_hotel_id")
@@ -709,6 +727,8 @@ async def list_hotels(
         if star_rating and int(raw.get("star_rating") or 0) != star_rating:
             continue
         item = _liteapi_hotel_to_response(raw)
+        if dated_search:
+            item.min_room_price = None
         liteapi_items.append(item)
         if item.min_room_price is None and lite_id:
             no_price_ids.append(lite_id)
@@ -721,6 +741,9 @@ async def list_hotels(
     prices_pending = False
     is_cold_p1_fast = (
         page == 1 and cached_full is None and cached_mid is None and not has_filter
+        # A dated search must resolve real rates synchronously so we can filter out
+        # no-availability hotels on this very response — never defer it to BG.
+        and not dated_search
     )
 
     if no_price_ids:
@@ -754,6 +777,11 @@ async def list_hotels(
         for item in liteapi_items:
             if item.min_room_price is None and item.liteapi_hotel_id in min_rates:
                 item.min_room_price = min_rates[item.liteapi_hotel_id]
+
+    # Dated search: a price-less hotel after the dated min-rates lookup has no
+    # inventory for the requested nights. We KEEP it visible (no "from $X" price,
+    # rendered as "—") but sort it to the very bottom further below so available
+    # hotels come first. (Local DB hotels are already date-filtered in SQL above.)
 
     # Apply price range filter only when prices are populated — on cold p1
     # most prices are null and the filter would empty out the page.
@@ -790,6 +818,13 @@ async def list_hotels(
             return (0, -val if reverse else val)
 
         all_items = sorted(all_items, key=_sort_key)
+
+    # Dated search: push no-availability hotels (no dated price) to the bottom,
+    # regardless of the chosen sort. Stable sort preserves the order established
+    # above within the "available" and "sold out" groups. Skipped while prices
+    # are still pending (every price is null then — nothing to push down yet).
+    if dated_search and not prices_pending:
+        all_items.sort(key=lambda item: item.min_room_price is None)
 
     # Advertise a stable total: LiteAPI's full match count (capped at our
     # pagination ceiling _FULL_LIMIT) plus filtered local DB rows. This keeps
