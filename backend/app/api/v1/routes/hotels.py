@@ -54,13 +54,13 @@ _LITEAPI_CACHE_TTL = 300  # 5 minutes
 # Three-tier progressive cache:
 #  • :p1  ≤ 20  hotels — cold page-1, returned in ~3s
 #  • :mid ≤ 200 hotels — pages 2-10, filled by BG step 1 in ~5s after p1
-#  • :full ≤ 1000 hotels — pages 11-50, filled by BG step 2 in ~15s after p1
+#  • :full ≤ 500 hotels — pages 11-25, filled by BG step 2 in ~15s after p1
 # Each tier caches the hotel list AND pre-warms its own rate batch (rate-cache
 # keys differ by sorted-IDs set), so a tier-hit means the user's request can
 # be served entirely from Redis without any LiteAPI calls.
 _FAST_LIMIT = 20
 _MID_LIMIT = 100           # pages 1-5 (was 200 = 10 pages, smaller tier finishes faster)
-_FULL_LIMIT = 1000         # pages 6-50
+_FULL_LIMIT = 500          # pages 6-25 (capped at 500 for faster loads)
 _FAST_CACHE_TTL = 60       # short — mid/full supersede it within seconds
 
 
@@ -237,7 +237,7 @@ async def _background_fill_progressive_caches(
     **search_kwargs,
 ) -> None:
     """Fire-and-forget: progressively fill the :mid then :full caches so the
-    user sees pages 2-10 ready first (~5s), then pages 11-50 ready (~15s).
+    user sees pages 2-10 ready first (~5s), then pages 11-25 ready (~15s).
 
     A single limit=_FULL_LIMIT LiteAPI search supplies both tiers; the heavy
     rate-batch work is split — rates for the first _MID_LIMIT hotels are
@@ -574,7 +574,7 @@ async def list_hotels(
     # Three-tier cache keys (v5):
     #   :p1   = ≤20 hotels (cold page-1, instant)
     #   :mid  = ≤200 hotels (pages 2-10, ready in ~5s after page-1)
-    #   :full = ≤1000 hotels (pages 11-50, ready in ~15s after page-1)
+    #   :full = ≤500 hotels (pages 11-25, ready in ~15s after page-1)
     # v5 invalidates v4. Each cache value is {hotels, total}.
     cache_base = f"liteapi:hotels_v5:{city or ''}:{country or ''}:{check_in}:{check_out}:{guests or 1}:{slugs_key}:{types_key}:{geo_key}"
     cache_key_full = f"{cache_base}:full"

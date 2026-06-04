@@ -30,6 +30,9 @@ class RoomCreate(BaseModel):
     amenities: list | None = None
     images: list | None = None
     child_age_tiers: list[dict] | None = None
+    refundable: bool = True
+    free_cancellation_days: int = Field(default=1, ge=0)
+    cancellation_fee_percent: float = Field(default=20, ge=0, le=100)
 
     @field_validator("child_age_tiers")
     @classmethod
@@ -47,6 +50,9 @@ class RoomUpdate(BaseModel):
     amenities: list | None = None
     images: list | None = None
     child_age_tiers: list[dict] | None = None
+    refundable: bool | None = None
+    free_cancellation_days: int | None = Field(None, ge=0)
+    cancellation_fee_percent: float | None = Field(None, ge=0, le=100)
 
     @field_validator("child_age_tiers")
     @classmethod
@@ -66,6 +72,9 @@ class RoomResponse(BaseModel):
     amenities: list | None = None
     images: list | None = None
     child_age_tiers: list | None = None
+    refundable: bool = True
+    free_cancellation_days: int = 1
+    cancellation_fee_percent: float = 20
     created_at: datetime
     updated_at: datetime
 

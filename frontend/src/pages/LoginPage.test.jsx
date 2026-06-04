@@ -15,6 +15,12 @@ vi.mock('react-helmet-async', () => ({
   HelmetProvider: ({ children }) => children,
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+// GoogleButton uses useGoogleLogin which requires GoogleOAuthProvider at runtime;
+// mock the lib so the button renders standalone in unit tests.
+vi.mock('@react-oauth/google', () => ({
+  useGoogleLogin: () => vi.fn(),
+  GoogleOAuthProvider: ({ children }) => children,
+}))
 
 import { useAuth } from '@/hooks/useAuth'
 

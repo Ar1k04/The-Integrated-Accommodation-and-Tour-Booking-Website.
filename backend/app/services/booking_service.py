@@ -323,6 +323,13 @@ async def _reserve_room_item(
         max_guests=room.max_guests,
     )
 
+    # Snapshot the partner's cancellation policy onto the item so a later edit
+    # to room.cancellation_* can't change what an already-confirmed booking owes.
+    # free_cancellation_days before check-in → free cancel deadline.
+    cancellation_deadline = datetime.combine(
+        item.check_in, datetime.min.time(), tzinfo=timezone.utc
+    ) - timedelta(days=room.free_cancellation_days)
+
     bi = BookingItem(
         item_type=BookingItemType.room.value,
         room_id=item.room_id,
@@ -335,6 +342,9 @@ async def _reserve_room_item(
         adults_count=adults,
         children_count=len(children_ages),
         children_ages=children_ages,
+        refundable=room.refundable,
+        cancellation_deadline=cancellation_deadline,
+        cancellation_fee_percent=room.cancellation_fee_percent,
     )
     return bi, subtotal, None, Decimal("0")
 
@@ -1328,11 +1338,39 @@ def _item_refund_share(booking: Booking, item: BookingItem) -> float:
         items = list(booking.items or [])
         if len(items) <= 1:
             return float(booking.total_price or 0)
-        line_total = float((item.price or 0)) * float(item.quantity or 1)
-        all_lines = sum(float((it.price or 0)) * float(it.quantity or 1) for it in items) or 1.0
-        return float(booking.total_price or 0) * (line_total / all_lines)
+        # subtotal is the persisted per-line charge; quantity is already baked in.
+        sum_subtotals = sum(float(it.subtotal or 0) for it in items) or 0.0
+        if sum_subtotals <= 0:
+            return float(booking.total_price or 0)
+        return round(float(booking.total_price or 0) * (float(item.subtotal or 0) / sum_subtotals), 2)
     except Exception:
         return float(booking.total_price or 0)
+
+
+def _local_room_refund(booking: Booking, item: BookingItem) -> tuple[float, float]:
+    """Refund + cancellation fee (USD) for cancelling a partner-room item.
+
+    Applies the policy snapshotted on the item at booking time:
+      * refundable is False                  → keep everything (no refund)
+      * now <= cancellation_deadline (or none)→ full refund, no fee
+      * past the deadline                    → keep cancellation_fee_percent of
+                                               the item's share, refund the rest
+
+    Returns (refund_amount, cancellation_fee).
+    """
+    share = _item_refund_share(booking, item)
+    if item.refundable is False:
+        return 0.0, share
+
+    deadline = item.cancellation_deadline
+    now = datetime.now(timezone.utc)
+    if deadline is None or now <= deadline:
+        return share, 0.0
+
+    fee_pct = float(item.cancellation_fee_percent if item.cancellation_fee_percent is not None else 100)
+    fee = round(share * fee_pct / 100.0, 2)
+    refund = round(share - fee, 2)
+    return max(0.0, refund), fee
 
 
 async def cancel_booking(
@@ -1420,6 +1458,25 @@ async def cancel_booking(
                     "currency": (duffel_result or {}).get("currency"),
                 }
         item.status = BookingItemStatus.cancelled.value
+        if supplier_entry is None and item.item_type == BookingItemType.room.value and item.room_id:
+            # Partner-owned room: refund per the policy snapshotted at booking time.
+            refund_amount, cancellation_fee = _local_room_refund(booking, item)
+            if item.refundable is False:
+                # Rate never allowed a refund — distinct from "missed the free
+                # cancellation window", so the UI can word it differently.
+                local_status = "NON_REFUNDABLE"
+            elif cancellation_fee > 0:
+                local_status = "CANCELLED_WITH_CHARGES"
+            else:
+                local_status = "CANCELLED"
+            supplier_entry = {
+                "item_id": item.id,
+                "supplier": "local",
+                "status": local_status,
+                "refund_amount": refund_amount,
+                "cancellation_fee": cancellation_fee,
+                "currency": None,
+            }
         if supplier_entry is None:
             supplier_entry = {
                 "item_id": item.id,

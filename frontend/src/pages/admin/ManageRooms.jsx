@@ -189,6 +189,9 @@ function RoomModal({ room, hotelCurrency, onClose, onSave, saving }) {
     max_guests: room.max_guests || 2,
     description: room.description || '',
     child_age_tiers: room.child_age_tiers || null,
+    refundable: room.refundable ?? true,
+    free_cancellation_days: room.free_cancellation_days ?? 1,
+    cancellation_fee_percent: room.cancellation_fee_percent ?? 20,
   })
   const customTiers = form.child_age_tiers !== null
   const tiers = form.child_age_tiers || defaultTiers
@@ -301,6 +304,40 @@ function RoomModal({ room, hotelCurrency, onClose, onSave, saving }) {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          <div className="border rounded-lg p-3 bg-gray-50">
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+              <input
+                type="checkbox"
+                checked={form.refundable}
+                onChange={(e) => setForm({ ...form, refundable: e.target.checked })}
+              />
+              {t('form.refundable')}
+            </label>
+            <p className="text-xs text-gray-500 mt-1">{t('form.refundableHint')}</p>
+            {form.refundable && (
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <div>
+                  <label className="text-gray-500 block mb-0.5 text-xs">{t('form.freeCancelDays')}</label>
+                  <input
+                    type="number" min={0}
+                    value={form.free_cancellation_days}
+                    onChange={(e) => setForm({ ...form, free_cancellation_days: Number(e.target.value) })}
+                    className="w-full border rounded px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500 block mb-0.5 text-xs">{t('form.cancelFeePercent')}</label>
+                  <input
+                    type="number" min={0} max={100}
+                    value={form.cancellation_fee_percent}
+                    onChange={(e) => setForm({ ...form, cancellation_fee_percent: Number(e.target.value) })}
+                    className="w-full border rounded px-2 py-1 text-sm"
+                  />
+                </div>
               </div>
             )}
           </div>

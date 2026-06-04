@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Global LiteAPI rate limiter ─────────────────────────────────────────────
 # LiteAPI sandbox caps clients at ~5 req/s. Our background hotel-load fans out
-# rate-batch calls (limit=1000 → ~20 chunks via asyncio.gather), which used to
+# rate-batch calls (limit=500 → ~10 chunks via asyncio.gather), which used to
 # burst above the cap and trigger "Too many requests" rejections. A token
 # bucket smooths it: capacity=5 lets a single page or single chunk-batch fire
 # immediately, then refills at 5 tokens/sec so sustained traffic stays under

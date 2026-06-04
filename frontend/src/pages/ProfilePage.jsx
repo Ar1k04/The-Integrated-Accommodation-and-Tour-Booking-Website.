@@ -183,22 +183,36 @@ function BookingsTab() {
       const items = data.items || []
       const stripeAmount = data.stripe_refund_amount
       const nonRefundable = data.non_refundable
+      // A "charged" item missed the free-cancellation deadline (partial/no
+      // refund), distinct from a "non-refundable" rate that never qualified.
+      // Works for any supplier (LiteAPI or partner-local rooms).
+      const chargedItem = items.find((it) => it.status === 'CANCELLED_WITH_CHARGES')
+      const nonRefItem = items.find((it) => it.status === 'NON_REFUNDABLE')
 
       if (stripeAmount != null && stripeAmount > 0) {
-        toast.success(t('bookings.cancelledStripeRefund', { amount: fmt(stripeAmount) }))
-      } else if (nonRefundable) {
+        if (chargedItem && Number(chargedItem.cancellation_fee || 0) > 0) {
+          // Partial refund: money back but a cancellation fee was kept.
+          toast.success(t('bookings.cancelledPartialRefund', {
+            amount: fmt(stripeAmount),
+            fee: fmt(chargedItem.cancellation_fee, chargedItem.currency),
+          }))
+        } else {
+          toast.success(t('bookings.cancelledStripeRefund', { amount: fmt(stripeAmount) }))
+        }
+      } else if (chargedItem) {
+        // Past the free-cancellation deadline — fee kept, nothing refunded.
+        toast.warning(t('bookings.cancelledWithCharges', {
+          fee: fmt(chargedItem.cancellation_fee || 0, chargedItem.currency),
+        }))
+      } else if (nonRefItem || nonRefundable) {
         toast.warning(t('bookings.cancelledNonRefundable'))
       } else {
-        // Fallback: surface supplier-level info if the backend didn't issue a
-        // Stripe refund (e.g. VNPay payment, or no payment to refund).
-        const liteapiItem = items.find((it) => it.supplier === 'liteapi')
-        if (liteapiItem && liteapiItem.status === 'CANCELLED_WITH_CHARGES') {
-          toast.warning(t('bookings.cancelledWithCharges', {
-            fee: fmt(liteapiItem.cancellation_fee || 0, liteapiItem.currency),
-          }))
-        } else if (liteapiItem && liteapiItem.refund_amount != null) {
+        // Fallback: a supplier reported a refund but no Stripe refund was issued
+        // (e.g. VNPay payment, or nothing to refund).
+        const refundItem = items.find((it) => it.refund_amount != null)
+        if (refundItem) {
           toast.success(t('bookings.cancelledWithRefund', {
-            amount: fmt(liteapiItem.refund_amount, liteapiItem.currency),
+            amount: fmt(refundItem.refund_amount, refundItem.currency),
           }))
         } else {
           toast.success(t('bookings.cancelled'))

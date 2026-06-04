@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,16 @@ class Room(Base):
     images: Mapped[dict | None] = mapped_column(JSONB, default=list)
     liteapi_room_id: Mapped[str | None] = mapped_column(String(100), index=True)
     child_age_tiers: Mapped[list | None] = mapped_column(JSONB)
+
+    # Partner-defined cancellation policy (mirrors LiteAPI's deadline model).
+    # refundable=False → never refundable. Otherwise free cancellation is granted
+    # up to `free_cancellation_days` before check-in; cancelling after that keeps
+    # `cancellation_fee_percent` of the line subtotal (100 = no refund past deadline).
+    refundable: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    free_cancellation_days: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    cancellation_fee_percent: Mapped[float] = mapped_column(
+        Numeric(5, 2), default=20, server_default="20", nullable=False
+    )
 
     hotel = relationship("Hotel", back_populates="rooms")
     booking_items = relationship("BookingItem", back_populates="room", lazy="selectin")

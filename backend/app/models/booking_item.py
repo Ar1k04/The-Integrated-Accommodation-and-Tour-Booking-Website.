@@ -72,6 +72,9 @@ class BookingItem(Base):
     image_url: Mapped[str | None] = mapped_column(sa.Text)
     cancellation_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     refundable: Mapped[bool | None] = mapped_column(Boolean)
+    # Snapshot of the partner room's cancellation fee % at booking time, so a
+    # later edit to the room policy can't change what a confirmed booking owes.
+    cancellation_fee_percent: Mapped[float | None] = mapped_column(Numeric(5, 2))
     viator_product_code: Mapped[str | None] = mapped_column(String(100))
     viator_booking_ref: Mapped[str | None] = mapped_column(String(255), unique=True)
     supplier_status: Mapped[str | None] = mapped_column(String(40))
