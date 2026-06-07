@@ -6,12 +6,6 @@ export default function Footer() {
   const { t } = useTranslation('common')
 
   const footerLinks = {
-    [t('footer.company')]: [
-      { label: t('footer.aboutUs'), to: '#' },
-      { label: t('footer.careers'), to: '#' },
-      { label: t('footer.press'), to: '#' },
-      { label: t('footer.blog'), to: '#' },
-    ],
     [t('footer.support')]: [
       { label: t('footer.helpCenter'), to: '#' },
       { label: t('footer.safety'), to: '#' },
@@ -21,15 +15,14 @@ export default function Footer() {
     [t('footer.explore')]: [
       { label: t('footer.hotels'), to: '/hotels/search' },
       { label: t('footer.tours'), to: '/tours' },
-      { label: t('footer.destinations'), to: '#' },
-      { label: t('footer.deals'), to: '#' },
+      { label: t('footer.deals'), to: '/deals' },
     ],
   }
 
   return (
     <footer className="bg-gray-900 text-gray-300">
       <div className="max-w-7xl mx-auto px-4 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div>
             <Link to="/" className="flex items-center gap-2 text-white font-heading text-lg font-bold mb-4">
               <Briefcase className="w-5 h-5" />

@@ -97,6 +97,26 @@
     "notFound": "Page not found",
     "unauthorized": "Please sign in to continue"
   },
+  "deals": {
+    "title": "Deals & Vouchers",
+    "subtitle": "Grab a voucher and save on your next hotel, tour or flight.",
+    "empty": "No active vouchers right now. Check back soon!",
+    "loadError": "Couldn't load vouchers. Please try again.",
+    "percentOff": "{{value}}% OFF",
+    "amountOff": "{{amount}} OFF",
+    "code": "Code",
+    "copy": "Copy",
+    "copied": "Code copied!",
+    "minOrder": "Min. order {{amount}}",
+    "maxDiscount": "Up to {{amount}}",
+    "validUntil": "Valid until {{date}}",
+    "noExpiry": "No expiry",
+    "appliesTo": "Applies to",
+    "appliesTo_all": "All bookings",
+    "appliesTo_hotel": "Hotels",
+    "appliesTo_tour": "Tours",
+    "appliesTo_flight": "Flights"
+  },
   "home": {
     "featuredTitle": "Featured Destinations",
     "featuredSubtitle": "Explore top travel destinations",

@@ -4,6 +4,7 @@ export const vouchersApi = {
   validate: (code, subtotal) =>
     api.post('/vouchers/validate', { code, subtotal }),
   available: () => api.get('/vouchers/available'),
+  public: () => api.get('/vouchers/public'),
   list: (params) => api.get('/vouchers', { params }),
   create: (data) => api.post('/vouchers', data),
   update: (id, data) => api.patch(`/vouchers/${id}`, data),

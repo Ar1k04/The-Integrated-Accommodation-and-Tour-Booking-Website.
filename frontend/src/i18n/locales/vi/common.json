@@ -97,6 +97,26 @@
     "notFound": "Không tìm thấy trang",
     "unauthorized": "Vui lòng đăng nhập để tiếp tục"
   },
+  "deals": {
+    "title": "Ưu đãi & Voucher",
+    "subtitle": "Nhận voucher và tiết kiệm cho lần đặt khách sạn, tour hoặc chuyến bay tiếp theo.",
+    "empty": "Hiện chưa có voucher nào. Vui lòng quay lại sau!",
+    "loadError": "Không thể tải voucher. Vui lòng thử lại.",
+    "percentOff": "GIẢM {{value}}%",
+    "amountOff": "GIẢM {{amount}}",
+    "code": "Mã",
+    "copy": "Sao chép",
+    "copied": "Đã sao chép mã!",
+    "minOrder": "Đơn tối thiểu {{amount}}",
+    "maxDiscount": "Tối đa {{amount}}",
+    "validUntil": "Hiệu lực đến {{date}}",
+    "noExpiry": "Không giới hạn",
+    "appliesTo": "Áp dụng cho",
+    "appliesTo_all": "Mọi đặt chỗ",
+    "appliesTo_hotel": "Khách sạn",
+    "appliesTo_tour": "Tour du lịch",
+    "appliesTo_flight": "Chuyến bay"
+  },
   "home": {
     "featuredTitle": "Điểm đến nổi bật",
     "featuredSubtitle": "Khám phá các điểm du lịch hàng đầu",

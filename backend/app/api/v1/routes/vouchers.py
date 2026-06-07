@@ -56,6 +56,15 @@ async def validate_voucher(
     )
 
 
+@router.get("/public", response_model=list[PublicVoucherResponse])
+async def list_public_vouchers(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Public Deals page — currently-redeemable vouchers, no auth required."""
+    vouchers = await voucher_service.list_public(db)
+    return [PublicVoucherResponse.model_validate(v) for v in vouchers]
+
+
 @router.get("/available", response_model=list[PublicVoucherResponse])
 async def list_available_vouchers(
     db: Annotated[AsyncSession, Depends(get_db)],

@@ -70,6 +70,28 @@ async def list_available_for_user(db: AsyncSession, user_id: uuid.UUID) -> list[
     return list((await db.execute(query)).scalars().all())
 
 
+async def list_public(db: AsyncSession) -> list[Voucher]:
+    """Currently-redeemable public vouchers for the guest-facing Deals page.
+
+    Same gates as ``list_available_for_user`` minus the per-user dedupe, and
+    excludes guest-specific vouchers (those are reserved for one customer).
+    """
+    today = date.today()
+    query = (
+        select(Voucher)
+        .where(
+            Voucher.status == VoucherStatus.active.value,
+            Voucher.used_count < Voucher.max_uses,
+            Voucher.guest_id.is_(None),
+            or_(Voucher.valid_from.is_(None), Voucher.valid_from <= today),
+            or_(Voucher.valid_to.is_(None), Voucher.valid_to >= today),
+            or_(Voucher.budget.is_(None), Voucher.budget_used < Voucher.budget),
+        )
+        .order_by(Voucher.valid_to.asc().nullslast())
+    )
+    return list((await db.execute(query)).scalars().all())
+
+
 async def validate_voucher(
     db: AsyncSession,
     code: str,
