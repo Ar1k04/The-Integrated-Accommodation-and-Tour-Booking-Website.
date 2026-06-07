@@ -12,12 +12,14 @@ from unidecode import unidecode
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import StaffUser, CurrentUser
 from app.db.session import get_db
 from app.models.booking import Booking
 from app.models.booking_item import BookingItem
 from app.models.hotel import Hotel
+from app.models.review import Review
 from app.models.room import Room
 from app.schemas.hotel import (
     HotelCreate,
@@ -926,40 +928,64 @@ async def get_liteapi_rates(
 async def get_liteapi_hotel_reviews(
     liteapi_hotel_id: str,
     request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=100),
 ):
-    """Return normalized guest reviews for a LiteAPI hotel.
+    """Return guest reviews for a LiteAPI hotel: our users' reviews first,
+    then LiteAPI's own read-only feed.
 
-    Cached in Redis for 1 h per hotel — review feeds change slowly.
-    The shape matches the local ReviewCard component (id, user.full_name,
-    rating on a 0–5 scale, comment, created_at) so the same UI can render both.
+    Local reviews (guests who completed a stay through us) are always fetched
+    fresh; only the LiteAPI portion is cached in Redis for 1 h — those feeds
+    change slowly. Both are normalized to the ReviewCard shape (id,
+    user.full_name, rating on a 0–5 scale, comment, created_at).
     """
+    # User-written reviews for this LiteAPI hotel (always fresh).
+    local_q = (
+        select(Review)
+        .where(Review.liteapi_hotel_id == liteapi_hotel_id)
+        .options(selectinload(Review.user))
+        .order_by(Review.created_at.desc())
+    )
+    local_reviews = (await db.execute(local_q)).scalars().all()
+    local_items = [
+        {
+            "id": str(r.id),
+            "user": {"full_name": r.user.full_name if r.user else "Guest"},
+            "rating": r.rating,
+            "comment": r.comment,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in local_reviews
+    ]
+
+    # LiteAPI's own reviews (cached).
     redis = getattr(request.app.state, "redis", None)
     cache_key = f"liteapi:reviews:{liteapi_hotel_id}:{limit}"
 
+    liteapi_reviews = None
     if redis:
         try:
             cached = await redis.get(cache_key)
             if cached:
-                return {"items": json.loads(cached)}
+                liteapi_reviews = json.loads(cached)
         except Exception:
             pass
 
-    try:
-        reviews = await liteapi_service.get_hotel_reviews(liteapi_hotel_id, limit=limit)
-    except LiteAPIError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,
-            detail=exc.message,
-        )
-
-    if reviews and redis:
+    if liteapi_reviews is None:
         try:
-            await redis.set(cache_key, json.dumps(reviews), ex=3600)
-        except Exception:
-            pass
+            liteapi_reviews = await liteapi_service.get_hotel_reviews(liteapi_hotel_id, limit=limit)
+        except LiteAPIError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY if exc.status_code >= 500 else exc.status_code,
+                detail=exc.message,
+            )
+        if liteapi_reviews and redis:
+            try:
+                await redis.set(cache_key, json.dumps(liteapi_reviews), ex=3600)
+            except Exception:
+                pass
 
-    return {"items": reviews}
+    return {"items": local_items + liteapi_reviews}
 
 
 @router.get("/liteapi/{liteapi_hotel_id}/room-types", response_model=list[HotelRoomTypeResponse])

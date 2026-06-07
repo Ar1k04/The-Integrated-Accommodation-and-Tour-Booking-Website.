@@ -10,6 +10,7 @@ class ReviewCreate(BaseModel):
     hotel_id: uuid.UUID | None = None
     tour_id: uuid.UUID | None = None
     viator_product_code: str | None = None
+    liteapi_hotel_id: str | None = None
     rating: int = Field(ge=1, le=5)
     comment: str | None = None
 
@@ -25,6 +26,7 @@ class ReviewResponse(BaseModel):
     hotel_id: uuid.UUID | None = None
     tour_id: uuid.UUID | None = None
     viator_product_code: str | None = None
+    liteapi_hotel_id: str | None = None
     rating: int
     comment: str | None = None
     created_at: datetime
@@ -39,18 +41,22 @@ class ReviewListResponse(BaseModel):
     meta: dict
 
 
-class ViatorReviewUser(BaseModel):
+# Loose review schema used to merge user-written reviews (local DB) with
+# read-only supplier reviews (Viator API, LiteAPI). Suppliers don't expose
+# user_id / updated_at, and LiteAPI ratings are fractional, so this stays
+# deliberately permissive compared to ReviewResponse.
+class ExternalReviewUser(BaseModel):
     full_name: str
 
 
-class ViatorReviewItem(BaseModel):
+class ExternalReviewItem(BaseModel):
     id: str
-    rating: int
+    rating: float
     comment: str | None = None
     created_at: datetime
-    user: ViatorReviewUser | None = None
+    user: ExternalReviewUser | None = None
 
 
-class ViatorReviewListResponse(BaseModel):
-    items: list[ViatorReviewItem]
+class ExternalReviewListResponse(BaseModel):
+    items: list[ExternalReviewItem]
     meta: dict

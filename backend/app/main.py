@@ -16,7 +16,18 @@ from app.core.config import settings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    scheduler = None
+    if settings.BOOKING_COMPLETION_ENABLED:
+        from app.core.scheduler import create_scheduler
+
+        scheduler = create_scheduler(app.state.redis)
+        scheduler.start()
+
     yield
+
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
     await app.state.redis.close()
 
 

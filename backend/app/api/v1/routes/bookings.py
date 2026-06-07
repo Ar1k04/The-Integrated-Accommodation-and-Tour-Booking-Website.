@@ -21,7 +21,7 @@ from app.schemas.booking import (
     BookingUpdate,
     CancellationResponse,
 )
-from app.services import booking_service
+from app.services import booking_service, completion_service
 from app.services.booking_service import BookingServiceError, SupplierCancelError
 from app.services.lock_service import LockCollisionError, RedisUnavailableError
 from app.services.loyalty_service import LoyaltyError
@@ -160,6 +160,11 @@ async def list_my_bookings(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
 ):
+    # Flip this user's overdue bookings to completed before listing so the
+    # status shown (and the review gate) is always up to date, even between
+    # background-scheduler ticks.
+    await completion_service.complete_due_items(db, user_id=current_user.id)
+
     query = select(Booking).where(Booking.user_id == current_user.id)
 
     if booking_status:

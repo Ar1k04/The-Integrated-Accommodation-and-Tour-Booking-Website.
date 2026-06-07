@@ -11,9 +11,10 @@ class Review(Base):
     __tablename__ = "reviews"
     __table_args__ = (
         CheckConstraint(
-            "(hotel_id IS NOT NULL AND tour_id IS NULL AND viator_product_code IS NULL) "
-            "OR (hotel_id IS NULL AND tour_id IS NOT NULL AND viator_product_code IS NULL) "
-            "OR (hotel_id IS NULL AND tour_id IS NULL AND viator_product_code IS NOT NULL)",
+            "(hotel_id IS NOT NULL AND tour_id IS NULL AND viator_product_code IS NULL AND liteapi_hotel_id IS NULL) "
+            "OR (hotel_id IS NULL AND tour_id IS NOT NULL AND viator_product_code IS NULL AND liteapi_hotel_id IS NULL) "
+            "OR (hotel_id IS NULL AND tour_id IS NULL AND viator_product_code IS NOT NULL AND liteapi_hotel_id IS NULL) "
+            "OR (hotel_id IS NULL AND tour_id IS NULL AND viator_product_code IS NULL AND liteapi_hotel_id IS NOT NULL)",
             name="review_single_target",
         ),
     )
@@ -31,6 +32,7 @@ class Review(Base):
         UUID(as_uuid=True), ForeignKey("booking_item.id", ondelete="SET NULL"), index=True
     )
     viator_product_code: Mapped[str | None] = mapped_column(String(100), index=True)
+    liteapi_hotel_id: Mapped[str | None] = mapped_column(String(100), index=True)
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text)
 

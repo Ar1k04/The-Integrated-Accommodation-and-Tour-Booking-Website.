@@ -164,7 +164,9 @@ export default function HotelDetailPage() {
 
   const { data: reviewsData } = useQuery({
     queryKey: ['reviews', 'hotel', id],
-    queryFn: () => reviewsApi.listHotelReviews(id, { per_page: 10 }),
+    // Fetch a large page: the merged feed (local + LiteAPI) is paginated
+    // client-side below, so we want all items in one response.
+    queryFn: () => reviewsApi.listHotelReviews(id, { per_page: 100 }),
     select: (res) => res.data,
   })
 

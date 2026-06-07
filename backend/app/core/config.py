@@ -84,5 +84,12 @@ class Settings(BaseSettings):
     # Must be kept in sync with the frontend display in BookingPage.jsx.
     TAX_RATE: float = 0.10
 
+    # Booking completion job — flips confirmed bookings/items to "completed"
+    # once their service date (check-out / tour date / flight arrival) has
+    # passed, which is what unlocks the review-write gate. Disable in tests/CI
+    # to avoid a background task touching the DB. Interval is in minutes.
+    BOOKING_COMPLETION_ENABLED: bool = True
+    BOOKING_COMPLETION_INTERVAL_MINUTES: int = 60
+
 
 settings = Settings()

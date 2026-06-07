@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-export default function ReviewForm({ hotelId, tourId, viatorProductCode, onDone }) {
+export default function ReviewForm({ hotelId, tourId, viatorProductCode, liteapiHotelId, onDone }) {
   const { t } = useTranslation('hotels')
   const [rating, setRating] = useState(0)
   const [hoverRating, setHoverRating] = useState(0)
@@ -17,6 +17,8 @@ export default function ReviewForm({ hotelId, tourId, viatorProductCode, onDone 
     onSuccess: () => {
       toast.success(t('detail.submitReview'))
       qc.invalidateQueries({ queryKey: ['reviews'] })
+      // LiteAPI hotel reviews live under their own query key.
+      qc.invalidateQueries({ queryKey: ['liteapi-reviews'] })
       onDone?.()
     },
     onError: (err) => {
@@ -31,6 +33,7 @@ export default function ReviewForm({ hotelId, tourId, viatorProductCode, onDone 
       hotel_id: hotelId || undefined,
       tour_id: tourId || undefined,
       viator_product_code: viatorProductCode || undefined,
+      liteapi_hotel_id: liteapiHotelId || undefined,
       rating,
       comment,
     })

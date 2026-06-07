@@ -18,10 +18,10 @@ from app.models.room import Room
 from app.models.tour import Tour
 from app.models.tour_schedule import TourSchedule
 from app.schemas.review import (
+    ExternalReviewItem, ExternalReviewListResponse, ExternalReviewUser,
     ReviewCreate, ReviewListResponse, ReviewResponse, ReviewUpdate,
-    ViatorReviewItem, ViatorReviewListResponse, ViatorReviewUser,
 )
-from app.services import viator_service
+from app.services import completion_service, liteapi_service, viator_service
 from app.services.viator_service import ViatorError
 
 router = APIRouter(tags=["Reviews"])
@@ -68,7 +68,7 @@ async def _paginated_reviews(
     )
 
 
-@router.get("/hotels/{hotel_id}/reviews", response_model=ReviewListResponse)
+@router.get("/hotels/{hotel_id}/reviews", response_model=ExternalReviewListResponse)
 async def list_hotel_reviews(
     hotel_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -80,11 +80,56 @@ async def list_hotel_reviews(
     if not hotel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found")
 
-    query = select(Review).where(Review.hotel_id == hotel_id)
-    return await _paginated_reviews(db, query, sort_by, page, per_page)
+    # User-written reviews from our DB (verified completed stays).
+    local_q = select(Review).where(Review.hotel_id == hotel_id).options(selectinload(Review.user))
+    if sort_by == "rating":
+        local_q = local_q.order_by(Review.rating.desc())
+    else:
+        local_q = local_q.order_by(Review.created_at.desc())
+    local_reviews = (await db.execute(local_q)).scalars().all()
+
+    local_items = [
+        ExternalReviewItem(
+            id=str(r.id),
+            rating=r.rating,
+            comment=r.comment,
+            created_at=r.created_at,
+            user=ExternalReviewUser(full_name=r.user.full_name if r.user else "Guest"),
+        )
+        for r in local_reviews
+    ]
+
+    # Read-only guest reviews proxied from LiteAPI for linked hotels. LiteAPI
+    # has no write endpoint, so these are aggregated supplier reviews only.
+    liteapi_items: list[ExternalReviewItem] = []
+    if hotel.liteapi_hotel_id:
+        raw = await liteapi_service.get_hotel_reviews(hotel.liteapi_hotel_id, limit=50)
+        for r in raw:
+            created = _parse_viator_date(r.get("created_at") or "")
+            liteapi_items.append(
+                ExternalReviewItem(
+                    id=str(r.get("id")),
+                    rating=r.get("rating") or 0,
+                    comment=r.get("comment"),
+                    created_at=created,
+                    user=ExternalReviewUser(full_name=(r.get("user") or {}).get("full_name") or "Guest"),
+                )
+            )
+
+    # Local reviews first, then supplier reviews; paginate the merged list.
+    all_items = local_items + liteapi_items
+    total = len(all_items)
+    total_pages = math.ceil(total / per_page) if total else 0
+    start = (page - 1) * per_page
+    page_items = all_items[start: start + per_page]
+
+    return ExternalReviewListResponse(
+        items=page_items,
+        meta={"total": total, "page": page, "per_page": per_page, "total_pages": total_pages},
+    )
 
 
-@router.get("/tours/viator/{viator_product_code}/reviews", response_model=ViatorReviewListResponse)
+@router.get("/tours/viator/{viator_product_code}/reviews", response_model=ExternalReviewListResponse)
 async def list_viator_tour_reviews(
     viator_product_code: str,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -97,12 +142,12 @@ async def list_viator_tour_reviews(
     local_reviews = (await db.execute(local_q)).scalars().all()
 
     local_items = [
-        ViatorReviewItem(
+        ExternalReviewItem(
             id=str(r.id),
             rating=r.rating,
             comment=r.comment,
             created_at=r.created_at,
-            user=ViatorReviewUser(full_name=r.user.full_name if r.user else "Traveler"),
+            user=ExternalReviewUser(full_name=r.user.full_name if r.user else "Traveler"),
         )
         for r in local_reviews
     ]
@@ -117,12 +162,12 @@ async def list_viator_tour_reviews(
     viator_total = result.get("total") or len(reviews_raw)
 
     viator_items = [
-        ViatorReviewItem(
+        ExternalReviewItem(
             id=r.get("id") or f"v-{viator_product_code}-{i}",
             rating=max(1, min(5, r["rating"])),
             comment=r.get("comment"),
             created_at=_parse_viator_date(r.get("published_date", "")),
-            user=ViatorReviewUser(full_name=r.get("user_name") or "Traveler"),
+            user=ExternalReviewUser(full_name=r.get("user_name") or "Traveler"),
         )
         for i, r in enumerate(reviews_raw)
     ]
@@ -136,7 +181,7 @@ async def list_viator_tour_reviews(
     start = (page - 1) * per_page
     page_items = all_items[start: start + per_page]
 
-    return ViatorReviewListResponse(
+    return ExternalReviewListResponse(
         items=page_items,
         meta={"total": total, "page": page, "per_page": per_page, "total_pages": total_pages},
     )
@@ -164,23 +209,32 @@ async def create_review(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
-    targets = [bool(data.hotel_id), bool(data.tour_id), bool(data.viator_product_code)]
+    targets = [
+        bool(data.hotel_id),
+        bool(data.tour_id),
+        bool(data.viator_product_code),
+        bool(data.liteapi_hotel_id),
+    ]
     if targets.count(True) != 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide exactly one of hotel_id, tour_id, or viator_product_code",
+            detail="Provide exactly one of hotel_id, tour_id, viator_product_code, or liteapi_hotel_id",
         )
+
+    # Complete this user's overdue items first, so a guest who just checked out
+    # can review immediately without waiting for the background scheduler.
+    await completion_service.complete_due_items(db, user_id=current_user.id)
 
     if data.hotel_id:
         has_booking = (
             await db.execute(
-                select(Booking.id)
-                .join(BookingItem, BookingItem.booking_id == Booking.id)
+                select(BookingItem.id)
+                .join(Booking, BookingItem.booking_id == Booking.id)
                 .join(Room, BookingItem.room_id == Room.id)
                 .where(
                     Booking.user_id == current_user.id,
                     Room.hotel_id == data.hotel_id,
-                    Booking.status == "completed",
+                    BookingItem.status == "completed",
                 )
                 .limit(1)
             )
@@ -205,13 +259,13 @@ async def create_review(
     if data.tour_id:
         has_booking = (
             await db.execute(
-                select(Booking.id)
-                .join(BookingItem, BookingItem.booking_id == Booking.id)
+                select(BookingItem.id)
+                .join(Booking, BookingItem.booking_id == Booking.id)
                 .join(TourSchedule, BookingItem.tour_schedule_id == TourSchedule.id)
                 .where(
                     Booking.user_id == current_user.id,
                     TourSchedule.tour_id == data.tour_id,
-                    Booking.status == "completed",
+                    BookingItem.status == "completed",
                 )
                 .limit(1)
             )
@@ -262,6 +316,36 @@ async def create_review(
         ).scalar_one_or_none()
         if already:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already reviewed this tour")
+
+    if data.liteapi_hotel_id:
+        has_booking = (
+            await db.execute(
+                select(Booking.id)
+                .join(BookingItem, BookingItem.booking_id == Booking.id)
+                .where(
+                    Booking.user_id == current_user.id,
+                    BookingItem.liteapi_hotel_id == data.liteapi_hotel_id,
+                    BookingItem.status == "completed",
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if not has_booking:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only review hotels where you completed a stay",
+            )
+
+        already = (
+            await db.execute(
+                select(Review.id).where(
+                    Review.user_id == current_user.id,
+                    Review.liteapi_hotel_id == data.liteapi_hotel_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if already:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already reviewed this hotel")
 
     review = Review(user_id=current_user.id, **data.model_dump())
     db.add(review)

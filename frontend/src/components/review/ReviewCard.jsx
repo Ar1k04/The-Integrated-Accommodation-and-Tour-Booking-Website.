@@ -19,7 +19,8 @@ export default function ReviewCard({ review }) {
               <p className="text-xs text-gray-400">{formatDate(review.created_at)}</p>
             </div>
             <div className="flex items-center gap-1 bg-primary text-white px-2 py-0.5 rounded text-sm font-bold">
-              <Star className="w-3.5 h-3.5 fill-current" />{review.rating}
+              <Star className="w-3.5 h-3.5 fill-current" />
+              {Number.isInteger(review.rating) ? review.rating : review.rating.toFixed(1)}
             </div>
           </div>
           {review.comment && (

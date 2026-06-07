@@ -11,6 +11,7 @@ import AvailabilityTable from '@/components/room/AvailabilityTable'
 import RoomRecommendation from '@/components/room/RoomRecommendation'
 import { recommendCombination } from '@/utils/roomRecommender'
 import ReviewCard from '@/components/review/ReviewCard'
+import ReviewForm from '@/components/review/ReviewForm'
 import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
@@ -333,9 +334,10 @@ export default function LiteapiHotelDetailPage() {
 
             <FacilitiesSection amenities={hotel.amenities} />
 
-            {/* Reviews — sourced from LiteAPI. Read-only: only guests who completed
-                a stay through our platform can post a local review, so this
-                section just lists what LiteAPI returns. Paginated 5 per page. */}
+            {/* Reviews — our guests' reviews (after a completed stay) merged
+                ahead of LiteAPI's own feed. Authenticated guests can post one
+                at the bottom; the backend rejects it unless they completed a
+                stay at this hotel. Paginated 5 per page. */}
             <div>
               <h2 className="font-heading font-bold text-lg mb-4">{t('hotels:detail.guestReviews')}</h2>
               {liteapiReviews && liteapiReviews.length > 0 ? (
@@ -375,6 +377,9 @@ export default function LiteapiHotelDetailPage() {
                 </>
               ) : (
                 <p className="text-gray-400 text-sm">{t('hotels:detail.noReviews')}</p>
+              )}
+              {isAuthenticated && (
+                <div className="mt-6"><ReviewForm liteapiHotelId={liteapiId} /></div>
               )}
             </div>
 
