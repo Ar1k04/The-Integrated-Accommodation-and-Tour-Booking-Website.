@@ -80,6 +80,7 @@ def _viator_tour_to_response(raw: dict) -> TourResponse:
         city=raw.get("city", ""),
         country=raw.get("country"),
         category=raw.get("category"),
+        category_tag_id=raw.get("category_tag_id"),
         duration_days=int(raw.get("duration_days") or 1),
         max_participants=int(raw.get("max_participants") or 20),
         price_per_person=float(raw.get("price_per_person") or 0),
@@ -248,8 +249,14 @@ async def _background_fill_full_viator_cache(
             pass
 
 
+# NOTE: "created_at" (the "Recommended" default) maps to Viator DEFAULT, not
+# DATE_ADDED. Viator's DATE_ADDED sort can return an empty products array while
+# still reporting a non-zero totalCount (observed on sandbox for several
+# destinations, e.g. Tokyo), which surfaced as "N tours found" over an empty
+# grid. DEFAULT (relevance) is both reliable and the right meaning for
+# "Recommended".
 _SORT_BY_TO_VIATOR = {
-    "created_at": ("DATE_ADDED", "DESCENDING"),
+    "created_at": ("DEFAULT", "DESCENDING"),
     "price_per_person": ("PRICE", "ASCENDING"),
     "avg_rating": ("TRAVELER_RATING", "DESCENDING"),
     "duration_days": ("ITINERARY_DURATION", "ASCENDING"),
@@ -330,7 +337,7 @@ async def list_viator_destinations(
 async def get_viator_tour(viator_product_code: str, request: Request):
     """Fetch a single Viator product by its product code."""
     redis = getattr(request.app.state, "redis", None)
-    cache_key = f"viator:tour:{viator_product_code}"
+    cache_key = f"viator:tour:v3:{viator_product_code}"
     cached = await _get_cached(redis, cache_key)
     if cached:
         raw = cached[0] if isinstance(cached, list) else cached
@@ -551,7 +558,7 @@ async def list_tours(
         key_hash = hashlib.sha1(
             json.dumps(filter_payload, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
-        cache_base = f"viator:tours_v2:{key_hash}"
+        cache_base = f"viator:tours_v4:{key_hash}"
         cache_key_full = f"{cache_base}:full"
         cache_key_p1 = f"{cache_base}:p1"
 
@@ -637,8 +644,11 @@ async def list_tours(
     all_items = db_items + viator_items
     # Stable total: advertise Viator's full match count (capped) + DB rows, so
     # the displayed count doesn't jump between the page-1 fast preview and the
-    # later full-cache responses.
-    if viator_total > 0:
+    # later full-cache responses. Guard: only trust viator_total when we
+    # actually received products — Viator may report a non-zero total with an
+    # empty product list, which would otherwise show "N tours found" over an
+    # empty grid.
+    if viator_items and viator_total > 0:
         viator_visible = min(viator_total, _VIATOR_FULL_HARD_CAP)
         total = max(len(all_items), total_db + viator_visible)
     else:

@@ -1,14 +1,27 @@
 """Viator tour search, availability, booking, and cancellation integration."""
+import json
 import logging
 import re
 import time
 import unicodedata
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
+from app.core.tour_taxonomy import TAG_ID_TO_CATEGORY
+
+# Static snapshot of Viator's English tag tree (tag_id → name), shipped in the
+# repo so product tags resolve to readable names INSTANTLY on a cold process —
+# no blocking HTTP fetch on first search. The live tag tree (see get_tags)
+# overrides this whenever it has been fetched, so newer/edited names win.
+_STATIC_TAG_NAMES_PATH = Path(__file__).resolve().parent.parent / "core" / "viator_tags_en.json"
+try:
+    _STATIC_TAG_NAMES: dict[str, str] = json.loads(_STATIC_TAG_NAMES_PATH.read_text(encoding="utf-8"))
+except Exception:  # pragma: no cover - snapshot always ships, but never crash import
+    _STATIC_TAG_NAMES = {}
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +456,50 @@ def _get_demo_tours(dest_id: str, limit: int = 20) -> list[dict]:
     return _DEMO_TOURS.get(key, [])[:limit]
 
 
+def _tag_name_index() -> dict[str, str]:
+    """Build {tag_id(str) → tag name}, merging the shipped static EN snapshot
+    (fast, always available) with the live tag tree (fresh, wins on conflict).
+
+    So names resolve instantly on a cold process via the snapshot, and update
+    to the latest once the live tree has been fetched.
+    """
+    live = {
+        str(t["tag_id"]): t["name"]
+        for t in (_TAG_CACHE.get("data") or [])
+        if t.get("tag_id") is not None and t.get("name")
+    }
+    return {**_STATIC_TAG_NAMES, **live}
+
+
+def _resolve_category(tags: list) -> tuple[str | None, int | None]:
+    """Resolve a product's Viator tag IDs to (name, tag_id) for the badge.
+
+    Returns the correct tag for the tour — not forced into one of the 10 main
+    types. Per tag in Viator's order (so it matches the ID that would show):
+      1. Official Viator tag name from the cached tag tree (source of truth).
+      2. Canonical site label as offline fallback (common types when the tree
+         isn't fetched yet) so we never surface a bare number.
+    The tag_id is returned alongside so the frontend can localize the name to
+    the active UI language via its tag dictionaries. (None, None) when nothing
+    resolves → the UI omits the badge.
+    """
+    name_by_id = _tag_name_index()
+    for t in tags or []:
+        try:
+            tid = int(t)
+        except (TypeError, ValueError):
+            continue
+        name = name_by_id.get(str(tid)) or TAG_ID_TO_CATEGORY.get(tid)
+        if name:
+            return name, tid
+    return None, None
+
+
+def _resolve_category_label(tags: list) -> str | None:
+    """Name-only convenience wrapper around :func:`_resolve_category`."""
+    return _resolve_category(tags)[0]
+
+
 def _normalize_product(raw: dict, *, searched_dest_name: str | None = None) -> dict:
     """Normalize a Viator product object to a flat dict the frontend understands.
 
@@ -520,9 +577,12 @@ def _normalize_product(raw: dict, *, searched_dest_name: str | None = None) -> d
         if departs_from is None:
             departs_from = searched_dest_name
 
-    # Tags as category
+    # Category: a readable name + its tag ID (the ID lets the frontend localize
+    # the name to the active UI language). Never a raw number — see
+    # _resolve_category.
     tags = raw.get("tags") or []
-    category = raw.get("category") or (str(tags[0]) if tags else None)
+    resolved_name, category_tag_id = _resolve_category(tags)
+    category = raw.get("category") or resolved_name
 
     # Inclusions/exclusions — detail has {otherDescription, type} items; search has simple list
     def _text(item):
@@ -569,6 +629,7 @@ def _normalize_product(raw: dict, *, searched_dest_name: str | None = None) -> d
         "city": city,
         "country": country,
         "category": category,
+        "category_tag_id": category_tag_id,
         "duration_days": duration_days,
         "max_participants": int(raw.get("maxParticipants") or raw.get("groupSize", {}).get("maximumGroupSize") or 20),
         "price_per_person": price,

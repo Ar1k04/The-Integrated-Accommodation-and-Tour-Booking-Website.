@@ -2488,7 +2488,8 @@
         "zorbing": "Lăn bóng zorbing",
         "zulu": "Tiếng Zulu",
         "zumba_dance_shows": "Biểu diễn Zumba nhảy múa"
-      }
+      },
+      "needDestinationHint": "Chọn điểm đến phía trên để xem tour Viator khớp các bộ lọc này. Loại tour ngoài 10 loại chính cần có điểm đến mới ra kết quả."
     }
   }
 }

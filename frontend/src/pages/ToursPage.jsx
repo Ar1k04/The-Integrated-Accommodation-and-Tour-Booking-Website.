@@ -8,7 +8,7 @@ import TourCard from '@/components/tour/TourCard'
 import TourFilters from '@/components/tour/TourFilters'
 import { TourCardSkeleton } from '@/components/common/Skeleton'
 import Pagination from '@/components/common/Pagination'
-import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search } from 'lucide-react'
+import { SlidersHorizontal, ArrowUpDown, X, MapPin, Search, Info } from 'lucide-react'
 
 const EMPTY_FILTERS = {
   min_price: null,
@@ -24,21 +24,36 @@ const EMPTY_FILTERS = {
 }
 
 export default function ToursPage() {
-  const [params] = useSearchParams()
+  const [params, setSearchParams] = useSearchParams()
   const { t } = useTranslation(['tours', 'common'])
+
+  // Hydrate the full search state from the URL once on mount (lazy useState
+  // initializers run once). The URL is the source of truth, so clicking a tour
+  // and pressing Back restores the exact search (destination, filters, sort,
+  // page) instead of wiping it.
+  const numParam = (k) => {
+    const v = params.get(k)
+    return v != null && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : null
+  }
+
   const [showFilters, setShowFilters] = useState(false)
-  const [sort, setSort] = useState('created_at')
-  const [searchText, setSearchText] = useState(params.get('q') || '')
-  const [submittedSearch, setSubmittedSearch] = useState(params.get('q') || '')
-  // Travel dates seed from the main-page tour search bar (?start_date/&end_date);
-  // left empty when the search bar had no dates picked.
-  const [filters, setFilters] = useState({
+  const [sort, setSort] = useState(() => params.get('sort') || 'created_at')
+  const [searchText, setSearchText] = useState(() => params.get('q') || params.get('city') || '')
+  const [submittedSearch, setSubmittedSearch] = useState(() => params.get('q') || '')
+  const [filters, setFilters] = useState(() => ({
     ...EMPTY_FILTERS,
     city: params.get('city') || '',
     start_date: params.get('start_date') || '',
     end_date: params.get('end_date') || '',
-  })
-  const [page, setPage] = useState(1)
+    min_price: numParam('min_price'),
+    max_price: numParam('max_price'),
+    rating_min: numParam('rating_min'),
+    duration_min: numParam('duration_min'),
+    duration_max: numParam('duration_max'),
+    tags: params.getAll('tags').map(Number).filter((n) => !Number.isNaN(n)),
+    flags: params.getAll('flags'),
+  }))
+  const [page, setPage] = useState(() => Number(params.get('page')) || 1)
 
   const SORT_OPTIONS = [
     { label: t('common:sort.recommended'), value: 'created_at' },
@@ -98,18 +113,60 @@ export default function ToursPage() {
     per_page: 30,
   }), [submittedSearch, filters, sortBy, sortOrder])
 
-  // Reset to page 1 whenever filters/sort/search change.
+  // Viator product search needs a destination. Filters that rely on Viator
+  // (tour type / features / rating / duration / dates) therefore return no
+  // Viator results until a destination is chosen — and a tour-type tag outside
+  // the 10 main types has no Partner equivalent, so it yields nothing at all
+  // without one. Prompt for a destination so the empty result isn't mistaken
+  // for a broken filter.
+  const hasDestination = Boolean(filters.city || submittedSearch)
+  const viatorFilterActive =
+    (filters.tags?.length > 0)
+    || (filters.flags?.length > 0)
+    || filters.rating_min != null
+    || filters.duration_min != null
+    || filters.duration_max != null
+    || Boolean(filters.start_date)
+    || Boolean(filters.end_date)
+  const needsDestination = viatorFilterActive && !hasDestination
+
+  // Reset to page 1 whenever filters/sort/search change — but NOT on the
+  // initial mount, so a page restored from the URL (on Back) is preserved.
   useEffect(() => {
-    setPage(1)
     if (isFirstRender.current) { isFirstRender.current = false; return }
+    setPage(1)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [queryParams])
 
+  // Mirror the active search into the URL (replace, so it doesn't add history
+  // entries) so Back/Forward and reloads restore it.
+  useEffect(() => {
+    const next = new URLSearchParams()
+    if (submittedSearch) next.set('q', submittedSearch)
+    if (filters.city) next.set('city', filters.city)
+    if (filters.min_price != null) next.set('min_price', filters.min_price)
+    if (filters.max_price != null) next.set('max_price', filters.max_price)
+    if (filters.rating_min != null) next.set('rating_min', filters.rating_min)
+    if (filters.duration_min != null) next.set('duration_min', filters.duration_min)
+    if (filters.duration_max != null) next.set('duration_max', filters.duration_max)
+    if (filters.start_date) next.set('start_date', filters.start_date)
+    if (filters.end_date) next.set('end_date', filters.end_date)
+    ;(filters.tags || []).forEach((tag) => next.append('tags', tag))
+    ;(filters.flags || []).forEach((flag) => next.append('flags', flag))
+    if (sort !== 'created_at') next.set('sort', sort)
+    if (page > 1) next.set('page', page)
+    setSearchParams(next, { replace: true })
+  }, [submittedSearch, filters, sort, page, setSearchParams])
+
   const handleSearch = () => {
-    if (searchText) {
-      setFilters((f) => ({ ...f, city: '' }))
-    }
-    setSubmittedSearch(searchText)
+    // The hero bar searches by destination (its autocomplete lists Viator
+    // destinations), so keep the typed value as the city filter instead of
+    // clearing it. Clicking search again with the same destination leaves
+    // queryParams unchanged — the location and the loaded tours stay put.
+    const term = searchText.trim()
+    setFilters((f) => ({ ...f, city: term }))
+    setSubmittedSearch('')
+    setShowHeroSuggestions(false)
   }
 
   const handleCityFilterChange = (city) => {
@@ -128,6 +185,9 @@ export default function ToursPage() {
     queryKey: ['tours-search', queryParams, page],
     queryFn: () => toursApi.list({ ...queryParams, page }),
     placeholderData: keepPreviousData,
+    // Keep results cached so returning from a tour detail (Back) restores them
+    // instantly instead of refetching from a blank state.
+    staleTime: 5 * 60_000,
   })
 
   const tours = data?.data?.items || []
@@ -222,6 +282,13 @@ export default function ToursPage() {
             </div>
 
             <div className="flex-1 min-w-0">
+              {needsDestination && (
+                <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 text-sm">
+                  <Info className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>{t('tours:page.filters.needDestinationHint')}</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
                 <ArrowUpDown className="w-4 h-4 text-gray-400 shrink-0" />
                 {SORT_OPTIONS.map((opt) => (

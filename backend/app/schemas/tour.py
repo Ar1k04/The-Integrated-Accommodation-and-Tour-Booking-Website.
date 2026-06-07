@@ -125,6 +125,9 @@ class TourResponse(BaseModel):
     city: str
     country: str | None = None
     category: str | None = None
+    # Viator tag ID behind `category` (None for Partner tours). Lets the
+    # frontend localize the category name to the active UI language.
+    category_tag_id: int | None = None
     duration_days: int = 1
     duration_minutes: int | None = None
     max_participants: int = 20

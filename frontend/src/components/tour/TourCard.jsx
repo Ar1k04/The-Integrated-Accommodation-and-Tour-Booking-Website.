@@ -2,9 +2,11 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Clock, MapPin, Star, User, Users } from 'lucide-react'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import { CATEGORY_TO_TAG_ID } from '@/utils/constants'
+import { getViatorTagLabel } from '@/utils/viatorTags'
 
 export default function TourCard({ tour }) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation(['common', 'tours'])
   const fmt = useFormatCurrency()
   const isViator = tour.source === 'viator'
   const tourHref = isViator
@@ -12,6 +14,17 @@ export default function TourCard({ tour }) {
     : `/tours/${tour.id}`
 
   const mainImage = tour.images?.[0] || 'https://placehold.co/400x300?text=Tour'
+
+  // Localize the category badge to the active UI language. Viator tours carry
+  // a tag ID; Partner tours map their stored label to a tag ID. With an ID we
+  // resolve the localized name via the tag dictionaries (English name as the
+  // fallback when a locale has no entry); otherwise show the raw category.
+  const categoryTagId = tour.category_tag_id ?? CATEGORY_TO_TAG_ID[tour.category]
+  const categoryLabel = tour.category
+    ? (categoryTagId
+        ? getViatorTagLabel({ id: categoryTagId, name: tour.category }, t, i18n.language)
+        : tour.category)
+    : null
 
   // Viator tours often visit multiple destinations (e.g. a Halong Bay cruise
   // sold from Hanoi has destinations: [Hanoi, Halong Bay]). Show the extras
@@ -26,9 +39,9 @@ export default function TourCard({ tour }) {
           alt={tour.name}
           className="w-full h-52 object-cover group-hover:scale-105 transition-transform duration-500"
         />
-        {tour.category && (
+        {categoryLabel && (
           <span className="absolute top-3 left-3 bg-primary text-white text-xs font-semibold px-3 py-1 rounded-full capitalize">
-            {tour.category}
+            {categoryLabel}
           </span>
         )}
         {isViator && (

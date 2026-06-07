@@ -588,3 +588,99 @@ async def test_hybrid_search_forwards_advanced_filters(client):
     # from start=1; the page-2 cold path requests the full batch size (50).
     assert kwargs["start"] == 1
     assert kwargs["count"] == 50
+
+
+# ── Tag ID → readable category name (badge never shows a raw number) ──────────
+
+@pytest.fixture
+def _tag_cache():
+    """Snapshot + restore the process tag cache around a test."""
+    saved = dict(viator_service._TAG_CACHE)
+    yield viator_service._TAG_CACHE
+    viator_service._TAG_CACHE.clear()
+    viator_service._TAG_CACHE.update(saved)
+
+
+def _set_tags(cache, tags):
+    cache["data"] = tags
+    cache["fetched_at"] = time.time()
+
+
+def test_resolve_category_uses_official_tag_name_by_id(_tag_cache):
+    # A non-canonical tag still resolves to its real Viator name by ID.
+    _set_tags(_tag_cache, [{"tag_id": 99999, "parent_tag_id": None, "name": "Photography Tours"}])
+    assert viator_service._resolve_category_label([99999]) == "Photography Tours"
+
+
+def test_resolve_category_offline_fallback_to_canonical(_tag_cache):
+    # Tag tree not loaded → canonical map keeps a common type from showing a number.
+    _set_tags(_tag_cache, [])
+    assert viator_service._resolve_category_label([12046]) == "Walking Tours"
+
+
+def test_resolve_category_unknown_returns_none(_tag_cache):
+    # Unknown tag with no cached name → None so the UI omits the badge.
+    _set_tags(_tag_cache, [])
+    assert viator_service._resolve_category_label([99999]) is None
+
+
+def test_resolve_category_first_resolvable_in_order(_tag_cache):
+    # Names the tour's own tag in Viator's order; skips IDs with no name.
+    _set_tags(_tag_cache, [{"tag_id": 55555, "parent_tag_id": None, "name": "Wine Tasting"}])
+    assert viator_service._resolve_category_label([88888, 55555]) == "Wine Tasting"
+
+
+def test_normalize_product_names_tag_by_id_not_number(_tag_cache):
+    _set_tags(_tag_cache, [{"tag_id": 99999, "parent_tag_id": None, "name": "Photography Tours"}])
+    raw = {
+        "productCode": "P1",
+        "title": "Sunset Photo Walk",
+        "destinations": [{"name": "Hanoi", "primary": True}],
+        "tags": [99999],
+    }
+    out = viator_service._normalize_product(raw)
+    assert out["category"] == "Photography Tours"
+    # tag ID exposed so the frontend can localize the name to the UI language.
+    assert out["category_tag_id"] == 99999
+
+
+def test_normalize_product_unknown_tag_category_none(_tag_cache):
+    _set_tags(_tag_cache, [])
+    raw = {
+        "productCode": "P2",
+        "title": "Mystery Tour",
+        "destinations": [{"name": "Hanoi", "primary": True}],
+        "tags": [99999],
+    }
+    out = viator_service._normalize_product(raw)
+    assert out["category"] is None
+    assert out["category_tag_id"] is None
+
+
+# ── Default sort + empty-product guard (search returns no Viator tours bug) ───
+
+@pytest.mark.asyncio
+async def test_default_sort_maps_to_viator_default(client):
+    """The 'Recommended' default (sort_by=created_at) must use Viator DEFAULT,
+    not DATE_ADDED — the latter can return an empty product list with a non-zero
+    total on Viator, surfacing 'N tours found' over an empty grid."""
+    search_mock = AsyncMock(return_value={"products": [], "total": 0})
+    with patch.object(viator_service, "search_tours", new=search_mock):
+        resp = await client.get("/api/v1/tours?city=Hanoi")  # no sort_by ⇒ created_at
+    assert resp.status_code == 200
+    search_mock.assert_awaited()
+    assert search_mock.await_args.kwargs["sort"] == "DEFAULT"
+
+
+@pytest.mark.asyncio
+async def test_empty_viator_products_not_counted_in_total(client):
+    """Viator may report total>0 with an empty products array. The advertised
+    total must not be inflated past what we can actually show."""
+    fake = {"products": [], "total": 3874}
+    with patch.object(viator_service, "search_tours", new=AsyncMock(return_value=fake)):
+        resp = await client.get("/api/v1/tours?city=Tokyo&per_page=10")
+    assert resp.status_code == 200
+    body = resp.json()
+    # No partner tours seeded for Tokyo and Viator gave nothing usable → total 0.
+    assert body["meta"]["total"] == len(body["items"])
+    assert body["meta"]["total"] != 3874

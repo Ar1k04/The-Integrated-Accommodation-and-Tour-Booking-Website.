@@ -84,7 +84,8 @@
       "duration_multiDay": "Multi-day",
       "dateRange": "Travel dates",
       "startDate": "From",
-      "endDate": "To"
+      "endDate": "To",
+      "needDestinationHint": "Choose a destination above to see Viator tours matching these filters. A tour type outside the 10 main types needs a destination to return results."
     }
   }
 }

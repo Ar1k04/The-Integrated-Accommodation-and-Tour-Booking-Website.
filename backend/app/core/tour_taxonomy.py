@@ -14,7 +14,7 @@ DB query, so a Partner "Walking Tours" product surfaces alongside Viator's.
 # (viator_tag_id, partner_category_label)
 TOUR_TYPES: list[tuple[int, str]] = [
     (12046, "Walking Tours"),
-    (21911, "Food & Drinks"),
+    (21911, "Food & Drink"),
     (11889, "Day Trips"),
     (12050, "Private Tours"),
     (12028, "Cultural Tours"),

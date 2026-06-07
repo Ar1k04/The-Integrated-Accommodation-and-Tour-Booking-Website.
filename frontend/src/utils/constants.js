@@ -8,7 +8,7 @@ export const ROOM_TYPES = ['single', 'double', 'suite', 'family', 'villa']
 // Keep in sync with backend/app/core/tour_taxonomy.py::TOUR_TYPES.
 export const TOUR_TYPES = [
   { tag_id: 12046, category: 'Walking Tours' },
-  { tag_id: 21911, category: 'Food & Drinks' },
+  { tag_id: 21911, category: 'Food & Drink' },
   { tag_id: 11889, category: 'Day Trips' },
   { tag_id: 12050, category: 'Private Tours' },
   { tag_id: 12028, category: 'Cultural Tours' },
@@ -21,6 +21,12 @@ export const TOUR_TYPES = [
 
 // Partner tour categories (the 10 fixed types offered in the create form).
 export const TOUR_CATEGORIES = TOUR_TYPES.map((t) => t.category)
+
+// Category label → Viator tag ID, so a Partner tour's stored category can be
+// localized through the same tag dictionaries the Viator badge uses.
+export const CATEGORY_TO_TAG_ID = Object.fromEntries(
+  TOUR_TYPES.map((t) => [t.category, t.tag_id]),
+)
 
 export const AMENITIES = [
   'wifi', 'pool', 'gym', 'spa', 'parking', 'restaurant',
