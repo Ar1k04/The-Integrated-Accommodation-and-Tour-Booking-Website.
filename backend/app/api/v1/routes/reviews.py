@@ -242,7 +242,7 @@ async def create_review(
         if not has_booking:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only review hotels where you completed a stay",
+                detail="You can only review hotels when you completed a stay",
             )
 
         already = (
@@ -333,7 +333,7 @@ async def create_review(
         if not has_booking:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only review hotels where you completed a stay",
+                detail="You can only review hotels when you completed a stay",
             )
 
         already = (

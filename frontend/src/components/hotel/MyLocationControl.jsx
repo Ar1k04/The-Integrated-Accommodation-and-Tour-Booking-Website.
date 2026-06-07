@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Marker, Tooltip, useMap } from 'react-leaflet'
 import { Crosshair, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { buildUserLocationIcon } from '@/utils/hotelMapHelpers'
 
 export default function MyLocationControl() {
@@ -9,10 +10,21 @@ export default function MyLocationControl() {
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState('')
 
+  const fail = (message) => {
+    setStatus('error')
+    setError(message)
+    toast.error(message)
+  }
+
   const locate = () => {
     if (!('geolocation' in navigator)) {
-      setStatus('error')
-      setError('Geolocation not supported')
+      fail('Geolocation is not supported by your browser')
+      return
+    }
+    // Chrome only exposes geolocation on secure origins (https or localhost).
+    // Accessing the dev server via a LAN IP over http silently blocks it.
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      fail('Location requires HTTPS or localhost (Chrome blocks it on http via IP)')
       return
     }
     setStatus('loading')
@@ -25,8 +37,10 @@ export default function MyLocationControl() {
         map.flyTo(next, Math.max(map.getZoom(), 14), { duration: 0.8 })
       },
       (err) => {
-        setStatus('error')
-        setError(err.code === 1 ? 'Permission denied' : 'Unable to get your location')
+        if (err.code === 1) fail('Location permission denied')
+        else if (err.code === 2) fail('Your location is unavailable')
+        else if (err.code === 3) fail('Timed out while getting your location')
+        else fail('Unable to get your location')
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     )

@@ -1,9 +1,9 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
 import { useTranslation } from 'react-i18next'
-import { hotelsApi } from '@/api/hotelsApi'
-import { toursApi } from '@/api/toursApi'
+import { featuredApi } from '@/api/featuredApi'
 import { searchDestinationPhoto } from '@/api/unsplashApi'
 import SearchBar from '@/components/common/SearchBar'
 import HotelCard from '@/components/hotel/HotelCard'
@@ -90,17 +90,33 @@ const VALUE_PROPS = [
 
 export default function HomePage() {
   const { t } = useTranslation(['common', 'hotels', 'tours'])
-  const { data: hotelsData, isLoading: hotelsLoading } = useQuery({
-    queryKey: ['popular-hotels'],
-    queryFn: () => hotelsApi.list({ sort_by: 'avg_rating', sort_order: 'desc', per_page: 4 }),
-    select: (res) => res.data?.items || [],
+
+  // Viewer's local "today" (server runs UTC), sent so LiteAPI hotels are priced
+  // for the user's actual current date regardless of timezone.
+  const today = useMemo(() => {
+    const d = new Date()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${d.getFullYear()}-${mm}-${dd}`
+  }, [])
+
+  // Featured hotels (partner + LiteAPI) + tours (Viator). The external half is
+  // cached permanently on the backend; partner hotels are fetched live there.
+  // One request feeds both sections; staleTime keeps it from refetching within a session.
+  const { data: featured, isLoading: featuredLoading } = useQuery({
+    queryKey: ['featured-home', today],
+    queryFn: () => featuredApi.home(today),
+    select: (res) => res.data || {},
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
   })
 
-  const { data: toursData, isLoading: toursLoading } = useQuery({
-    queryKey: ['top-tours'],
-    queryFn: () => toursApi.list({ sort_by: 'avg_rating', sort_order: 'desc', per_page: 4 }),
-    select: (res) => res.data?.items || [],
-  })
+  // Backend already attaches today's price to LiteAPI hotels (cached per calendar
+  // day) and partner hotels carry their own, so the cards render prices directly.
+  const hotelsData = featured?.hotels || []
+  const toursData = featured?.tours || []
+  const hotelsLoading = featuredLoading
+  const toursLoading = featuredLoading
 
   return (
     <>
@@ -156,7 +172,7 @@ export default function HomePage() {
           <div className="space-y-4">
             {hotelsLoading
               ? Array.from({ length: 3 }, (_, i) => <HotelCardSkeleton key={i} />)
-              : hotelsData?.map((hotel) => <HotelCard key={hotel.id} hotel={hotel} />)
+              : hotelsData?.map((hotel) => <HotelCard key={hotel.id || hotel.liteapi_hotel_id} hotel={hotel} />)
             }
             {!hotelsLoading && hotelsData?.length === 0 && (
               <p className="text-center text-gray-400 py-12">{t('common:home.noHotels')}</p>
@@ -179,7 +195,7 @@ export default function HomePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {toursLoading
             ? Array.from({ length: 4 }, (_, i) => <TourCardSkeleton key={i} />)
-            : toursData?.map((tour) => <TourCard key={tour.id} tour={tour} />)
+            : toursData?.map((tour) => <TourCard key={tour.id || tour.viator_product_code} tour={tour} />)
           }
           {!toursLoading && toursData?.length === 0 && (
             <p className="col-span-full text-center text-gray-400 py-12">{t('common:home.noTours')}</p>
