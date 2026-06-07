@@ -44,11 +44,6 @@ export default function TourCard({ tour }) {
             {categoryLabel}
           </span>
         )}
-        {isViator && (
-          <span className="absolute top-3 right-3 bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
-            Live
-          </span>
-        )}
       </Link>
 
       <div className="p-4">

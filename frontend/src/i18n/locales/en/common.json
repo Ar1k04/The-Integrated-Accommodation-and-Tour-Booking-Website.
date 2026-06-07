@@ -96,5 +96,32 @@
     "generic": "Something went wrong. Please try again.",
     "notFound": "Page not found",
     "unauthorized": "Please sign in to continue"
+  },
+  "home": {
+    "featuredTitle": "Featured Destinations",
+    "featuredSubtitle": "Explore top travel destinations",
+    "popularHotelsSubtitle": "Top-rated stays loved by travelers",
+    "noHotels": "No hotels available yet. Check back soon!",
+    "topToursSubtitle": "Unforgettable experiences",
+    "noTours": "No tours available yet.",
+    "whyBookTitle": "Why Book With Us",
+    "valueProps": {
+      "bestPrice": "Best Price Guarantee",
+      "bestPriceDesc": "Find a lower price? We match it.",
+      "freeCancel": "Free Cancellation",
+      "freeCancelDesc": "Flexible bookings on most rooms.",
+      "support": "24/7 Support",
+      "supportDesc": "Our team is here around the clock.",
+      "securePayment": "Secure Payment",
+      "securePaymentDesc": "Your data is always protected."
+    },
+    "destinations": {
+      "hanoi": { "name": "Ha Noi", "country": "Vietnam" },
+      "bangkok": { "name": "Bangkok", "country": "Thailand" },
+      "tokyo": { "name": "Tokyo", "country": "Japan" },
+      "paris": { "name": "Paris", "country": "France" },
+      "bali": { "name": "Bali", "country": "Indonesia" },
+      "seoul": { "name": "Seoul", "country": "South Korea" }
+    }
   }
 }

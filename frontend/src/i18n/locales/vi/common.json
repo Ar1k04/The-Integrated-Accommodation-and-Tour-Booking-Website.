@@ -96,5 +96,32 @@
     "generic": "Có lỗi xảy ra. Vui lòng thử lại.",
     "notFound": "Không tìm thấy trang",
     "unauthorized": "Vui lòng đăng nhập để tiếp tục"
+  },
+  "home": {
+    "featuredTitle": "Điểm đến nổi bật",
+    "featuredSubtitle": "Khám phá các điểm du lịch hàng đầu",
+    "popularHotelsSubtitle": "Chỗ ở được đánh giá cao, được du khách yêu thích",
+    "noHotels": "Chưa có khách sạn nào. Vui lòng quay lại sau!",
+    "topToursSubtitle": "Những trải nghiệm khó quên",
+    "noTours": "Chưa có tour nào.",
+    "whyBookTitle": "Vì sao chọn chúng tôi",
+    "valueProps": {
+      "bestPrice": "Đảm bảo giá tốt nhất",
+      "bestPriceDesc": "Tìm thấy giá thấp hơn? Chúng tôi sẽ áp dụng mức giá đó.",
+      "freeCancel": "Miễn phí hủy",
+      "freeCancelDesc": "Đặt phòng linh hoạt cho hầu hết các phòng.",
+      "support": "Hỗ trợ 24/7",
+      "supportDesc": "Đội ngũ của chúng tôi luôn sẵn sàng hỗ trợ bạn.",
+      "securePayment": "Thanh toán an toàn",
+      "securePaymentDesc": "Dữ liệu của bạn luôn được bảo vệ."
+    },
+    "destinations": {
+      "hanoi": { "name": "Hà Nội", "country": "Việt Nam" },
+      "bangkok": { "name": "Bangkok", "country": "Thái Lan" },
+      "tokyo": { "name": "Tokyo", "country": "Nhật Bản" },
+      "paris": { "name": "Paris", "country": "Pháp" },
+      "bali": { "name": "Bali", "country": "Indonesia" },
+      "seoul": { "name": "Seoul", "country": "Hàn Quốc" }
+    }
   }
 }

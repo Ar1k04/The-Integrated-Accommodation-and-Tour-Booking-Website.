@@ -11,13 +11,18 @@ import TourCard from '@/components/tour/TourCard'
 import { HotelCardSkeleton, TourCardSkeleton } from '@/components/common/Skeleton'
 import { Shield, Clock, Headphones, CreditCard, ChevronRight } from 'lucide-react'
 
+// `searchCity` must match the LiteAPI city name in our `cities` table exactly
+// (the backend resolves country_code via `name_norm = f_unaccent(searchCity)`),
+// and `cc` pins the country so ambiguous names don't resolve to the wrong town
+// (e.g. bare "Bali" matches a tiny village in India, not the Indonesian island
+// whose LiteAPI city is "Denpasar"). `name` is just the card label.
 const FEATURED_DESTINATIONS = [
-  { name: 'Ha Noi', country: 'Vietnam', query: 'Hoan Kiem lake Hanoi' },
-  { name: 'Bangkok', country: 'Thailand' },
-  { name: 'Tokyo', country: 'Japan' },
-  { name: 'Paris', country: 'France' },
-  { name: 'Bali', country: 'Indonesia' },
-  { name: 'Seoul', country: 'South Korea' },
+  { key: 'hanoi', name: 'Ha Noi', country: 'Vietnam', searchCity: 'Hanoi', cc: 'VN', query: 'Hoan Kiem lake Hanoi' },
+  { key: 'bangkok', name: 'Bangkok', country: 'Thailand', searchCity: 'Bangkok', cc: 'TH' },
+  { key: 'tokyo', name: 'Tokyo', country: 'Japan', searchCity: 'Tokyo', cc: 'JP' },
+  { key: 'paris', name: 'Paris', country: 'France', searchCity: 'Paris', cc: 'FR' },
+  { key: 'bali', name: 'Bali', country: 'Indonesia', searchCity: 'Denpasar', cc: 'ID' },
+  { key: 'seoul', name: 'Seoul', country: 'South Korea', searchCity: 'Seoul', cc: 'KR' },
 ]
 
 // Gradient fallbacks per destination (shown while photo loads or if Unsplash key is absent)
@@ -31,6 +36,9 @@ const DEST_GRADIENTS = {
 }
 
 function DestinationCard({ dest }) {
+  const { t } = useTranslation('common')
+  const name = t(`home.destinations.${dest.key}.name`, dest.name)
+  const country = t(`home.destinations.${dest.key}.country`, dest.country)
   const { data: photoUrl, isLoading } = useQuery({
     queryKey: ['unsplash-photo', dest.name],
     queryFn: () => searchDestinationPhoto(dest.query || `${dest.name} ${dest.country}`),
@@ -42,7 +50,7 @@ function DestinationCard({ dest }) {
 
   return (
     <Link
-      to={`/hotels/search?city=${encodeURIComponent(dest.name)}`}
+      to={`/hotels/search?city=${encodeURIComponent(dest.searchCity || dest.name)}${dest.cc ? `&country=${dest.cc}` : ''}`}
       className="shrink-0 w-48 group"
     >
       <div className="relative h-32 rounded-xl overflow-hidden">
@@ -58,15 +66,15 @@ function DestinationCard({ dest }) {
         {photoUrl && (
           <img
             src={photoUrl}
-            alt={dest.name}
+            alt={name}
             className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
           />
         )}
 
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
         <div className="absolute bottom-3 left-3 text-white">
-          <p className="font-bold text-sm">{dest.name}</p>
-          <p className="text-xs opacity-80">{dest.country}</p>
+          <p className="font-bold text-sm">{name}</p>
+          <p className="text-xs opacity-80">{country}</p>
         </div>
       </div>
     </Link>
@@ -74,10 +82,10 @@ function DestinationCard({ dest }) {
 }
 
 const VALUE_PROPS = [
-  { icon: Shield, title: 'Best Price Guarantee', desc: 'Find a lower price? We match it.' },
-  { icon: Clock, title: 'Free Cancellation', desc: 'Flexible bookings on most rooms.' },
-  { icon: Headphones, title: '24/7 Support', desc: 'Our team is here around the clock.' },
-  { icon: CreditCard, title: 'Secure Payment', desc: 'Your data is always protected.' },
+  { icon: Shield, titleKey: 'home.valueProps.bestPrice', descKey: 'home.valueProps.bestPriceDesc' },
+  { icon: Clock, titleKey: 'home.valueProps.freeCancel', descKey: 'home.valueProps.freeCancelDesc' },
+  { icon: Headphones, titleKey: 'home.valueProps.support', descKey: 'home.valueProps.supportDesc' },
+  { icon: CreditCard, titleKey: 'home.valueProps.securePayment', descKey: 'home.valueProps.securePaymentDesc' },
 ]
 
 export default function HomePage() {
@@ -122,8 +130,8 @@ export default function HomePage() {
       <section className="max-w-7xl mx-auto px-4 py-16">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="font-heading text-2xl font-bold text-gray-900">Featured Destinations</h2>
-            <p className="text-gray-500 mt-1">Explore top travel destinations</p>
+            <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:home.featuredTitle')}</h2>
+            <p className="text-gray-500 mt-1">{t('common:home.featuredSubtitle')}</p>
           </div>
         </div>
         <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
@@ -139,7 +147,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:nav.hotels')}</h2>
-              <p className="text-gray-500 mt-1">Top-rated stays loved by travelers</p>
+              <p className="text-gray-500 mt-1">{t('common:home.popularHotelsSubtitle')}</p>
             </div>
             <Link to="/hotels/search" className="text-primary font-semibold text-sm flex items-center gap-1 hover:underline">
               {t('common:common.viewAll')} <ChevronRight className="w-4 h-4" />
@@ -151,7 +159,7 @@ export default function HomePage() {
               : hotelsData?.map((hotel) => <HotelCard key={hotel.id} hotel={hotel} />)
             }
             {!hotelsLoading && hotelsData?.length === 0 && (
-              <p className="text-center text-gray-400 py-12">No hotels available yet. Check back soon!</p>
+              <p className="text-center text-gray-400 py-12">{t('common:home.noHotels')}</p>
             )}
           </div>
         </div>
@@ -162,7 +170,7 @@ export default function HomePage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="font-heading text-2xl font-bold text-gray-900">{t('common:nav.tours')}</h2>
-            <p className="text-gray-500 mt-1">Unforgettable experiences</p>
+            <p className="text-gray-500 mt-1">{t('common:home.topToursSubtitle')}</p>
           </div>
           <Link to="/tours" className="text-primary font-semibold text-sm flex items-center gap-1 hover:underline">
             {t('common:common.viewAll')} <ChevronRight className="w-4 h-4" />
@@ -174,7 +182,7 @@ export default function HomePage() {
             : toursData?.map((tour) => <TourCard key={tour.id} tour={tour} />)
           }
           {!toursLoading && toursData?.length === 0 && (
-            <p className="col-span-full text-center text-gray-400 py-12">No tours available yet.</p>
+            <p className="col-span-full text-center text-gray-400 py-12">{t('common:home.noTours')}</p>
           )}
         </div>
       </section>
@@ -182,15 +190,15 @@ export default function HomePage() {
       {/* Value Props */}
       <section className="bg-primary/5 py-16">
         <div className="max-w-7xl mx-auto px-4">
-          <h2 className="font-heading text-2xl font-bold text-gray-900 text-center mb-12">Why Book With Us</h2>
+          <h2 className="font-heading text-2xl font-bold text-gray-900 text-center mb-12">{t('common:home.whyBookTitle')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-            {VALUE_PROPS.map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="text-center">
+            {VALUE_PROPS.map(({ icon: Icon, titleKey, descKey }) => (
+              <div key={titleKey} className="text-center">
                 <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
                   <Icon className="w-7 h-7 text-primary" />
                 </div>
-                <h3 className="font-heading font-bold text-gray-900 mb-2">{title}</h3>
-                <p className="text-sm text-gray-500">{desc}</p>
+                <h3 className="font-heading font-bold text-gray-900 mb-2">{t(`common:${titleKey}`)}</h3>
+                <p className="text-sm text-gray-500">{t(`common:${descKey}`)}</p>
               </div>
             ))}
           </div>

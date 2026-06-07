@@ -1,9 +1,18 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve the project-root .env by absolute path so settings load identically
+# whether uvicorn is launched from the repo root or from backend/. config.py
+# lives at backend/app/core/, so the repo root is three parents up; we also
+# accept a backend/.env if one exists for local overrides.
+_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILES = (_ROOT / ".env", _ROOT / "backend" / ".env")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
     )
 
     # Database

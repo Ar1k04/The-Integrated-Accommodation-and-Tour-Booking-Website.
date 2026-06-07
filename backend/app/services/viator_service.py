@@ -421,18 +421,6 @@ _DEMO_TOURS: dict[str, list[dict]] = {
             "includes": ["Guide", "Transport", "Lunch"], "excludes": ["Personal expenses"],
         },
     ],
-    "479": [  # Paris
-        {
-            "viator_product_code": "DEMO_PAR_001", "name": "Paris: Eiffel Tower Summit & Seine River Cruise",
-            "description": "Skip-the-line access to the Eiffel Tower summit combined with a scenic 1-hour Seine River cruise at sunset.",
-            "city": "Paris", "country": "FR", "category": "Sightseeing",
-            "duration_days": 1, "max_participants": 20, "price_per_person": 95.0, "currency": "USD",
-            "images": ["https://images.viator.com/paris-eiffel.jpg"],
-            "avg_rating": 4.8, "total_reviews": 8900, "source": "viator",
-            "highlights": ["Eiffel Tower summit", "Skip-the-line entry", "Seine River cruise"],
-            "includes": ["Skip-the-line tickets", "River cruise", "Guide"], "excludes": ["Food & drinks"],
-        },
-    ],
 }
 
 # Alias map: dest_id → dest_id that has demo data (for cities without their own demo tours)
@@ -1135,11 +1123,6 @@ _DEMO_REVIEWS: dict[str, list[dict]] = {
         {"reviewReference": "r-tyo-001-1", "rating": 5, "text": "Tokyo in one day done right! Senso-ji at dawn was peaceful and mystical. Shibuya Crossing during rush hour was electric. Mt. Fuji views from Hakone were crystal clear — so lucky!", "userName": "Charlotte B.", "publishedDate": "2025-04-14"},
         {"reviewReference": "r-tyo-001-2", "rating": 5, "text": "Expertly paced itinerary that covers all the must-sees without feeling rushed. Our guide spoke flawless English and handled everything. The included lunch was a lovely touch.", "userName": "Ahmed Z.", "publishedDate": "2025-04-02"},
         {"reviewReference": "r-tyo-001-3", "rating": 5, "text": "Best tour we've ever taken. Period. The guide's depth of knowledge about Japanese culture and history added enormous value. Mt. Fuji was clear and the photos are incredible.", "userName": "Natalie K.", "publishedDate": "2025-03-17"},
-    ],
-    "DEMO_PAR_001": [
-        {"reviewReference": "r-par-001-1", "rating": 5, "text": "Skip-the-line made such a difference — we were at the summit before the crowds arrived. The views over Paris were stunning. The Seine cruise at sunset was romantic and peaceful.", "userName": "Marco R.", "publishedDate": "2025-04-09"},
-        {"reviewReference": "r-par-001-2", "rating": 5, "text": "Everything about this tour was seamless. The guide met us promptly, the Eiffel Tower experience was magical, and the river cruise was the perfect ending to the day.", "userName": "Chloe P.", "publishedDate": "2025-03-27"},
-        {"reviewReference": "r-par-001-3", "rating": 4, "text": "Great combination of activities. The summit views are worth every cent. Minor wait at the cruise embarkation but overall a fantastic Paris experience.", "userName": "Stefan W.", "publishedDate": "2025-03-05"},
     ],
 }
 
