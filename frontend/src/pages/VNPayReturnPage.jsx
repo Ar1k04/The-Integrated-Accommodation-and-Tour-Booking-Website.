@@ -69,7 +69,7 @@ export default function VNPayReturnPage() {
               <CheckCircle className="w-16 h-16 text-success mx-auto" />
               <h2 className="font-heading text-2xl font-bold text-success">Payment Successful!</h2>
               <p className="text-gray-500 text-sm">
-                Your booking has been confirmed. Redirecting to your booking details...
+                Finalizing your booking — redirecting to your booking details...
               </p>
               {bookingId && (
                 <button

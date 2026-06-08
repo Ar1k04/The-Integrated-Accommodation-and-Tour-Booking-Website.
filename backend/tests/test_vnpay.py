@@ -5,7 +5,7 @@ nên đây là chốt chặn chống giả mạo callback/IPN. Ta monkeypatch se
 
 Test IDs: UT-BE-VNPAY-01..NN.
 """
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit
 
 import pytest
 
@@ -32,9 +32,8 @@ def _vnpay_settings(monkeypatch):
 
 
 def _sign(params: dict) -> str:
-    """Ký params theo đúng thuật toán service (sorted, raw values)."""
-    sorted_params = dict(sorted(params.items()))
-    query = "&".join(f"{k}={v}" for k, v in sorted_params.items())
+    """Ký params theo đúng thuật toán service: sorted + URL-encode (quote_plus)."""
+    query = urlencode(sorted(params.items()), quote_via=quote_plus)
     return _hmac_sha512(SECRET, query)
 
 
@@ -64,6 +63,26 @@ class TestCreatePaymentUrl:
         q = dict(parse_qsl(urlsplit(url).query))
         is_valid, _ = verify_return_params(dict(q))
         assert is_valid is True
+
+    def test_signed_string_equals_wire_query_with_encoded_values(self):
+        # Regression cho lỗi "Sai chữ ký": VNPay tính lại HMAC trên ĐÚNG các value
+        # (đã URL-encode) mà nó nhận, nên chuỗi-đem-ký phải GIỐNG HỆT chuỗi-gửi-đi.
+        # Nếu ai đó quay lại ký trên value thô, return_url chứa '://' '/' sẽ làm hai
+        # chuỗi lệch nhau → test này fail.
+        url = create_payment_url("booking-1", 100, "https://my.app/payments/vnpay/return")
+        query = urlsplit(url).query
+        wire_without_hash, _, sent_hash = query.rpartition("&vnp_SecureHash=")
+        # 1) hash gửi đi phải bằng HMAC tính trên chính chuỗi wire (consistency).
+        assert sent_hash.lower() == _hmac_sha512(SECRET, wire_without_hash).lower()
+        # 2) return_url phải xuất hiện ở dạng ĐÃ ENCODE trên wire (không phải thô).
+        assert "https%3A%2F%2Fmy.app" in wire_without_hash
+        assert "https://my.app" not in wire_without_hash
+
+    def test_includes_expire_date_after_create_date(self):
+        # vnp_ExpireDate (chuẩn 2.1.0) phải có và muộn hơn vnp_CreateDate.
+        url = create_payment_url("booking-1", 100, "https://app/return")
+        q = dict(parse_qsl(urlsplit(url).query))
+        assert q["vnp_ExpireDate"] > q["vnp_CreateDate"]
 
 
 # ── verify_return_params ─────────────────────────────────────────────────────

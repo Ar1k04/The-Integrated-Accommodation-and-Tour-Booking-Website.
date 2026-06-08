@@ -370,13 +370,15 @@ async def create_vnpay_payment(
 
 
 @router.get("/vnpay/return")
-async def vnpay_return(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
+async def vnpay_return(request: Request):
     """
-    Verify VNPay return params (user redirect) and update booking status.
-    Called by the frontend after VNPay redirects the user back.
+    VNPay return URL — the browser redirect after payment.
+
+    Per VNPay 2.1.0 this endpoint is DISPLAY-ONLY: verify the checksum and report
+    the result to the customer. It must NOT mutate order state — fulfillment is
+    done exclusively by the server-to-server IPN (`/vnpay/ipn`). The booking is
+    confirmed asynchronously, so the frontend sends the user to the booking page,
+    which polls until the IPN flips it to `confirmed`.
     """
     params = dict(request.query_params)
     is_valid, cleaned = vnpay_service.verify_return_params(params)
@@ -386,36 +388,73 @@ async def vnpay_return(
 
     booking_id = cleaned.get("vnp_TxnRef")
     response_code = cleaned.get("vnp_ResponseCode", "")
+    txn_status = cleaned.get("vnp_TransactionStatus", "")
+    paid = response_code == "00" and txn_status == "00"
+
+    return {
+        "success": paid,
+        "data": {
+            "booking_id": booking_id,
+            "status": "paid" if paid else "failed",
+            "response_code": response_code,
+        },
+        "message": (
+            "Payment successful — finalizing your booking"
+            if paid
+            else "Payment failed or cancelled"
+        ),
+    }
+
+
+@router.get("/vnpay/ipn")
+async def vnpay_ipn(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Server-to-server IPN callback from VNPay (HTTP GET, vnp_* on query string).
+
+    Per VNPay 2.1.0 the RspCode reports whether we *received and recorded* the
+    notification — NOT whether the payment succeeded. VNPay retries (~10×, 5 min
+    apart) on 01/04/97/99 and stops on 00/02, so a genuinely-failed payment that
+    we record correctly must still ack with "00".
+    """
+    params = dict(request.query_params)
+    is_valid, cleaned = vnpay_service.verify_return_params(params)
+
+    if not is_valid:
+        return {"RspCode": "97", "Message": "Invalid signature"}
+
+    booking_id = cleaned.get("vnp_TxnRef")
+    response_code = cleaned.get("vnp_ResponseCode", "")
+    txn_status = cleaned.get("vnp_TransactionStatus", "")
     txn_no = cleaned.get("vnp_TransactionNo", "")
 
     booking = (
         await db.execute(select(Booking).where(Booking.id == booking_id))
     ).scalar_one_or_none()
-
     if not booking:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+        return {"RspCode": "01", "Message": "Order not found"}
 
-    # RACE-03: idempotency parity with /vnpay/ipn. If this VNPay transaction
-    # was already processed (e.g. IPN landed first), don't re-confirm — return
-    # the outcome derived from the persisted state.
-    if txn_no:
-        already = (
-            await db.execute(
-                select(Payment).where(Payment.vnpay_transaction_id == txn_no)
-            )
-        ).scalar_one_or_none()
-        if already is not None:
-            from app.services.booking_service import _outcome_from_persisted_state
-            booking_with_items = await _load_booking_with_items(db, booking.id)
-            outcome = _outcome_from_persisted_state(booking_with_items)
-            body = _confirm_response_body(already, booking_with_items, outcome)
-            body["message"] = (
-                "Payment successful" if outcome.get("status") == "confirmed"
-                else "Payment captured, booking finalization issue"
-            )
-            return body
+    # Amount integrity (VNPay sends VND × 100). The checksum already blocks
+    # tampering; this also catches merchant-side mismatches, as the spec requires.
+    expected_vnd = int(float(booking.total_price) * vnpay_service.USD_TO_VND)
+    try:
+        received_vnd = int(cleaned.get("vnp_Amount", "0")) // 100
+    except (TypeError, ValueError):
+        received_vnd = -1
+    if received_vnd != expected_vnd:
+        return {"RspCode": "04", "Message": "Invalid amount"}
 
-    # Find the pending VNPay payment for this booking
+    # Already processed this txn (an IPN retry, or the Return path landed first).
+    existing = (
+        await db.execute(
+            select(Payment).where(Payment.vnpay_transaction_id == txn_no)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        return {"RspCode": "02", "Message": "Order already confirmed"}
+
     payment = (
         await db.execute(
             select(Payment)
@@ -428,7 +467,8 @@ async def vnpay_return(
         )
     ).scalar_one_or_none()
 
-    if response_code == "00":
+    # VNPay: success requires BOTH vnp_ResponseCode and vnp_TransactionStatus "00".
+    if response_code == "00" and txn_status == "00":
         from app.services.booking_service import confirm_booking
         if payment:
             payment.status = PaymentStatus.succeeded.value
@@ -437,93 +477,17 @@ async def vnpay_return(
         user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
         fn, ln, email, phone = _split_name(user)
         redis = getattr(request.app.state, "redis", None)
-        confirmed_booking, outcome = await confirm_booking(
-            db, booking_with_items,
-            guest_first_name=fn, guest_last_name=ln,
-            guest_email=email, guest_phone=phone, redis=redis,
-        )
-        await db.flush()
-        body = _confirm_response_body(payment, confirmed_booking, outcome)
-        body["message"] = "Payment successful" if outcome.get("status") == "confirmed" else "Payment captured, booking finalization issue"
-        return body
-    else:
-        if payment:
-            payment.status = PaymentStatus.failed.value
-        await db.flush()
-        return {
-            "success": False,
-            "data": {"booking_id": booking_id, "status": "failed"},
-            "message": "Payment failed or cancelled",
-        }
-
-
-@router.post("/vnpay/ipn")
-async def vnpay_ipn(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """
-    Server-to-server IPN callback from VNPay.
-    Must return {"RspCode": "00"} to acknowledge receipt.
-    """
-    params = dict(request.query_params)
-    is_valid, cleaned = vnpay_service.verify_return_params(params)
-
-    if not is_valid:
-        return {"RspCode": "97", "Message": "Invalid checksum"}
-
-    booking_id = cleaned.get("vnp_TxnRef")
-    response_code = cleaned.get("vnp_ResponseCode", "")
-    txn_no = cleaned.get("vnp_TransactionNo", "")
-
-    booking = (
-        await db.execute(select(Booking).where(Booking.id == booking_id))
-    ).scalar_one_or_none()
-    if not booking:
-        return {"RspCode": "01", "Message": "Booking not found"}
-
-    # Idempotency: skip if already processed
-    existing = (
-        await db.execute(
-            select(Payment).where(Payment.vnpay_transaction_id == txn_no)
-        )
-    ).scalar_one_or_none()
-    if existing:
-        return {"RspCode": "00", "Message": "Success"}
-
-    payment = (
-        await db.execute(
-            select(Payment)
-            .where(
-                Payment.booking_id == booking.id,
-                Payment.provider == PaymentProvider.vnpay.value,
-                Payment.status == PaymentStatus.pending.value,
-            )
-            .order_by(Payment.created_at.desc())
-        )
-    ).scalar_one_or_none()
-
-    if response_code == "00":
-        from app.services.booking_service import confirm_booking
-        if payment:
-            payment.status = PaymentStatus.succeeded.value
-            payment.vnpay_transaction_id = txn_no
-        booking_with_items = await _load_booking_with_items(db, booking.id)
-        user = (await db.execute(select(User).where(User.id == booking.user_id))).scalar_one_or_none()
-        fn = (user.full_name or "Guest").split(" ")[0] if user else "Guest"
-        ln = " ".join((user.full_name or "Guest").split(" ")[1:]) or "Guest" if user else "Guest"
-        email = user.email if user else "guest@example.com"
-        phone = user.phone if user and user.phone else None
-        redis = getattr(request.app.state, "redis", None)
         await confirm_booking(
             db, booking_with_items,
             guest_first_name=fn, guest_last_name=ln,
             guest_email=email, guest_phone=phone, redis=redis,
         )
         await db.flush()
-        return {"RspCode": "00", "Message": "Success"}
-    else:
-        if payment:
-            payment.status = PaymentStatus.failed.value
-        await db.flush()
-        return {"RspCode": "01", "Message": "Payment failed"}
+        return {"RspCode": "00", "Message": "Confirm Success"}
+
+    # Failed/cancelled at VNPay — record it, but still ACK so VNPay stops retrying.
+    if payment:
+        payment.status = PaymentStatus.failed.value
+        payment.vnpay_transaction_id = txn_no
+    await db.flush()
+    return {"RspCode": "00", "Message": "Confirm Success"}
