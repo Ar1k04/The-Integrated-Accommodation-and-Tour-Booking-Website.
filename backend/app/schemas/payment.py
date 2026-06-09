@@ -9,18 +9,12 @@ class PaymentCreate(BaseModel):
     currency: str = "usd"
 
 
-class VnpayCreateRequest(BaseModel):
-    booking_id: uuid.UUID
-    return_url: str
-
-
 class PaymentResponse(BaseModel):
     id: uuid.UUID
     booking_id: uuid.UUID | None = None
     provider: str = "stripe"
     stripe_payment_intent_id: str | None = None
     stripe_refund_id: str | None = None
-    vnpay_transaction_id: str | None = None
     amount: float
     refunded_amount: float = 0
     currency: str

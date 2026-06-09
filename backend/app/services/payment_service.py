@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models.booking import Booking
+from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemType
 from app.models.payment import Payment, PaymentProvider, PaymentStatus
 from app.models.user import User
@@ -147,6 +147,12 @@ async def create_payment_intent(
         raise ValueError("Booking not found")
     if str(booking.user_id) != str(user_id):
         raise ValueError("Not your booking")
+    # Only a pending booking is payable. A booking that was already cancelled
+    # (e.g. expired by the stale-pending sweep) or confirmed must not take a new
+    # charge — otherwise the user could pay for a booking that no longer holds
+    # inventory, or pay twice.
+    if booking.status != BookingStatus.pending.value:
+        raise ValueError("This booking is no longer awaiting payment")
 
     # Fail-fast: if any flight item's Duffel offer has expired, don't charge
     # the card. The customer needs to re-search before they pay.
@@ -264,13 +270,19 @@ async def handle_webhook_event(db: AsyncSession, event: dict, redis=None) -> Non
             payment.failure_message = err.get("message")
 
         elif event_type == "payment_intent.canceled":
+            # Definitive failure — the customer abandoned/cancelled the intent.
+            # Cancel the still-pending booking (items + inventory locks) so it
+            # doesn't linger in My Bookings. A plain payment_failed (card decline)
+            # is left pending on purpose so the user can retry; only an explicit
+            # cancel — or the stale-pending sweep — tears the booking down.
             payment.status = PaymentStatus.failed.value
             if payment.booking_id:
+                from app.services.booking_service import cancel_pending_booking
                 booking = (
                     await db.execute(select(Booking).where(Booking.id == payment.booking_id))
                 ).scalar_one_or_none()
-                if booking and booking.status == "pending":
-                    booking.status = "cancelled"
+                if booking is not None:
+                    await cancel_pending_booking(db, booking, redis=redis)
 
     await db.flush()
 

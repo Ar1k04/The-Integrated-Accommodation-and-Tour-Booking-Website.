@@ -21,6 +21,7 @@ from app.services import completion_service, lock_service
 logger = logging.getLogger(__name__)
 
 _LOCK_KEY = "scheduler:lock:booking-completion"
+_EXPIRY_LOCK_KEY = "scheduler:lock:pending-expiry"
 # TTL must comfortably exceed a single sweep; released in finally on the happy path.
 _LOCK_TTL = 300
 
@@ -50,6 +51,30 @@ async def _run_completion_job(redis) -> None:
         await lock_service.release(redis, _LOCK_KEY, owner)
 
 
+async def _run_pending_expiry_job(redis) -> None:
+    owner = uuid.uuid4().hex
+    try:
+        got = await lock_service.acquire(redis, _EXPIRY_LOCK_KEY, owner, ttl=_LOCK_TTL)
+    except lock_service.LockCollisionError:
+        return
+    except lock_service.RedisUnavailableError:
+        logger.warning("Pending-expiry tick skipped: Redis unavailable")
+        return
+    if not got:
+        return
+
+    try:
+        async with async_session_factory() as db:
+            expired = await completion_service.expire_stale_pending_bookings(db, redis=redis)
+            await db.commit()
+        if expired:
+            logger.info("Pending-expiry tick cancelled %d stale pending booking(s)", expired)
+    except Exception:  # noqa: BLE001 — never let a bad tick kill the scheduler
+        logger.exception("Pending-expiry tick failed")
+    finally:
+        await lock_service.release(redis, _EXPIRY_LOCK_KEY, owner)
+
+
 def create_scheduler(redis) -> AsyncIOScheduler:
     """Build (but do not start) the completion scheduler bound to ``redis``."""
     scheduler = AsyncIOScheduler()
@@ -62,6 +87,16 @@ def create_scheduler(redis) -> AsyncIOScheduler:
         # Run shortly after boot so a freshly started server completes overdue
         # bookings without waiting a full interval.
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _run_pending_expiry_job,
+        trigger="interval",
+        minutes=settings.PENDING_BOOKING_SWEEP_INTERVAL_MINUTES,
+        args=[redis],
+        id="pending-expiry",
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=45),
         max_instances=1,
         coalesce=True,
     )

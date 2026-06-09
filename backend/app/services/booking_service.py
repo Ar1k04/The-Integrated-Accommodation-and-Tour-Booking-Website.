@@ -958,7 +958,7 @@ async def confirm_booking(
     """
 
     # RACE-01/03: serialize concurrent confirmations of the same booking
-    # (Stripe webhook vs /confirm-stripe, VNPay return vs IPN). Take a row
+    # (Stripe webhook vs /confirm-stripe). Take a row
     # lock and re-read the latest status BEFORE the terminal short-circuit so
     # a second caller waits, then sees the terminal state and returns the
     # cached outcome instead of re-running supplier calls / re-awarding points.
@@ -1371,6 +1371,34 @@ def _local_room_refund(booking: Booking, item: BookingItem) -> tuple[float, floa
     fee = round(share * fee_pct / 100.0, 2)
     refund = round(share - fee, 2)
     return max(0.0, refund), fee
+
+
+async def cancel_pending_booking(
+    db: AsyncSession, booking: Booking, redis=None
+) -> Booking:
+    """Cancel a booking that never got past ``pending`` (no payment succeeded).
+
+    Unlike :func:`cancel_booking`, this touches no supplier: a pending booking
+    has not been confirmed with LiteAPI/Duffel/Viator, so there is nothing to
+    cancel or refund upstream. It simply flips the booking and its pending items
+    to ``cancelled`` and releases any held Redis inventory locks.
+
+    Used for a definitive payment failure (Stripe ``payment_intent.canceled``)
+    and by the stale-pending sweep. Idempotent — a no-op if the booking is
+    already cancelled.
+    """
+    if booking.status != BookingStatus.pending.value:
+        return booking
+
+    booking.status = BookingStatus.cancelled.value
+    for item in booking.items:
+        if item.status == BookingItemStatus.pending.value:
+            item.status = BookingItemStatus.cancelled.value
+    await db.flush()
+
+    if redis is not None:
+        await lock_service.release_booking_locks(redis, booking.id)
+    return booking
 
 
 async def cancel_booking(

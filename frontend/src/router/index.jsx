@@ -20,7 +20,6 @@ import DealsPage from '@/pages/DealsPage'
 import TourDetailPage from '@/pages/TourDetailPage'
 import ProfilePage from '@/pages/ProfilePage'
 import MyBookingsPage from '@/pages/MyBookingsPage'
-import VNPayReturnPage from '@/pages/VNPayReturnPage'
 import AdminDashboard from '@/pages/admin/AdminDashboard'
 import ManageHotels from '@/pages/admin/ManageHotels'
 import ManageRooms from '@/pages/admin/ManageRooms'
@@ -88,7 +87,6 @@ export const router = createBrowserRouter([
         path: '/my-bookings',
         element: <ProtectedRoute userOnly><MyBookingsPage /></ProtectedRoute>,
       },
-      { path: '/payments/vnpay/return', element: <VNPayReturnPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

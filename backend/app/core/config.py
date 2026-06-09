@@ -68,11 +68,6 @@ class Settings(BaseSettings):
     # if you want test-mode bookings to be reliably bookable end-to-end.
     DUFFEL_TEST_RELIABLE_ONLY: bool = False
 
-    # VNPay
-    VNPAY_TMN_CODE: str = ""
-    VNPAY_HASH_SECRET: str = ""
-    VNPAY_PAYMENT_URL: str = "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
-
     # LiteAPI
     LITEAPI_KEY: str = ""
     LITEAPI_BASE_URL: str = "https://api.liteapi.travel/v3.0"
@@ -99,6 +94,18 @@ class Settings(BaseSettings):
     # to avoid a background task touching the DB. Interval is in minutes.
     BOOKING_COMPLETION_ENABLED: bool = True
     BOOKING_COMPLETION_INTERVAL_MINUTES: int = 60
+
+    # Pending-booking expiry — a booking is created as "pending" and only
+    # becomes "confirmed" once a payment succeeds. If the user never pays
+    # (abandoned checkout, or a failed/declined payment they don't retry), the
+    # booking would otherwise sit in My Bookings as a stale "pending" row
+    # forever. A scheduled sweep cancels pending bookings older than this (with
+    # no succeeded payment) and releases their inventory locks. Minutes.
+    PENDING_BOOKING_EXPIRY_MINUTES: int = 30
+    # How often the expiry sweep runs. Kept smaller than the completion interval
+    # so an abandoned booking is cancelled within roughly its grace window rather
+    # than up to a full completion cycle later. Minutes.
+    PENDING_BOOKING_SWEEP_INTERVAL_MINUTES: int = 10
 
 
 settings = Settings()

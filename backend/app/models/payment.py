@@ -17,7 +17,6 @@ class PaymentStatus(str, enum.Enum):
 
 class PaymentProvider(str, enum.Enum):
     stripe = "stripe"
-    vnpay = "vnpay"
 
 
 class Payment(Base):
@@ -31,7 +30,6 @@ class Payment(Base):
     )
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), unique=True)
     stripe_refund_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    vnpay_transaction_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     refunded_amount: Mapped[float] = mapped_column(
         Numeric(10, 2), default=0, server_default="0", nullable=False

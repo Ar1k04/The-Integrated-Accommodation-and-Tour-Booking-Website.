@@ -60,7 +60,6 @@ export default function BookingPage() {
   const [bookingId, setBookingId] = useState(null)
   const [stripePaymentId, setStripePaymentId] = useState(null)
   const [clientSecret, setClientSecret] = useState(null)
-  const [paymentMethod, setPaymentMethod] = useState('stripe')
 
   const [form, setForm] = useState({
     full_name: user?.full_name || '',
@@ -95,7 +94,6 @@ export default function BookingPage() {
 
   // Loading
   const [proceeding, setProceeding] = useState(false)
-  const [vnpayLoading, setVnpayLoading] = useState(false)
 
   const effectiveCheckIn =
     dateRange.checkIn || (checkIn ? format(new Date(checkIn), 'yyyy-MM-dd') : '')
@@ -334,26 +332,6 @@ export default function BookingPage() {
     }
   }
 
-  const handleVnpayPay = async () => {
-    setVnpayLoading(true)
-    try {
-      const res = await paymentsApi.createVnpayUrl({
-        booking_id: bookingId,
-        return_url: `${window.location.origin}/payments/vnpay/return`,
-      })
-      const url = res.data?.data?.payment_url
-      if (url) {
-        window.location.href = url
-      } else {
-        toast.error('Failed to get VNPay payment URL')
-      }
-    } catch {
-      toast.error('Failed to create VNPay payment')
-    } finally {
-      setVnpayLoading(false)
-    }
-  }
-
   const handlePaymentSuccess = (failure = null) => {
     clearBooking()
     // Bust the My Bookings cache so the user sees their fresh booking
@@ -447,13 +425,9 @@ export default function BookingPage() {
                 stripe={stripePromise}
                 options={{ clientSecret, appearance: { theme: 'stripe' } }}
               >
-                <PaymentStep
-                  paymentMethod={paymentMethod}
-                  setPaymentMethod={setPaymentMethod}
+                <StripeCardForm
                   stripePaymentId={stripePaymentId}
                   onSuccess={handlePaymentSuccess}
-                  onVnpayPay={handleVnpayPay}
-                  vnpayLoading={vnpayLoading}
                   finalTotal={finalTotal}
                 />
               </Elements>
@@ -714,76 +688,6 @@ function DetailsStep({
         {proceeding ? 'Creating Booking...' : 'Proceed to Payment'}
       </button>
     </>
-  )
-}
-
-function PaymentStep({
-  paymentMethod, setPaymentMethod, stripePaymentId,
-  onSuccess, onVnpayPay, vnpayLoading, finalTotal,
-}) {
-  return (
-    <div className="space-y-6">
-      {/* Payment method selector */}
-      <div className="bg-white rounded-xl border p-6">
-        <h2 className="font-heading font-bold text-lg mb-4">Choose Payment Method</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={() => setPaymentMethod('stripe')}
-            className={`border-2 rounded-xl p-4 text-sm font-medium transition-colors ${
-              paymentMethod === 'stripe'
-                ? 'border-primary bg-primary/5 text-primary'
-                : 'border-gray-200 text-gray-600 hover:border-gray-300'
-            }`}
-          >
-            <CreditCard className="w-6 h-6 mx-auto mb-2" />
-            Credit / Debit Card
-            <p className="text-xs font-normal text-gray-400 mt-1">Visa, Mastercard, Amex</p>
-          </button>
-          <button
-            onClick={() => setPaymentMethod('vnpay')}
-            className={`border-2 rounded-xl p-4 text-sm font-medium transition-colors ${
-              paymentMethod === 'vnpay'
-                ? 'border-primary bg-primary/5 text-primary'
-                : 'border-gray-200 text-gray-600 hover:border-gray-300'
-            }`}
-          >
-            <span className="text-2xl mx-auto mb-2 block text-center">🏦</span>
-            VNPay
-            <p className="text-xs font-normal text-gray-400 mt-1">ATM, QR, Internet Banking</p>
-          </button>
-        </div>
-      </div>
-
-      {/* Stripe card form */}
-      {paymentMethod === 'stripe' && (
-        <StripeCardForm
-          stripePaymentId={stripePaymentId}
-          onSuccess={onSuccess}
-          finalTotal={finalTotal}
-        />
-      )}
-
-      {/* VNPay button */}
-      {paymentMethod === 'vnpay' && (
-        <div className="bg-white rounded-xl border p-6 space-y-4">
-          <h2 className="font-heading font-bold text-lg">Pay with VNPay</h2>
-          <p className="text-sm text-gray-500">
-            You will be redirected to VNPay's secure payment page. Amount:{' '}
-            <strong>{Math.round(finalTotal * 25000).toLocaleString('vi-VN')} ₫</strong>
-          </p>
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-700">
-            <strong>Test card:</strong> NCB — 9704198526191432198 &nbsp;|&nbsp; OTP: 123456
-          </div>
-          <button
-            onClick={onVnpayPay}
-            disabled={vnpayLoading}
-            className="w-full bg-primary hover:bg-primary/90 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            {vnpayLoading ? 'Redirecting...' : 'Pay with VNPay →'}
-          </button>
-        </div>
-      )}
-    </div>
   )
 }
 

@@ -20,14 +20,16 @@ transaction (request session for lazy-on-read, or the scheduler's own session).
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import Date, and_, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemStatus
 from app.models.flight_booking import FlightBooking
+from app.models.payment import Payment, PaymentStatus
 from app.models.tour_schedule import TourSchedule
 
 logger = logging.getLogger(__name__)
@@ -124,3 +126,58 @@ async def complete_due_items(
         len(affected_booking_ids),
     )
     return len(due_items)
+
+
+async def expire_stale_pending_bookings(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    redis=None,
+) -> int:
+    """Cancel ``pending`` bookings that were never paid for.
+
+    A booking is created ``pending`` and only flips to ``confirmed`` once a
+    Stripe payment succeeds. When the user abandons checkout or has a payment
+    decline they don't retry, the booking would sit in My Bookings as a stale
+    ``pending`` row forever. This sweep cancels any booking that is:
+
+      - still ``pending``,
+      - older than ``PENDING_BOOKING_EXPIRY_MINUTES`` (a grace window so a user
+        who is mid-payment / retrying isn't cut off), and
+      - has no ``succeeded`` payment (defensive — a confirmed booking already
+        left ``pending``, but this guards against any out-of-band state).
+
+    Pending items are flipped to ``cancelled`` and the booking's Redis inventory
+    locks are released. These bookings never reached a supplier (that only
+    happens on confirm), so there is nothing to refund or cancel upstream.
+
+    Idempotent and does NOT commit — the caller owns the transaction. Returns the
+    number of bookings expired.
+    """
+    from app.services.booking_service import cancel_pending_booking
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=settings.PENDING_BOOKING_EXPIRY_MINUTES)
+
+    paid_booking_ids = select(Payment.booking_id).where(
+        Payment.status == PaymentStatus.succeeded.value,
+        Payment.booking_id.is_not(None),
+    )
+    stmt = select(Booking).where(
+        Booking.status == BookingStatus.pending.value,
+        Booking.created_at < cutoff,
+        Booking.id.notin_(paid_booking_ids),
+    )
+    bookings = (await db.execute(stmt)).scalars().all()
+    if not bookings:
+        return 0
+
+    for booking in bookings:
+        await cancel_pending_booking(db, booking, redis=redis)
+
+    logger.info(
+        "metric=completion.pending_expired_total count=%d cutoff=%s",
+        len(bookings),
+        cutoff.isoformat(),
+    )
+    return len(bookings)

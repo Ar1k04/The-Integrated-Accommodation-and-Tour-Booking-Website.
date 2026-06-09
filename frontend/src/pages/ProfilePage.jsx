@@ -208,7 +208,7 @@ function BookingsTab() {
         toast.warning(t('bookings.cancelledNonRefundable'))
       } else {
         // Fallback: a supplier reported a refund but no Stripe refund was issued
-        // (e.g. VNPay payment, or nothing to refund).
+        // (e.g. nothing to refund).
         const refundItem = items.find((it) => it.refund_amount != null)
         if (refundItem) {
           toast.success(t('bookings.cancelledWithRefund', {

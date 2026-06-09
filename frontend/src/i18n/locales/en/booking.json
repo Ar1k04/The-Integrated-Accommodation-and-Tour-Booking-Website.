@@ -30,9 +30,7 @@
   "payment": {
     "title": "Payment Method",
     "stripe": "Credit / Debit Card",
-    "vnpay": "VNPay (Vietnam)",
     "payNow": "Pay Now",
-    "payVnpay": "Pay with VNPay",
     "processing": "Processing..."
   },
   "summary": {

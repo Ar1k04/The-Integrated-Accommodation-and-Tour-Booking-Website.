@@ -30,9 +30,7 @@
   "payment": {
     "title": "Phương thức thanh toán",
     "stripe": "Thẻ tín dụng / thẻ ghi nợ",
-    "vnpay": "VNPay (Việt Nam)",
     "payNow": "Thanh toán ngay",
-    "payVnpay": "Thanh toán qua VNPay",
     "processing": "Đang xử lý..."
   },
   "summary": {

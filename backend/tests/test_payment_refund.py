@@ -168,35 +168,6 @@ async def test_no_double_refund_after_full(db_session, booking_with_stripe_payme
 
 
 @pytest.mark.asyncio
-async def test_vnpay_only_booking_returns_none(db_session, test_user):
-    booking = Booking(
-        id=uuid.uuid4(),
-        user_id=test_user.id,
-        total_price=Decimal("50.00"),
-        status="confirmed",
-    )
-    db_session.add(booking)
-    await db_session.flush()
-
-    vnpay = Payment(
-        id=uuid.uuid4(),
-        booking_id=booking.id,
-        provider=PaymentProvider.vnpay.value,
-        amount=Decimal("50.00"),
-        currency="vnd",
-        status=PaymentStatus.succeeded.value,
-    )
-    db_session.add(vnpay)
-    await db_session.flush()
-
-    with patch("app.services.payment_service.stripe.Refund") as mock_refund:
-        result = await refund_for_booking(db_session, booking.id)
-
-    assert result is None
-    mock_refund.create.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_booking_without_payment_returns_none(db_session, test_user):
     booking = Booking(
         id=uuid.uuid4(),
