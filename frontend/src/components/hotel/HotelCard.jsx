@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { MapPin, Star } from 'lucide-react'
 import StarRating from '@/components/common/StarRating'
+import WishlistButton from '@/components/common/WishlistButton'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { useSearchStore } from '@/store/searchStore'
 import { format } from 'date-fns'
@@ -45,13 +46,24 @@ export default function HotelCard({ hotel, pricesPending = false }) {
 
   return (
     <div className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col md:flex-row group">
-      <Link to={hotelHref} className="relative md:w-72 h-48 md:h-56 shrink-0 overflow-hidden">
-        <img
-          src={mainImage}
-          alt={hotel.name}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+      <div className="relative md:w-72 h-48 md:h-56 shrink-0 overflow-hidden">
+        <Link to={hotelHref} className="block w-full h-full">
+          <img
+            src={mainImage}
+            alt={hotel.name}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+        </Link>
+        <WishlistButton
+          variant="icon"
+          hotelId={isLiteapi ? undefined : hotel.id}
+          liteapiHotelId={isLiteapi ? hotel.liteapi_hotel_id : undefined}
+          name={hotel.name}
+          city={hotel.city}
+          country={hotel.country}
+          image={mainImage}
         />
-      </Link>
+      </div>
 
       <div className="flex-1 p-4 flex flex-col justify-between min-w-0">
         <div>

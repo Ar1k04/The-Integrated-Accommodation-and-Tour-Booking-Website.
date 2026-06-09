@@ -15,6 +15,7 @@ import ReviewForm from '@/components/review/ReviewForm'
 import StarRating from '@/components/common/StarRating'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
+import WishlistButton from '@/components/common/WishlistButton'
 import FacilitiesSection from '@/components/hotel/FacilitiesSection'
 import OccupancySelector from '@/components/hotel/OccupancySelector'
 import HotelMiniMap from '@/components/hotel/HotelMiniMap'
@@ -313,12 +314,21 @@ export default function LiteapiHotelDetailPage() {
                     )}
                   </div>
                 </div>
-                {hotel.avg_rating > 0 && (
-                  <div className="text-right shrink-0">
-                    <div className="bg-primary text-white font-bold text-lg px-3 py-1.5 rounded-lg">{hotel.avg_rating.toFixed(1)}</div>
-                    <p className="text-xs text-gray-500 mt-1">{t('hotels:detail.reviewsCount', { count: hotel.total_reviews })}</p>
-                  </div>
-                )}
+                <div className="flex items-center gap-3 shrink-0">
+                  <WishlistButton
+                    liteapiHotelId={liteapiId}
+                    name={hotel.name}
+                    city={hotel.city}
+                    country={hotel.country}
+                    image={hotel.images?.[0]}
+                  />
+                  {hotel.avg_rating > 0 && (
+                    <div className="text-right">
+                      <div className="bg-primary text-white font-bold text-lg px-3 py-1.5 rounded-lg">{hotel.avg_rating.toFixed(1)}</div>
+                      <p className="text-xs text-gray-500 mt-1">{t('hotels:detail.reviewsCount', { count: hotel.total_reviews })}</p>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-1.5 mt-3 text-gray-500 text-sm">
                 <MapPin className="w-4 h-4" />{hotel.address || `${hotel.city}, ${hotel.country}`}

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Clock, MapPin, Star, User, Users } from 'lucide-react'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
+import WishlistButton from '@/components/common/WishlistButton'
 import { CATEGORY_TO_TAG_ID } from '@/utils/constants'
 import { getViatorTagLabel } from '@/utils/viatorTags'
 
@@ -32,7 +33,7 @@ export default function TourCard({ tour }) {
   const extraDestinations = (tour.destinations || []).filter((d) => d && d !== tour.city)
 
   return (
-    <div className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden group">
+    <div className="relative bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden group">
       <Link to={tourHref} className="block relative overflow-hidden">
         <img
           src={mainImage}
@@ -45,6 +46,15 @@ export default function TourCard({ tour }) {
           </span>
         )}
       </Link>
+      <WishlistButton
+        variant="icon"
+        tourId={isViator ? undefined : tour.id}
+        viatorProductCode={isViator ? tour.viator_product_code : undefined}
+        name={tour.name}
+        city={tour.city}
+        country={tour.country}
+        image={mainImage}
+      />
 
       <div className="p-4">
         <Link to={tourHref} className="font-heading font-bold text-gray-900 hover:text-primary line-clamp-2">

@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
 from app.schemas.auth import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     GoogleAuthRequest,
     LoginRequest,
@@ -23,6 +24,7 @@ from app.services.auth_service import (
     authenticate_google,
     authenticate_user,
     blacklist_token,
+    change_user_password,
     create_partner_confirm_token,
     create_password_reset_token,
     issue_tokens,
@@ -236,6 +238,24 @@ async def reset_password(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
     return {"message": "Password has been reset successfully."}
+
+
+@router.post("/password/change", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    data: ChangePasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user=Depends(get_current_user),
+):
+    try:
+        await change_user_password(
+            db, current_user, data.current_password, data.new_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return {"message": "Password has been changed successfully."}
 
 
 @router.get("/me", response_model=UserResponse)

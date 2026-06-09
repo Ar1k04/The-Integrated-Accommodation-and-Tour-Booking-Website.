@@ -15,6 +15,7 @@ import ReviewForm from '@/components/review/ReviewForm'
 import Pagination from '@/components/common/Pagination'
 import Breadcrumb from '@/components/common/Breadcrumb'
 import Skeleton from '@/components/common/Skeleton'
+import WishlistButton from '@/components/common/WishlistButton'
 import { format, addDays } from 'date-fns'
 import { toast } from 'sonner'
 import {
@@ -236,15 +237,25 @@ export default function TourDetailPage() {
                     )}
                   </div>
                 </div>
-                {tour.avg_rating > 0 && (
-                  <div className="text-right shrink-0">
-                    <div className="flex items-center gap-1">
-                      <Star className="w-4 h-4 fill-warning text-warning" />
-                      <span className="font-bold">{tour.avg_rating.toFixed(1)}</span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <WishlistButton
+                    tourId={isViator ? undefined : tour.id}
+                    viatorProductCode={isViator ? code : undefined}
+                    name={tour.name}
+                    city={tour.city}
+                    country={tour.country}
+                    image={tour.images?.[0]}
+                  />
+                  {tour.avg_rating > 0 && (
+                    <div className="text-right">
+                      <div className="flex items-center gap-1">
+                        <Star className="w-4 h-4 fill-warning text-warning" />
+                        <span className="font-bold">{tour.avg_rating.toFixed(1)}</span>
+                      </div>
+                      <p className="text-xs text-gray-400">{tour.total_reviews} reviews</p>
                     </div>
-                    <p className="text-xs text-gray-400">{tour.total_reviews} reviews</p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-gray-500">

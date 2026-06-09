@@ -249,6 +249,25 @@ async def reset_user_password(db: AsyncSession, user_id: str, new_password: str)
     await db.flush()
 
 
+async def change_user_password(
+    db: AsyncSession, user: User, current_password: str, new_password: str
+) -> None:
+    """Change the password of an already-authenticated user.
+
+    Requires the correct current password. Users created via Google OAuth may
+    have no local password set yet, in which case they should use the
+    forgot-password flow instead.
+    """
+    if not user.hashed_password:
+        raise ValueError(
+            "No password is set for this account. Use the reset-password flow."
+        )
+    if not verify_password(current_password, user.hashed_password):
+        raise ValueError("Current password is incorrect")
+    user.hashed_password = hash_password(new_password)
+    await db.flush()
+
+
 def create_partner_confirm_token(user_id: uuid.UUID) -> str:
     from jose import jwt as jose_jwt
 

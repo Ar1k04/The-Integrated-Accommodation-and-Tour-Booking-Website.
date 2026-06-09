@@ -49,25 +49,33 @@ async def add_to_wishlist(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
 ):
-    if bool(data.hotel_id) == bool(data.tour_id):
+    targets = {
+        "hotel_id": data.hotel_id,
+        "tour_id": data.tour_id,
+        "liteapi_hotel_id": data.liteapi_hotel_id,
+        "viator_product_code": data.viator_product_code,
+    }
+    provided = {k: v for k, v in targets.items() if v}
+    if len(provided) != 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide exactly one of hotel_id or tour_id",
+            detail="Provide exactly one of hotel_id, tour_id, liteapi_hotel_id or viator_product_code",
         )
 
-    existing_q = select(Wishlist).where(Wishlist.user_id == current_user.id)
-    if data.hotel_id:
-        existing_q = existing_q.where(Wishlist.hotel_id == data.hotel_id)
-    else:
-        existing_q = existing_q.where(Wishlist.tour_id == data.tour_id)
-
+    target_col, target_val = next(iter(provided.items()))
+    existing_q = select(Wishlist).where(
+        Wishlist.user_id == current_user.id,
+        getattr(Wishlist, target_col) == target_val,
+    )
     if (await db.execute(existing_q)).scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already in wishlist")
 
-    item = Wishlist(user_id=current_user.id, **data.model_dump())
+    item = Wishlist(user_id=current_user.id, **data.model_dump(exclude_none=True))
     db.add(item)
     await db.flush()
-    await db.refresh(item)
+    # Eager-load the hotel/tour relationships so response serialization does not
+    # trigger a lazy load outside the async greenlet.
+    await db.refresh(item, attribute_names=["hotel", "tour"])
     return item
 
 

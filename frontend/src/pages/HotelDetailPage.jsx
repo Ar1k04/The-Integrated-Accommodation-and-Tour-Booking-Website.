@@ -21,6 +21,7 @@ import FacilitiesSection from '@/components/hotel/FacilitiesSection'
 import OccupancySelector from '@/components/hotel/OccupancySelector'
 import HotelMiniMap from '@/components/hotel/HotelMiniMap'
 import NearbyHotelsMapModal from '@/components/hotel/NearbyHotelsMapModal'
+import WishlistButton from '@/components/common/WishlistButton'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { MapPin, Star, CalendarDays, Users, Search } from 'lucide-react'
 import { format, addDays, differenceInDays } from 'date-fns'
@@ -379,12 +380,15 @@ export default function HotelDetailPage() {
                     )}
                   </div>
                 </div>
-                {hotel.avg_rating > 0 && (
-                  <div className="text-right shrink-0">
-                    <div className="bg-primary text-white font-bold text-lg px-3 py-1.5 rounded-lg">{hotel.avg_rating.toFixed(1)}</div>
-                    <p className="text-xs text-gray-500 mt-1">{t('hotels:detail.reviewsCount', { count: hotel.total_reviews })}</p>
-                  </div>
-                )}
+                <div className="flex items-center gap-3 shrink-0">
+                  <WishlistButton hotelId={hotel.id} />
+                  {hotel.avg_rating > 0 && (
+                    <div className="text-right">
+                      <div className="bg-primary text-white font-bold text-lg px-3 py-1.5 rounded-lg">{hotel.avg_rating.toFixed(1)}</div>
+                      <p className="text-xs text-gray-500 mt-1">{t('hotels:detail.reviewsCount', { count: hotel.total_reviews })}</p>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-1.5 mt-3 text-gray-500 text-sm">
                 <MapPin className="w-4 h-4" />{hotel.address || `${hotel.city}, ${hotel.country}`}

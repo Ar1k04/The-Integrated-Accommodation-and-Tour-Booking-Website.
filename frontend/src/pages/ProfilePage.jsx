@@ -20,7 +20,7 @@ import { formatDate } from '@/utils/formatters'
 import { vouchersApi } from '@/api/vouchersApi'
 import {
   User, Briefcase, Star, Heart, Award, Shield,
-  Camera, Trash2, MapPin, Clock, Calendar, Eye, TrendingUp, TrendingDown,
+  Camera, Trash2, MapPin, Clock, Calendar, Eye, EyeOff, TrendingUp, TrendingDown,
   PlaneTakeoff, AlertTriangle, X, Tag, Copy,
 } from 'lucide-react'
 
@@ -571,19 +571,60 @@ function WishlistTab() {
 
   return wishlists?.length > 0 ? (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {wishlists.map((w) => (
-        <div key={w.id} className="bg-white rounded-xl border p-5 flex items-start gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="font-semibold text-sm">{w.hotel?.name || w.tour?.name || 'Item'}</p>
-            <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-              <MapPin className="w-3 h-3" />{w.hotel?.city || w.tour?.city}
-            </p>
-          </div>
-          <button onClick={() => removeMut.mutate(w.id)} className="text-error hover:bg-error/10 p-2 rounded-lg" aria-label="Remove from wishlist">
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      ))}
+      {wishlists.map((w) => {
+        const isHotel = Boolean(w.hotel_id || w.liteapi_hotel_id)
+        const detailHref = w.hotel_id
+          ? `/hotels/${w.hotel_id}`
+          : w.tour_id
+            ? `/tours/${w.tour_id}`
+            : w.liteapi_hotel_id
+              ? `/hotels/liteapi/${w.liteapi_hotel_id}`
+              : `/tours/viator/${w.viator_product_code}`
+        // Internal items carry a nested hotel/tour; external items carry a snapshot.
+        const nested = w.hotel || w.tour
+        const name = nested?.name || w.item_name || 'Item'
+        const image = nested?.images?.[0] || w.item_image
+        const location = [nested?.city || w.item_city, nested?.country || w.item_country]
+          .filter(Boolean)
+          .join(', ')
+        return (
+          <Link
+            key={w.id}
+            to={detailHref}
+            className="group bg-white rounded-xl border overflow-hidden flex items-stretch gap-4 hover:shadow-md transition-shadow"
+          >
+            <div className="w-28 sm:w-32 shrink-0 bg-gray-100 overflow-hidden">
+              {image ? (
+                <img src={image} alt={name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+              ) : (
+                <div className="w-full h-full grid place-items-center text-gray-300">
+                  <Heart className="w-8 h-8" />
+                </div>
+              )}
+            </div>
+            <div className="flex-1 min-w-0 py-4 pr-3 flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <span className="inline-block text-[10px] font-semibold uppercase tracking-wide text-primary bg-primary/10 px-2 py-0.5 rounded-full mb-1">
+                  {isHotel ? 'Hotel' : 'Tour'}
+                </span>
+                <p className="font-semibold text-sm line-clamp-2 group-hover:text-primary transition-colors">{name}</p>
+                {location && (
+                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                    <MapPin className="w-3 h-3 shrink-0" />{location}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeMut.mutate(w.id) }}
+                className="text-error hover:bg-error/10 p-2 rounded-lg shrink-0"
+                aria-label="Remove from wishlist"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </Link>
+        )
+      })}
     </div>
   ) : (
     <EmptyState message="Your wishlist is empty" />
@@ -706,6 +747,24 @@ function LoyaltyTab() {
   )
 }
 
+function PasswordField({ label, value, onChange }) {
+  const [show, setShow] = useState(false)
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <div className="relative">
+        <input type={show ? 'text' : 'password'} value={value} onChange={onChange}
+          className="w-full border rounded-lg px-4 py-2.5 pr-11 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        <button type="button" onClick={() => setShow((s) => !s)} tabIndex={-1}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600">
+          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function SecurityTab() {
   const [form, setForm] = useState({ current_password: '', new_password: '', confirm_password: '' })
   const [saving, setSaving] = useState(false)
@@ -737,24 +796,12 @@ function SecurityTab() {
       <div className="bg-white rounded-xl border p-6">
         <h3 className="font-heading font-bold text-lg mb-4">Change Password</h3>
         <form onSubmit={handleChangePassword} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
-            <input type="password" value={form.current_password}
-              onChange={(e) => setForm({ ...form, current_password: e.target.value })}
-              className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-            <input type="password" value={form.new_password}
-              onChange={(e) => setForm({ ...form, new_password: e.target.value })}
-              className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
-            <input type="password" value={form.confirm_password}
-              onChange={(e) => setForm({ ...form, confirm_password: e.target.value })}
-              className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-          </div>
+          <PasswordField label="Current Password" value={form.current_password}
+            onChange={(e) => setForm({ ...form, current_password: e.target.value })} />
+          <PasswordField label="New Password" value={form.new_password}
+            onChange={(e) => setForm({ ...form, new_password: e.target.value })} />
+          <PasswordField label="Confirm New Password" value={form.confirm_password}
+            onChange={(e) => setForm({ ...form, confirm_password: e.target.value })} />
           <button type="submit" disabled={saving}
             className="bg-primary hover:bg-primary-dark text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors disabled:opacity-50">
             {saving ? 'Changing...' : 'Change Password'}
