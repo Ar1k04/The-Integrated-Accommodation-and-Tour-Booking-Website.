@@ -7,4 +7,8 @@ export const roomsApi = {
   update: (id, data) => api.patch(`/rooms/${id}`, data),
   delete: (id) => api.delete(`/rooms/${id}`),
   checkAvailability: (id, params) => api.get(`/rooms/${id}/availability`, { params }),
+  uploadImages: (id, formData) =>
+    api.post(`/rooms/${id}/images`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
 }

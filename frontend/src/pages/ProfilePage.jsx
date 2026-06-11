@@ -5,6 +5,7 @@ import { Helmet } from 'react-helmet-async'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/hooks/useAuth'
+import { useUiStore } from '@/store/uiStore'
 import { useFormatCurrency } from '@/hooks/useFormatCurrency'
 import { bookingsApi } from '@/api/bookingsApi'
 import { reviewsApi } from '@/api/reviewsApi'
@@ -80,20 +81,38 @@ export default function ProfilePage() {
   )
 }
 
+const PROFILE_LOCALES = [
+  { code: 'en', label: 'English' },
+  { code: 'vi', label: 'Tiếng Việt' },
+]
+const PROFILE_CURRENCIES = [
+  { code: 'USD', label: 'USD — US Dollar' },
+  { code: 'VND', label: 'VND — Vietnamese Dong' },
+]
+
 function ProfileTab() {
-  const { user, updateProfile } = useAuth()
+  const { user, updateProfile, uploadAvatar } = useAuth()
+  const { i18n } = useTranslation('common')
+  const setLocale = useUiStore((s) => s.setLocale)
+  const setCurrency = useUiStore((s) => s.setCurrency)
   const [form, setForm] = useState({
     full_name: user?.full_name || '',
-    email: user?.email || '',
     phone: user?.phone || '',
+    preferred_locale: user?.preferred_locale || 'en',
+    preferred_currency: user?.preferred_currency || 'USD',
   })
   const [saving, setSaving] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
 
   const handleSave = async (e) => {
     e.preventDefault()
     setSaving(true)
     try {
       await updateProfile(form)
+      // Keep the active UI locale/currency in sync with the saved preference.
+      setLocale(form.preferred_locale)
+      i18n.changeLanguage(form.preferred_locale)
+      setCurrency(form.preferred_currency)
       toast.success('Profile updated')
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Failed to update')
@@ -102,26 +121,47 @@ function ProfileTab() {
     }
   }
 
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file later
+    if (!file) return
+    setUploadingAvatar(true)
+    try {
+      await uploadAvatar(file)
+      toast.success('Avatar updated')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to upload avatar')
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
   return (
     <div className="max-w-2xl">
       <div className="bg-white rounded-xl border p-6 space-y-6">
         <div className="flex items-center gap-4">
           <div className="relative">
-            <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center text-2xl font-bold">
+            <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center text-2xl font-bold overflow-hidden">
               {user?.avatar_url ? (
                 <img src={user.avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
               ) : (
                 user?.full_name?.[0]?.toUpperCase() || 'U'
               )}
             </div>
-            <button className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1.5 shadow" aria-label="Change avatar">
+            <label
+              className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-1.5 shadow cursor-pointer hover:bg-primary-dark disabled:opacity-50"
+              aria-label="Change avatar"
+            >
               <Camera className="w-3 h-3" />
-            </button>
+              <input type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} disabled={uploadingAvatar} />
+            </label>
           </div>
           <div>
             <p className="font-heading font-bold text-lg">{user?.full_name}</p>
             <p className="text-sm text-gray-500">{user?.email}</p>
-            <p className="text-xs text-gray-400 mt-1">Member since {formatDate(user?.created_at)}</p>
+            <p className="text-xs text-gray-400 mt-1">
+              {uploadingAvatar ? 'Uploading avatar…' : `Member since ${formatDate(user?.created_at)}`}
+            </p>
           </div>
         </div>
 
@@ -134,13 +174,27 @@ function ProfileTab() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
-                className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <input type="email" value={user?.email || ''} readOnly disabled
+                className="w-full border rounded-lg px-4 py-2.5 text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
               <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
+              <select value={form.preferred_locale} onChange={(e) => setForm({ ...form, preferred_locale: e.target.value })}
+                className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                {PROFILE_LOCALES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+              <select value={form.preferred_currency} onChange={(e) => setForm({ ...form, preferred_currency: e.target.value })}
+                className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                {PROFILE_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+              </select>
             </div>
           </div>
           <button type="submit" disabled={saving}

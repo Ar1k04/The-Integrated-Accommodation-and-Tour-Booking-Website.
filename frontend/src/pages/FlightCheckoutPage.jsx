@@ -201,6 +201,7 @@ export default function FlightCheckoutPage() {
         }],
         special_requests: specialRequests || undefined,
         voucher_code: appliedVoucher?.code || undefined,
+        points_to_redeem: pointsApplied && parseInt(pointsToRedeem, 10) > 0 ? parseInt(pointsToRedeem, 10) : 0,
       }
       const bookingRes = await bookingsApi.create(bookingPayload)
       const bId = bookingRes.data?.id || bookingRes.data?.data?.id
@@ -208,18 +209,13 @@ export default function FlightCheckoutPage() {
       if (!bId) throw new Error('Booking creation failed — no booking id returned')
       setBookingId(bId)
 
-      // 2. Redeem loyalty (best-effort)
-      if (pointsApplied && parseInt(pointsToRedeem, 10) > 0) {
-        try {
-          await loyaltyApi.redeem(parseInt(pointsToRedeem, 10), bId)
-        } catch {
-          toast.error('Could not redeem loyalty points — continuing without redemption')
-          setLoyaltyDiscount(0)
-          setPointsApplied(false)
-        }
-      }
+      // Loyalty points are redeemed as part of booking creation (points_to_redeem
+      // above): the backend deducts them, applies the discount to booking.total_price
+      // so Stripe charges the reduced amount, and reverses them if the booking is
+      // never paid. No separate redeem call — that double-deducts and leaves
+      // total_price stale (UC17).
 
-      // 3. Create Stripe PaymentIntent — backend re-validates offer-alive
+      // 2. Create Stripe PaymentIntent — backend re-validates offer-alive
       const paymentRes = await paymentsApi.create({
         booking_id: bId,
         currency: 'usd',

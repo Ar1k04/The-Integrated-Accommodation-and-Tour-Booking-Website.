@@ -242,6 +242,7 @@ export default function BookingPage() {
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
+            points_to_redeem: pointsApplied && parseInt(pointsToRedeem, 10) > 0 ? parseInt(pointsToRedeem, 10) : 0,
           }
         : isRegularTour
         ? {
@@ -255,6 +256,7 @@ export default function BookingPage() {
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
+            points_to_redeem: pointsApplied && parseInt(pointsToRedeem, 10) > 0 ? parseInt(pointsToRedeem, 10) : 0,
           }
         : isLiteapi
         ? {
@@ -275,6 +277,7 @@ export default function BookingPage() {
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
+            points_to_redeem: pointsApplied && parseInt(pointsToRedeem, 10) > 0 ? parseInt(pointsToRedeem, 10) : 0,
           }
         : {
             items: [{
@@ -289,6 +292,7 @@ export default function BookingPage() {
             }],
             special_requests: form.special_requests || undefined,
             voucher_code: appliedVoucher?.code || undefined,
+            points_to_redeem: pointsApplied && parseInt(pointsToRedeem, 10) > 0 ? parseInt(pointsToRedeem, 10) : 0,
           }
       const bookingRes = await bookingsApi.create(bookingPayload)
       const bId = bookingRes.data?.id || bookingRes.data?.data?.id
@@ -297,18 +301,13 @@ export default function BookingPage() {
       if (!bId) throw new Error('Booking creation failed — no booking id returned')
       setBookingId(bId)
 
-      // 2. Redeem loyalty points if applied
-      if (pointsApplied && parseInt(pointsToRedeem, 10) > 0) {
-        try {
-          await loyaltyApi.redeem(parseInt(pointsToRedeem, 10), bId)
-        } catch {
-          toast.error('Could not redeem loyalty points — continuing without redemption')
-          setLoyaltyDiscount(0)
-          setPointsApplied(false)
-        }
-      }
+      // Loyalty points are redeemed as part of booking creation (points_to_redeem
+      // in the payload above): the backend deducts them, applies the discount to
+      // booking.total_price so Stripe charges the reduced amount, and reverses
+      // them automatically if the pending booking is never paid. No separate
+      // redeem call here — that would double-deduct and leave total_price stale.
 
-      // 3. Create Stripe payment intent (for Stripe flow)
+      // 2. Create Stripe payment intent (for Stripe flow)
       const paymentRes = await paymentsApi.create({
         booking_id: bId,
         currency: 'usd',

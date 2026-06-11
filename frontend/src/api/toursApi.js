@@ -16,4 +16,8 @@ export const toursApi = {
     api.post(`/tours/${id}/images`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  listSchedules: (id) => api.get(`/tours/${id}/schedules`),
+  upsertSchedule: (id, data) => api.post(`/tours/${id}/schedules`, data),
+  updateSchedule: (id, date, data) => api.patch(`/tours/${id}/schedules/${date}`, data),
+  deleteSchedule: (id, date) => api.delete(`/tours/${id}/schedules/${date}`),
 }

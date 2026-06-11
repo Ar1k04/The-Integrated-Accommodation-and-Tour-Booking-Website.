@@ -26,6 +26,7 @@ from app.core.pricing import (
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_item import BookingItem, BookingItemStatus, BookingItemType
 from app.models.flight_booking import FlightBooking
+from app.models.hotel import Hotel
 from app.models.loyalty_tier import LoyaltyTier
 from app.models.room import Room
 from app.models.user import User
@@ -271,9 +272,11 @@ async def _reserve_room_item(
             f"Room allows a maximum of {room.max_guests} guests per room"
         )
 
-    overlap = (
+    # Sum reserved ROOM QUANTITY (not row count) — a single booking item can
+    # reserve quantity > 1, so counting rows would under-count and oversell.
+    booked_quantity = (
         await db.execute(
-            select(func.count())
+            select(func.coalesce(func.sum(BookingItem.quantity), 0))
             .select_from(BookingItem)
             .join(Booking, BookingItem.booking_id == Booking.id)
             .where(
@@ -287,7 +290,7 @@ async def _reserve_room_item(
             )
         )
     ).scalar() or 0
-    if overlap >= room.total_quantity:
+    if booked_quantity + item.quantity > room.total_quantity:
         raise BookingServiceError("Room is not available for the selected dates")
 
     for d in _daterange(item.check_in, item.check_out):
@@ -608,6 +611,61 @@ async def _reserve_flight_item(
     return bi, subtotal
 
 
+async def _voucher_cart_scope(
+    db: AsyncSession, entries
+) -> tuple[set[str], list[uuid.UUID | None], bool]:
+    """Inspect cart entries for voucher validation.
+
+    Returns ``(item_types, product_owners, has_supplier_items)`` where:
+    - ``item_types`` is the set of booking-item types present (room/tour/flight),
+    - ``product_owners`` lists the owner of each *local* product (None when a
+      local product has no partner owner, i.e. platform-admin owned),
+    - ``has_supplier_items`` is True when any LiteAPI / Viator / Duffel item is
+      in the cart (these have no local partner owner).
+    """
+    item_types: set[str] = set()
+    product_owners: list[uuid.UUID | None] = []
+    has_supplier_items = False
+    room_ids: list[uuid.UUID] = []
+    tour_ids: list[uuid.UUID] = []
+
+    for entry in entries:
+        item_types.add(entry.item_type)
+        if isinstance(entry, RoomItemCreate):
+            if entry.room_id:
+                room_ids.append(entry.room_id)
+            else:
+                has_supplier_items = True
+        elif isinstance(entry, TourItemCreate):
+            if entry.tour_id:
+                tour_ids.append(entry.tour_id)
+            else:
+                has_supplier_items = True
+        else:  # FlightItemCreate — always supplier-sourced (Duffel)
+            has_supplier_items = True
+
+    if room_ids:
+        rows = (
+            await db.execute(
+                select(Room.id, Hotel.owner_id)
+                .join(Hotel, Room.hotel_id == Hotel.id)
+                .where(Room.id.in_(room_ids))
+            )
+        ).all()
+        owner_by_room = {rid: owner for rid, owner in rows}
+        product_owners.extend(owner_by_room.get(rid) for rid in room_ids)
+    if tour_ids:
+        rows = (
+            await db.execute(
+                select(Tour.id, Tour.owner_id).where(Tour.id.in_(tour_ids))
+            )
+        ).all()
+        owner_by_tour = {tid: owner for tid, owner in rows}
+        product_owners.extend(owner_by_tour.get(tid) for tid in tour_ids)
+
+    return item_types, product_owners, has_supplier_items
+
+
 async def create_booking(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -743,8 +801,19 @@ async def create_booking(
         )
         discount = Decimal("0")  # already baked into running_subtotal
     elif data.voucher_code:
+        # Cart-aware voucher validation: enforce product type (UC16) and
+        # partner-product ownership (UC31). Usage is reserved here at booking
+        # creation (so a single-use voucher can't be double-applied across two
+        # pending carts) and released by cancel_pending_booking / cancel_booking
+        # if the booking is never paid — net effect: consumed only on success.
+        item_types, product_owners, has_supplier_items = await _voucher_cart_scope(
+            db, data.items
+        )
         voucher = await voucher_service.validate_voucher(
-            db, data.voucher_code, user_id, running_subtotal
+            db, data.voucher_code, user_id, running_subtotal,
+            item_types=item_types,
+            product_owners=product_owners,
+            has_supplier_items=has_supplier_items,
         )
         discount = await voucher_service.apply_voucher(db, booking, voucher, user_id)
 
@@ -1394,6 +1463,51 @@ async def cancel_pending_booking(
     for item in booking.items:
         if item.status == BookingItemStatus.pending.value:
             item.status = BookingItemStatus.cancelled.value
+
+        # Release the inventory this pending item reserved so the slot/room is
+        # immediately bookable again (no supplier call — nothing was confirmed).
+        if item.item_type == BookingItemType.tour.value and item.tour_schedule_id:
+            schedule = (
+                await db.execute(
+                    select(TourSchedule)
+                    .where(TourSchedule.id == item.tour_schedule_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if schedule:
+                schedule.booked_slots = max(0, schedule.booked_slots - item.quantity)
+        elif (
+            item.item_type == BookingItemType.room.value
+            and item.room_id and item.check_in and item.check_out
+        ):
+            for d in _daterange(item.check_in, item.check_out):
+                existing = (
+                    await db.execute(
+                        select(RoomAvailability).where(
+                            and_(
+                                RoomAvailability.room_id == item.room_id,
+                                RoomAvailability.date == d,
+                            )
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing and existing.status == RoomAvailabilityStatus.booked.value:
+                    existing.status = RoomAvailabilityStatus.available.value
+
+    # Restore redeemed loyalty points and release the voucher — the customer
+    # paid nothing, so they must not lose points or a single-use voucher to an
+    # abandoned booking. Mirrors the reversal in cancel_booking.
+    try:
+        await loyalty_service.reverse_booking_points(db, booking.id)
+        booking.points_redeemed = 0
+        booking.points_earned = 0
+    except Exception as exc:
+        logger.warning("Loyalty reversal failed for pending booking %s: %s", booking.id, exc)
+    try:
+        await voucher_service.reverse_voucher_for_booking(db, booking.id)
+    except Exception as exc:
+        logger.warning("Voucher reversal failed for pending booking %s: %s", booking.id, exc)
+
     await db.flush()
 
     if redis is not None:

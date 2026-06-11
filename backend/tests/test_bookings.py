@@ -54,6 +54,36 @@ async def test_legacy_payload_returns_400(client: AsyncClient, test_user, test_r
 
 
 @pytest.mark.asyncio
+async def test_availability_counts_room_quantity(client: AsyncClient, test_user, test_room, user_token):
+    """UC27: availability must subtract the booked ROOM QUANTITY, not row count.
+
+    test_room has total_quantity=2. A single booking item with quantity=2 fills
+    both rooms, so the endpoint must report 0 left — the previous row-count logic
+    wrongly reported 1 (one booking row < total_quantity).
+    """
+    check_in = (date.today() + timedelta(days=40)).isoformat()
+    check_out = (date.today() + timedelta(days=42)).isoformat()
+
+    res = await client.post(
+        "/api/v1/bookings",
+        json={"items": [{"item_type": "room", "room_id": str(test_room.id),
+                         "check_in": check_in, "check_out": check_out,
+                         "guests_count": 2, "quantity": 2}]},
+        headers=auth_header(user_token),
+    )
+    assert res.status_code == 201, res.text
+
+    avail = await client.get(
+        f"/api/v1/rooms/{test_room.id}/availability",
+        params={"check_in": check_in, "check_out": check_out},
+    )
+    assert avail.status_code == 200
+    body = avail.json()
+    assert body["rooms_left"] == 0
+    assert body["available"] is False
+
+
+@pytest.mark.asyncio
 async def test_create_booking_invalid_dates(client: AsyncClient, test_user, test_room, user_token):
     res = await client.post(
         "/api/v1/bookings",

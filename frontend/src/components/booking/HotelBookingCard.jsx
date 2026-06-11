@@ -209,17 +209,19 @@ export default function HotelBookingCard({ booking, fmt, canCancel, onCancel }) 
                 {t('bookings.viewHotel')}
               </Link>
             )}
-            <button
-              type="button"
-              onClick={handleDownloadPdf}
-              disabled={downloading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-700 rounded-lg hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
-            >
-              <Download className="w-3 h-3" />
-              {downloading
-                ? t('bookings.downloadingPdf', { defaultValue: 'Preparing PDF…' })
-                : t('bookings.downloadPdf', { defaultValue: 'Download PDF' })}
-            </button>
+            {['confirmed', 'completed'].includes(String(booking.status).toLowerCase()) && (
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={downloading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-700 rounded-lg hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+              >
+                <Download className="w-3 h-3" />
+                {downloading
+                  ? t('bookings.downloadingPdf', { defaultValue: 'Preparing PDF…' })
+                  : t('bookings.downloadPdf', { defaultValue: 'Download PDF' })}
+              </button>
+            )}
             {canCancel(booking.status) && (
               <button
                 onClick={(e) => {

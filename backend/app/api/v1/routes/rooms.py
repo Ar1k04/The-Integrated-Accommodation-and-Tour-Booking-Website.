@@ -202,9 +202,11 @@ async def check_room_availability(
     if not room:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
 
-    overlap_count = (
+    # Sum reserved ROOM QUANTITY (not row count): one booking item can reserve
+    # quantity > 1, so counting rows would over-report availability.
+    booked_quantity = (
         await db.execute(
-            select(func.count())
+            select(func.coalesce(func.sum(BookingItem.quantity), 0))
             .select_from(BookingItem)
             .join(Booking, BookingItem.booking_id == Booking.id)
             .where(
@@ -217,7 +219,7 @@ async def check_room_availability(
         )
     ).scalar() or 0
 
-    rooms_left = room.total_quantity - overlap_count
+    rooms_left = room.total_quantity - booked_quantity
     return RoomAvailabilityResponse(available=rooms_left > 0, rooms_left=max(rooms_left, 0))
 
 

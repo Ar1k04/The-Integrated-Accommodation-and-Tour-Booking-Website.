@@ -12,7 +12,7 @@ import { formatCurrency } from '@/utils/formatters'
 import { Link } from 'react-router-dom'
 import { ROOM_TYPES, CURRENCIES, DEFAULT_CURRENCY } from '@/utils/constants'
 import {
-  Plus, Search, Pencil, Trash2, ChevronLeft, ChevronRight, X,
+  Plus, Search, Pencil, Trash2, ChevronLeft, ChevronRight, X, Upload,
 } from 'lucide-react'
 
 export default function ManageRooms() {
@@ -51,7 +51,24 @@ export default function ManageRooms() {
   })
 
   const saveMut = useMutation({
-    mutationFn: ({ id, data }) => id ? roomsApi.update(id, data) : roomsApi.create(selectedHotel, data),
+    mutationFn: async ({ id, data, files, imageOrder }) => {
+      const res = id ? await roomsApi.update(id, data) : await roomsApi.create(selectedHotel, data)
+      const roomId = res.data?.id || id
+      if (files?.length && roomId) {
+        const fd = new FormData()
+        files.forEach((f) => fd.append('files', f))
+        const uploadRes = await roomsApi.uploadImages(roomId, fd)
+        const allUrls = uploadRes.data?.images || []
+        const newUrls = allUrls.slice(-(files.length))
+        let newIdx = 0
+        const finalImages = imageOrder.map((item) =>
+          item.type === 'existing' ? item.url : newUrls[newIdx++]
+        )
+        await roomsApi.update(roomId, { images: finalImages })
+        return uploadRes
+      }
+      return res
+    },
     onSuccess: () => { toast.success('Saved'); setModal(null); qc.invalidateQueries({ queryKey: ['admin-rooms'] }) },
     onError: (err) => {
       const detail = err.response?.data?.detail
@@ -164,7 +181,7 @@ export default function ManageRooms() {
           room={modal}
           hotelCurrency={hotelsData?.find((h) => h.id === selectedHotel)?.currency || DEFAULT_CURRENCY}
           onClose={() => setModal(null)}
-          onSave={(data) => saveMut.mutate({ id: modal.id, data })}
+          onSave={(data, files, imageOrder) => saveMut.mutate({ id: modal.id, data, files, imageOrder })}
           saving={saveMut.isPending}
         />
       )}
@@ -200,17 +217,54 @@ function RoomModal({ room, hotelCurrency, onClose, onSave, saving }) {
     setForm({ ...form, child_age_tiers: next })
   }
 
+  const [images, setImages] = useState(() =>
+    (room.images || []).map((url) => ({ type: 'existing', url }))
+  )
+
+  const handleFiles = (e) => {
+    const selected = Array.from(e.target.files || [])
+    const newItems = selected.map((f) => ({ type: 'new', file: f, preview: URL.createObjectURL(f) }))
+    setImages((prev) => [...prev, ...newItems])
+  }
+
+  const removeImage = (idx) => {
+    setImages((prev) => {
+      const item = prev[idx]
+      if (item.type === 'new') URL.revokeObjectURL(item.preview)
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
+
+  const setAsThumbnail = (idx) => {
+    if (idx === 0) return
+    setImages((prev) => {
+      const reordered = [...prev]
+      const [moved] = reordered.splice(idx, 1)
+      reordered.unshift(moved)
+      return reordered
+    })
+  }
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    const payload = { ...form }
+    payload.images = images.filter((img) => img.type === 'existing').map((img) => img.url)
+    const newFiles = images.filter((img) => img.type === 'new').map((img) => img.file)
+    const imageOrder = images.map((img) => ({ type: img.type, url: img.url }))
+    onSave(payload, newFiles, imageOrder)
+  }
+
   const modalTitle = room.id ? t('actions.editRoom') : t('actions.newRoom')
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-labelledby="room-modal-title"
-        className="bg-white rounded-xl w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+        className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 id="room-modal-title" className="font-heading font-bold text-lg">{modalTitle}</h2>
           <button onClick={onClose} aria-label={t('actions.cancel')}><X className="w-5 h-5" aria-hidden="true" /></button>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); onSave(form) }} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('form.name')}</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
@@ -340,6 +394,53 @@ function RoomModal({ room, hotelCurrency, onClose, onSave, saving }) {
                 </div>
               </div>
             )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">{t('form.images')}</label>
+              {images.length > 1 && (
+                <span className="text-xs text-gray-400">{t('actions.setAsThumbnail')}</span>
+              )}
+            </div>
+            {images.length > 0 && (
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                {images.map((item, idx) => {
+                  const isThumbnail = idx === 0
+                  const src = item.type === 'existing' ? item.url : item.preview
+                  return (
+                    <div key={`${item.type}-${idx}`}
+                      className={`relative group aspect-square rounded-lg overflow-hidden cursor-pointer transition-all ${isThumbnail ? 'ring-2 ring-primary ring-offset-1' : 'border hover:ring-1 hover:ring-gray-300'}`}
+                      onClick={() => setAsThumbnail(idx)}>
+                      <img src={src} alt="" className="w-full h-full object-cover" />
+                      {isThumbnail && (
+                        <span className="absolute top-1 left-1 bg-primary text-white text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                          {t('actions.thumbnail')}
+                        </span>
+                      )}
+                      {!isThumbnail && (
+                        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <span className="text-white text-[10px] font-medium">{t('actions.setAsThumbnail')}</span>
+                        </span>
+                      )}
+                      <button type="button"
+                        onClick={(e) => { e.stopPropagation(); removeImage(idx) }}
+                        className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <X className="w-3 h-3" />
+                      </button>
+                      {item.type === 'new' && (
+                        <span className="absolute bottom-0 inset-x-0 bg-accent/80 text-white text-[10px] text-center py-0.5">New</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <label className="flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-lg py-4 cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
+              <Upload className="w-4 h-4 text-gray-400" aria-hidden="true" />
+              <span className="text-sm text-gray-500">{t('actions.uploadImages')}</span>
+              <input type="file" multiple accept="image/*" onChange={handleFiles} className="hidden" aria-label={t('actions.uploadImages')} />
+            </label>
           </div>
 
           <div className="flex gap-3 pt-2">

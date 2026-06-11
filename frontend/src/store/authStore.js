@@ -80,6 +80,14 @@ export const useAuthStore = create((set, get) => ({
     return res.data
   },
 
+  uploadAvatar: async (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await authApi.uploadAvatar(formData)
+    set({ user: res.data })
+    return res.data
+  },
+
   initialize: async () => {
     set({ isLoading: true })
     await get().refreshToken()

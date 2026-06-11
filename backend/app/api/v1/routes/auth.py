@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, File, HTTPException, Request, Response, UploadFile, status
 from app.core.rate_limit import limiter
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -272,6 +272,21 @@ async def update_me(
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(current_user, field, value)
+    await db.flush()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.post("/me/avatar", response_model=UserResponse)
+async def upload_avatar(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user=Depends(get_current_user),
+    file: UploadFile = File(...),
+):
+    from app.services.cloudinary_service import upload_image
+
+    url = await upload_image(file, folder="avatars")
+    current_user.avatar_url = url
     await db.flush()
     await db.refresh(current_user)
     return current_user

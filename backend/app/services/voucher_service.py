@@ -22,12 +22,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.booking import Booking
+from app.models.user import User, UserRole
 from app.models.voucher import (
     Voucher,
     VoucherLiteAPISyncStatus,
     VoucherStatus,
 )
 from app.models.voucher_usage import VoucherUsage
+
+# Voucher `applicable_to` uses "hotel" while booking items use "room" — map so
+# product-type validation lines up across the two naming conventions.
+_APPLICABLE_TO_ITEM_TYPE = {"hotel": "room", "tour": "tour", "flight": "flight"}
 from app.services import liteapi_service
 
 logger = logging.getLogger(__name__)
@@ -97,8 +102,21 @@ async def validate_voucher(
     code: str,
     user_id: uuid.UUID,
     subtotal: Decimal,
+    *,
+    item_types: set[str] | None = None,
+    product_owners: list[uuid.UUID | None] | None = None,
+    has_supplier_items: bool = False,
 ) -> Voucher:
-    """Fetch the voucher, check it is usable by this user for this subtotal."""
+    """Fetch the voucher, check it is usable by this user for this subtotal.
+
+    When ``item_types`` / ``product_owners`` are supplied (booking flow), also
+    enforces two cart-aware rules:
+
+    - **Product type (UC16):** a category-specific voucher (``applicable_to`` of
+      hotel/tour/flight) only applies when every cart item is of that type.
+    - **Partner ownership (UC31):** a voucher created by a partner only applies
+      to that partner's own products. Platform-admin vouchers stay global.
+    """
 
     # Lock the voucher row for the remainder of the transaction so two
     # concurrent redemptions can't both pass the max_uses / budget checks
@@ -143,6 +161,28 @@ async def validate_voucher(
     ).scalar_one_or_none()
     if existing_usage:
         raise VoucherError("You have already used this voucher")
+
+    # Product-type restriction (UC16): a category-specific voucher only applies
+    # when the cart is entirely of that product type.
+    if item_types is not None and voucher.applicable_to != "all":
+        required = _APPLICABLE_TO_ITEM_TYPE.get(voucher.applicable_to, voucher.applicable_to)
+        if item_types != {required}:
+            raise VoucherError(
+                f"This voucher only applies to {voucher.applicable_to} bookings"
+            )
+
+    # Partner ownership (UC31): a voucher created by a partner only applies to
+    # that partner's own products. Platform-admin (global) vouchers are exempt.
+    if product_owners is not None or has_supplier_items:
+        creator = (
+            await db.execute(select(User).where(User.id == voucher.admin_id))
+        ).scalar_one_or_none()
+        if creator is not None and creator.role == UserRole.partner.value:
+            owners = product_owners or []
+            if has_supplier_items or not owners or any(o != voucher.admin_id for o in owners):
+                raise VoucherError(
+                    "This voucher only applies to the partner's own products"
+                )
 
     return voucher
 

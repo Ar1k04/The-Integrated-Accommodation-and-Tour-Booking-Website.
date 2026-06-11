@@ -30,6 +30,9 @@ from app.schemas.tour import (
     TourCreate,
     TourListResponse,
     TourResponse,
+    TourScheduleCreate,
+    TourScheduleResponse,
+    TourScheduleUpdate,
     TourUpdate,
     ViatorDestinationsResponse,
     ViatorTagsResponse,
@@ -892,3 +895,136 @@ async def upload_tour_images(
     await db.flush()
     await db.refresh(tour)
     return _tour_response(tour)
+
+
+# ───────────────────────── Tour schedule CRUD (UC29) ──────────────────────────
+# Partners pre-define which dates a tour runs and the per-day capacity, instead
+# of relying on the booking flow to lazily create a schedule row at full
+# `max_participants`. Owner-gated, mirroring the tour CRUD above.
+
+
+async def _load_owned_tour(db: AsyncSession, tour_id: uuid.UUID, current_user) -> Tour:
+    tour = (
+        await db.execute(select(Tour).where(Tour.id == tour_id))
+    ).scalar_one_or_none()
+    if not tour:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
+    _assert_tour_owner_or_admin(tour, current_user)
+    return tour
+
+
+@router.get("/{tour_id}/schedules", response_model=list[TourScheduleResponse])
+async def list_tour_schedules(
+    tour_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: StaffUser,
+):
+    await _load_owned_tour(db, tour_id, current_user)
+    rows = (
+        await db.execute(
+            select(TourSchedule)
+            .where(TourSchedule.tour_id == tour_id)
+            .order_by(TourSchedule.available_date.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@router.post(
+    "/{tour_id}/schedules",
+    response_model=TourScheduleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upsert_tour_schedule(
+    tour_id: uuid.UUID,
+    data: TourScheduleCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: StaffUser,
+):
+    await _load_owned_tour(db, tour_id, current_user)
+    schedule = (
+        await db.execute(
+            select(TourSchedule).where(
+                TourSchedule.tour_id == tour_id,
+                TourSchedule.available_date == data.available_date,
+            ).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if schedule is None:
+        schedule = TourSchedule(
+            tour_id=tour_id,
+            available_date=data.available_date,
+            total_slots=data.total_slots,
+            booked_slots=0,
+        )
+        db.add(schedule)
+    else:
+        if data.total_slots < schedule.booked_slots:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Capacity cannot be below {schedule.booked_slots} already-booked slots",
+            )
+        schedule.total_slots = data.total_slots
+    await db.flush()
+    await db.refresh(schedule)
+    return schedule
+
+
+@router.patch("/{tour_id}/schedules/{schedule_date}", response_model=TourScheduleResponse)
+async def update_tour_schedule(
+    tour_id: uuid.UUID,
+    schedule_date: date,
+    data: TourScheduleUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: StaffUser,
+):
+    await _load_owned_tour(db, tour_id, current_user)
+    schedule = (
+        await db.execute(
+            select(TourSchedule).where(
+                TourSchedule.tour_id == tour_id,
+                TourSchedule.available_date == schedule_date,
+            ).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+    if data.total_slots < schedule.booked_slots:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Capacity cannot be below {schedule.booked_slots} already-booked slots",
+        )
+    schedule.total_slots = data.total_slots
+    await db.flush()
+    await db.refresh(schedule)
+    return schedule
+
+
+@router.delete(
+    "/{tour_id}/schedules/{schedule_date}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_tour_schedule(
+    tour_id: uuid.UUID,
+    schedule_date: date,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: StaffUser,
+):
+    await _load_owned_tour(db, tour_id, current_user)
+    schedule = (
+        await db.execute(
+            select(TourSchedule).where(
+                TourSchedule.tour_id == tour_id,
+                TourSchedule.available_date == schedule_date,
+            ).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+    if schedule.booked_slots > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete a date that already has bookings",
+        )
+    await db.delete(schedule)
+    await db.flush()

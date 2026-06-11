@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -169,6 +169,25 @@ class TourAvailabilityResponse(BaseModel):
 class TourListResponse(BaseModel):
     items: list[TourResponse]
     meta: dict
+
+
+class TourScheduleResponse(BaseModel):
+    id: uuid.UUID
+    tour_id: uuid.UUID
+    available_date: date
+    total_slots: int
+    booked_slots: int
+
+    model_config = {"from_attributes": True}
+
+
+class TourScheduleCreate(BaseModel):
+    available_date: date
+    total_slots: int = Field(..., ge=0)
+
+
+class TourScheduleUpdate(BaseModel):
+    total_slots: int = Field(..., ge=0)
 
 
 class ViatorTag(BaseModel):

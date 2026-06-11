@@ -273,6 +273,99 @@ function AgeBandEditor({ bands, onChange, t }) {
   )
 }
 
+// UC29: lets a partner pre-define which dates a tour runs and the per-day
+// capacity. Only available once the tour exists (needs a tour id).
+function ScheduleManager({ tourId, t }) {
+  const qc = useQueryClient()
+  const [newDate, setNewDate] = useState('')
+  const [newSlots, setNewSlots] = useState(20)
+
+  const { data: schedules = [], isLoading } = useQuery({
+    queryKey: ['tour-schedules', tourId],
+    queryFn: () => toursApi.listSchedules(tourId).then((r) => r.data),
+    enabled: !!tourId,
+  })
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['tour-schedules', tourId] })
+
+  const upsertMut = useMutation({
+    mutationFn: ({ available_date, total_slots }) =>
+      toursApi.upsertSchedule(tourId, { available_date, total_slots }),
+    onSuccess: () => { toast.success(t('actions.saved', { defaultValue: 'Saved' })); invalidate() },
+    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to save schedule'),
+  })
+  const updateMut = useMutation({
+    mutationFn: ({ date, total_slots }) =>
+      toursApi.updateSchedule(tourId, date, { total_slots }),
+    onSuccess: invalidate,
+    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to update capacity'),
+  })
+  const deleteMut = useMutation({
+    mutationFn: (date) => toursApi.deleteSchedule(tourId, date),
+    onSuccess: invalidate,
+    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to delete date'),
+  })
+
+  const addSchedule = () => {
+    if (!newDate) { toast.error(t('form.scheduleNeedsDate', { defaultValue: 'Pick a date first' })); return }
+    upsertMut.mutate({ available_date: newDate, total_slots: Number(newSlots) })
+    setNewDate('')
+  }
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {t('form.schedules', { defaultValue: 'Schedules & capacity' })}
+      </label>
+      <p className="text-xs text-gray-500 mb-2">
+        {t('form.scheduleHelp', { defaultValue: 'Set the dates this tour runs and how many spots each date has. Dates without a schedule fall back to the max participants.' })}
+      </p>
+
+      <div className="flex items-end gap-2 mb-3">
+        <div className="flex-1">
+          <label className="block text-xs text-gray-400 mb-0.5">{t('form.date', { defaultValue: 'Date' })}</label>
+          <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div className="w-24">
+          <label className="block text-xs text-gray-400 mb-0.5">{t('form.capacity', { defaultValue: 'Capacity' })}</label>
+          <input type="number" min={0} value={newSlots} onChange={(e) => setNewSlots(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <button type="button" onClick={addSchedule} disabled={upsertMut.isPending}
+          className="px-3 py-2 bg-primary hover:bg-primary-dark text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-1">
+          <Plus className="w-4 h-4" /> {t('actions.add', { defaultValue: 'Add' })}
+        </button>
+      </div>
+
+      {isLoading ? (
+        <Skeleton className="h-10 rounded-lg" />
+      ) : schedules.length === 0 ? (
+        <p className="text-xs text-gray-400">{t('empty.noSchedules', { defaultValue: 'No dates defined yet.' })}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {schedules.map((s) => (
+            <div key={s.id} className="grid grid-cols-[1fr_90px_90px_32px] gap-2 items-center text-sm">
+              <span className="text-gray-700">{s.available_date}</span>
+              <input type="number" min={s.booked_slots} defaultValue={s.total_slots}
+                onBlur={(e) => {
+                  const v = Number(e.target.value)
+                  if (v !== s.total_slots) updateMut.mutate({ date: s.available_date, total_slots: v })
+                }}
+                className="border rounded-lg px-2 py-1.5 text-sm" />
+              <span className="text-xs text-gray-400">{t('form.booked', { defaultValue: 'booked' })}: {s.booked_slots}</span>
+              <button type="button" onClick={() => deleteMut.mutate(s.available_date)} disabled={s.booked_slots > 0}
+                className="p-1.5 text-gray-400 hover:text-error disabled:opacity-20 disabled:cursor-not-allowed" aria-label="Remove date">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const DEFAULT_BANDS = [{ age_band: 'ADULT', start_age: 18, end_age: 99, price: '' }]
 
 function TourModal({ tour, onClose, onSave, saving }) {
@@ -478,6 +571,13 @@ function TourModal({ tour, onClose, onSave, saving }) {
 
           <hr />
           <AgeBandEditor bands={form.age_bands} onChange={(v) => set({ age_bands: v })} t={t} />
+
+          {tour.id && (
+            <>
+              <hr />
+              <ScheduleManager tourId={tour.id} t={t} />
+            </>
+          )}
 
           <hr />
           <StringListEditor label={t('form.highlights')} items={form.highlights} onChange={(v) => set({ highlights: v })}

@@ -12,5 +12,9 @@ export const authApi = {
   getMe: (token) =>
     api.get('/auth/me', token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
   updateMe: (data) => api.patch('/auth/me', data),
+  uploadAvatar: (formData) =>
+    api.post('/auth/me/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
   changePassword: (data) => api.post('/auth/password/change', data),
 }
