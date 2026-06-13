@@ -475,13 +475,25 @@ async def delete_voucher(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: StaffUser,
 ):
+    # Lock the row so a concurrent redemption cannot bump used_count between the
+    # check below and the delete (which would cascade-delete the new usage row).
     voucher = (
-        await db.execute(select(Voucher).where(Voucher.id == voucher_id))
+        await db.execute(
+            select(Voucher).where(Voucher.id == voucher_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if not voucher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voucher not found")
     if current_user.role != "admin" and voucher.admin_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your voucher")
+    # A used voucher carries usage history that a DELETE would silently
+    # cascade-delete. Refuse it; the caller should disable the voucher instead
+    # (PATCH /vouchers/{id}/status -> disabled). DELETE must never auto-disable.
+    if voucher.used_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Voucher has been used; disable it instead of deleting.",
+        )
     # If synced, drop the supplier copy first to avoid orphans.
     if voucher.liteapi_voucher_id:
         try:

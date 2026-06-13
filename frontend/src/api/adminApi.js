@@ -4,7 +4,8 @@ export const adminApi = {
   getStats: (params) => api.get('/admin/stats', { params }),
   listUsers: (params) => api.get('/admin/users', { params }),
   getUser: (id) => api.get(`/admin/users/${id}`),
-  updateUser: (id, data) => api.patch(`/admin/users/${id}`, data),
+  updateUser: (id, data, force = false) =>
+    api.patch(`/admin/users/${id}${force ? '?force=true' : ''}`, data),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   listBookings: (params) => api.get('/admin/bookings', { params }),
   updateBooking: (id, status) => api.patch(`/admin/bookings/${id}?status=${status}`),

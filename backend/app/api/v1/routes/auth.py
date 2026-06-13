@@ -213,7 +213,7 @@ async def forgot_password(
     user = result.scalar_one_or_none()
 
     if user:
-        token = create_password_reset_token(user.id)
+        token = create_password_reset_token(user)
         reset_link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
         background_tasks.add_task(_send_reset_email, user.email, reset_link)
 
@@ -228,14 +228,12 @@ async def reset_password(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     try:
-        user_id = verify_password_reset_token(data.token)
+        # Verify (row-locked) and reset in one transaction so the token is
+        # single-use and concurrent resets cannot race on the same token.
+        user = await verify_password_reset_token(db, data.token)
+        await reset_user_password(db, user, data.new_password)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    try:
-        await reset_user_password(db, user_id, data.new_password)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
     return {"message": "Password has been reset successfully."}
 

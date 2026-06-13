@@ -10,14 +10,17 @@ import { isValidEmail } from '@/utils/validators'
 
 export default function ForgotPasswordPage() {
   const { t } = useTranslation('auth')
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+  // A logged-in Google account has no local password; let it through to set a
+  // first one via the email reset flow. Normal logged-in users still bounce home.
+  const needsFirstPassword = user?.has_password === false
 
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(user?.email || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
 
-  if (isAuthenticated) return <Navigate to="/" replace />
+  if (isAuthenticated && !needsFirstPassword) return <Navigate to="/" replace />
 
   const handleSubmit = async (e) => {
     e.preventDefault()

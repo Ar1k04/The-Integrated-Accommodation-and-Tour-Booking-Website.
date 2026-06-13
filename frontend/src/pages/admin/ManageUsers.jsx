@@ -32,9 +32,20 @@ export default function ManageUsers() {
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ id, data }) => adminApi.updateUser(id, data),
+    mutationFn: ({ id, data, force }) => adminApi.updateUser(id, data, force),
     onSuccess: () => { toast.success('User updated'); setModal(null); qc.invalidateQueries({ queryKey: ['admin-users'] }) },
-    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to update'),
+    onError: (err, variables) => {
+      const detail = err.response?.data?.detail
+      // Deactivating a user with active bookings is blocked (409) unless forced.
+      // Confirm with the admin, then retry the same change with force=true.
+      if (err.response?.status === 409 && /force/i.test(detail || '') && !variables?.force) {
+        if (confirm(`${detail}\n\nDeactivate anyway?`)) {
+          updateMut.mutate({ ...variables, force: true })
+        }
+        return
+      }
+      toast.error(detail || 'Failed to update')
+    },
   })
 
   const users = data?.items || []

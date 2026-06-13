@@ -43,6 +43,15 @@ class User(Base):
         """Alias matching the target schema (docs/Project.sql). Backed by loyalty_points."""
         return self.loyalty_points
 
+    @property
+    def has_password(self) -> bool:
+        """True when the account has a local password (False for Google-only).
+
+        Lets the client hide the change-password form for OAuth-only accounts
+        and route them to the reset flow instead.
+        """
+        return self.hashed_password is not None
+
     bookings = relationship("Booking", back_populates="user", lazy="selectin")
     reviews = relationship("Review", back_populates="user", lazy="selectin")
     wishlists = relationship("Wishlist", back_populates="user", lazy="selectin")

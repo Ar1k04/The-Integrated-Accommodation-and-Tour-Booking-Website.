@@ -11,6 +11,7 @@ export function useAuth() {
   const refreshToken = useAuthStore((s) => s.refreshToken)
   const updateProfile = useAuthStore((s) => s.updateProfile)
   const uploadAvatar = useAuthStore((s) => s.uploadAvatar)
+  const refreshUser = useAuthStore((s) => s.refreshUser)
 
   // Any platform staff (partner = hotel/tour owner, admin = platform admin)
   const isStaff = user?.role === 'partner' || user?.role === 'admin'
@@ -35,5 +36,6 @@ export function useAuth() {
     refreshToken,
     updateProfile,
     uploadAvatar,
+    refreshUser,
   }
 }

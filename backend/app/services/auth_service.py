@@ -217,15 +217,39 @@ async def validate_refresh_token(redis, token: str) -> dict:
     return payload
 
 
-def create_password_reset_token(user_id: uuid.UUID) -> str:
+def _password_fingerprint(hashed_password: str | None) -> str:
+    """Short, stable fingerprint of a user's password hash.
+
+    Embedded in the reset token so the token becomes single-use: once the
+    password is reset the hash (and thus this fingerprint) changes, and the
+    original token no longer matches. Empty for OAuth users with no local hash.
+    """
+    import hashlib
+
+    return hashlib.sha256((hashed_password or "").encode("utf-8")).hexdigest()[:16]
+
+
+def create_password_reset_token(user: User) -> str:
     from jose import jwt as jose_jwt
 
     expire = datetime.now(timezone.utc) + timedelta(hours=1)
-    payload = {"sub": str(user_id), "exp": expire, "type": "password_reset"}
+    payload = {
+        "sub": str(user.id),
+        "exp": expire,
+        "type": "password_reset",
+        "pf": _password_fingerprint(user.hashed_password),
+    }
     return jose_jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def verify_password_reset_token(token: str) -> str:
+async def verify_password_reset_token(db: AsyncSession, token: str) -> User:
+    """Validate a single-use reset token and return the row-locked User.
+
+    The user row is loaded with ``SELECT ... FOR UPDATE`` so two concurrent
+    reset requests serialize: the first commits a new hash, the second re-reads
+    the locked row and sees a changed fingerprint, so it is rejected. The caller
+    must reset the password on the returned object within the same transaction.
+    """
     try:
         payload = decode_token(token)
     except ValueError as exc:
@@ -237,14 +261,27 @@ def verify_password_reset_token(token: str) -> str:
     user_id = payload.get("sub")
     if not user_id:
         raise ValueError("Malformed token")
-    return user_id
 
+    fingerprint = payload.get("pf")
+    if not fingerprint:
+        # Legacy tokens minted before single-use enforcement carry no
+        # fingerprint and must be rejected so they cannot bypass the check.
+        raise ValueError("Invalid or expired reset token")
 
-async def reset_user_password(db: AsyncSession, user_id: str, new_password: str) -> None:
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    result = await db.execute(
+        select(User).where(User.id == uuid.UUID(user_id)).with_for_update()
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError("User not found")
+
+    if fingerprint != _password_fingerprint(user.hashed_password):
+        raise ValueError("Invalid or expired reset token")
+
+    return user
+
+
+async def reset_user_password(db: AsyncSession, user: User, new_password: str) -> None:
     user.hashed_password = hash_password(new_password)
     await db.flush()
 
@@ -264,6 +301,8 @@ async def change_user_password(
         )
     if not verify_password(current_password, user.hashed_password):
         raise ValueError("Current password is incorrect")
+    if verify_password(new_password, user.hashed_password):
+        raise ValueError("New password must be different from the current password")
     user.hashed_password = hash_password(new_password)
     await db.flush()
 

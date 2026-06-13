@@ -74,6 +74,12 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  refreshUser: async () => {
+    const me = await authApi.getMe(get().accessToken)
+    set({ user: me.data })
+    return me.data
+  },
+
   updateProfile: async (data) => {
     const res = await authApi.updateMe(data)
     set({ user: res.data })

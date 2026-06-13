@@ -113,13 +113,33 @@ export default function ManageVouchers() {
     onError: (err) => toast.error(err.response?.data?.detail || 'Failed to update'),
   })
 
+  const disableMut = useMutation({
+    mutationFn: (id) => vouchersApi.toggleStatus(id, 'disabled'),
+    onSuccess: () => {
+      toast.success('Voucher disabled')
+      qc.invalidateQueries({ queryKey: ['admin-vouchers'] })
+    },
+    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to disable'),
+  })
+
   const deleteMut = useMutation({
     mutationFn: (id) => vouchersApi.delete(id),
     onSuccess: () => {
       toast.success('Voucher deleted')
       qc.invalidateQueries({ queryKey: ['admin-vouchers'] })
     },
-    onError: (err) => toast.error(err.response?.data?.detail || 'Failed to delete'),
+    onError: (err, id) => {
+      const detail = err.response?.data?.detail
+      // A used voucher can't be deleted (it would drop usage history). Offer to
+      // disable it instead, which is the supported way to retire it.
+      if (err.response?.status === 409) {
+        if (confirm(`${detail}\n\nDisable this voucher instead?`)) {
+          disableMut.mutate(id)
+        }
+        return
+      }
+      toast.error(detail || 'Failed to delete')
+    },
   })
 
   const syncMut = useMutation({

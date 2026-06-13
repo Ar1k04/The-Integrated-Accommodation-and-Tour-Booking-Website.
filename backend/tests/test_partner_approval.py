@@ -128,12 +128,15 @@ async def test_partner_confirm_rejects_bad_token(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_partner_confirm_wrong_token_type_rejected(client: AsyncClient):
     """A password-reset token must not double as a partner-confirm token."""
+    from app.models.user import User
     from app.services.auth_service import create_password_reset_token
 
     email = f"wrongtype-{uuid.uuid4().hex[:8]}@example.com"
     token = (await _register_partner(client, email))["access_token"]
     uid = (await client.get("/api/v1/auth/me", headers=auth_header(token))).json()["id"]
 
-    reset_token = create_password_reset_token(uuid.UUID(uid))
+    reset_token = create_password_reset_token(
+        User(id=uuid.UUID(uid), email=email, hashed_password=None)
+    )
     res = await client.post("/api/v1/auth/partner/confirm", json={"token": reset_token})
     assert res.status_code == 400

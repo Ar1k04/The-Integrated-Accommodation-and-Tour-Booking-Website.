@@ -820,8 +820,29 @@ function PasswordField({ label, value, onChange }) {
 }
 
 function SecurityTab() {
+  const { user } = useAuth()
   const [form, setForm] = useState({ current_password: '', new_password: '', confirm_password: '' })
   const [saving, setSaving] = useState(false)
+
+  // Google-only accounts have no local password: hide the change form and
+  // route them to the reset flow to set a first password.
+  if (user && user.has_password === false) {
+    return (
+      <div className="max-w-lg">
+        <div className="bg-white rounded-xl border p-6">
+          <h3 className="font-heading font-bold text-lg mb-2">Change Password</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Your account uses Google sign-in, so there is no password to change.
+            To set a local password, use the password reset flow.
+          </p>
+          <Link to="/forgot-password"
+            className="inline-block bg-primary hover:bg-primary-dark text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors">
+            Set a password via reset
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   const handleChangePassword = async (e) => {
     e.preventDefault()

@@ -13,14 +13,18 @@ from app.services.cloudinary_service import upload_image, upload_images
 pytestmark = pytest.mark.nodb
 
 
+JPEG_MAGIC = b"\xff\xd8\xff\xe0"
+
+
 class _FakeUpload:
-    """Đóng vai fastapi.UploadFile với .read() async."""
+    """Đóng vai fastapi.UploadFile với .read(size) async (bytes hợp lệ JPEG)."""
 
-    def __init__(self, data=b"imgdata"):
+    def __init__(self, data=JPEG_MAGIC + b"imgdata", content_type="image/jpeg"):
         self._data = data
+        self.content_type = content_type
 
-    async def read(self):
-        return self._data
+    async def read(self, n=-1):
+        return self._data if n is None or n < 0 else self._data[:n]
 
 
 async def test_upload_image_returns_secure_url(monkeypatch):
@@ -33,9 +37,10 @@ async def test_upload_image_returns_secure_url(monkeypatch):
 
     monkeypatch.setattr(cloudinary_service.cloudinary.uploader, "upload", _fake_upload)
 
-    url = await upload_image(_FakeUpload(b"bytes"), folder="hotels")
+    payload = JPEG_MAGIC + b"bytes"
+    url = await upload_image(_FakeUpload(payload), folder="hotels")
     assert url == "https://cdn.example/abc.jpg"
-    assert captured["contents"] == b"bytes"
+    assert captured["contents"] == payload
     assert captured["kwargs"]["folder"] == "hotels"
 
 

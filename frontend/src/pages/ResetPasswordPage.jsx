@@ -10,7 +10,10 @@ import { isStrongPassword } from '@/utils/validators'
 
 export default function ResetPasswordPage() {
   const { t } = useTranslation('auth')
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user, refreshUser } = useAuth()
+  // A logged-in Google account (no local password) may follow the reset link to
+  // set a first password; normal logged-in users are redirected away.
+  const needsFirstPassword = user?.has_password === false
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const token = params.get('token') || ''
@@ -21,7 +24,7 @@ export default function ResetPasswordPage() {
   const [errors, setErrors] = useState({})
   const [done, setDone] = useState(false)
 
-  if (isAuthenticated) return <Navigate to="/" replace />
+  if (isAuthenticated && !needsFirstPassword) return <Navigate to="/" replace />
 
   const validate = () => {
     const errs = {}
@@ -38,8 +41,16 @@ export default function ResetPasswordPage() {
     setLoading(true)
     try {
       await authApi.resetPassword({ token, new_password: form.password })
-      setDone(true)
       toast.success(t('resetPassword.success'))
+      if (isAuthenticated) {
+        // A logged-in Google account just set a first password: refresh the
+        // cached user so has_password flips to true (the profile stops showing
+        // "Set a password") and return them to the security tab.
+        try { await refreshUser() } catch { /* non-fatal */ }
+        navigate('/profile?tab=security', { replace: true })
+        return
+      }
+      setDone(true)
       setTimeout(() => navigate('/login', { replace: true }), 2000)
     } catch (err) {
       const detail = err.response?.data?.detail
@@ -73,7 +84,12 @@ export default function ResetPasswordPage() {
             ) : (
               <>
                 {errors.server && (
-                  <div role="alert" className="bg-red-50 text-error text-sm px-4 py-3 rounded-lg mt-6 mb-2">{errors.server}</div>
+                  <div role="alert" className="bg-red-50 text-error text-sm px-4 py-3 rounded-lg mt-6 mb-2">
+                    {errors.server}
+                    <Link to="/forgot-password" className="block mt-2 font-semibold text-primary hover:underline">
+                      {t('resetPassword.requestNewLink', 'Request a new reset link')}
+                    </Link>
+                  </div>
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-5 mt-6" noValidate>

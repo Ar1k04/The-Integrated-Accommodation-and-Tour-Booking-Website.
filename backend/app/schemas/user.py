@@ -53,6 +53,8 @@ class UserResponse(BaseModel):
     loyalty_points: int
     preferred_locale: str = "en"
     preferred_currency: str = "USD"
+    # False for Google-only accounts; lets the client hide the change-password form.
+    has_password: bool = True
     created_at: datetime
     updated_at: datetime
 

@@ -38,6 +38,16 @@ def _has_liteapi_item(booking: Booking) -> bool:
     )
 
 
+async def _count_user_bookings(
+    db: AsyncSession, user_id: uuid.UUID, *, statuses: list[str] | None = None
+) -> int:
+    """Count a user's bookings, optionally restricted to given statuses."""
+    stmt = select(func.count()).select_from(Booking).where(Booking.user_id == user_id)
+    if statuses is not None:
+        stmt = stmt.where(Booking.status.in_(statuses))
+    return (await db.execute(stmt)).scalar_one()
+
+
 def _is_liteapi_only(booking: Booking) -> bool:
     """True when every item in the booking is LiteAPI-sourced."""
     if not booking.items:
@@ -238,13 +248,51 @@ async def update_user(
     data: UserUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: AdminUser,
+    force: bool = Query(
+        False,
+        description="Deactivate even if the user has active (pending/confirmed) bookings.",
+    ),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+    is_self = user.id == current_user.id
+
+    # An admin must not lock themselves out: no self-deactivation or self-demotion.
+    if is_self and payload.get("is_active") is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot deactivate your own account.",
+        )
+    if is_self and "role" in payload and payload["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot remove your own admin role.",
+        )
+    # Admin accounts are protected from arbitrary deactivation/demotion by peers.
+    if not is_self and user.role == "admin":
+        if payload.get("is_active") is False or (
+            "role" in payload and payload["role"] != "admin"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin accounts cannot be deactivated or demoted.",
+            )
+    # Warn (block) before deactivating a user who still has live bookings.
+    if payload.get("is_active") is False and not force:
+        active = await _count_user_bookings(
+            db, user.id, statuses=["pending", "confirmed"]
+        )
+        if active > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User has active bookings; pass force=true to deactivate.",
+            )
+
+    for field, value in payload.items():
         setattr(user, field, value)
     await db.flush()
     await db.refresh(user)
@@ -261,6 +309,23 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account.",
+        )
+    if user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin accounts cannot be deleted.",
+        )
+    # Deleting a user cascades to their bookings, destroying records. A user with
+    # any booking history must be deactivated, not hard-deleted (no force flag).
+    if await _count_user_bookings(db, user.id) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User has bookings; deactivate instead of deleting.",
+        )
     await db.delete(user)
     await db.flush()
 
@@ -549,6 +614,43 @@ async def list_loyalty_tiers(
     return [LoyaltyTierResponse.model_validate(t) for t in rows]
 
 
+def _validate_loyalty_tier_set(ranges: list[tuple[int, int]]) -> None:
+    """Validate the whole set of (min_points, max_points) tier ranges.
+
+    ``max_points == 0`` means "no upper bound" and is allowed only for the
+    single highest tier. min_points must be unique and strictly increasing, and
+    ranges must not overlap.
+    """
+    if not ranges:
+        return
+    mins = [mn for mn, _ in ranges]
+    if len(set(mins)) != len(mins):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Loyalty tiers must have unique, increasing min_points.",
+        )
+    ordered = sorted(ranges, key=lambda r: r[0])
+    for i, (mn, mx) in enumerate(ordered):
+        is_top = i == len(ordered) - 1
+        if mx == 0:  # open-ended
+            if not is_top:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Only the highest tier may be open-ended (max_points = 0).",
+                )
+            continue
+        if mx < mn:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A tier's max_points must be >= its min_points.",
+            )
+        if not is_top and mx >= ordered[i + 1][0]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Loyalty tier ranges must be non-overlapping and increasing.",
+            )
+
+
 @router.post("/loyalty-tiers", response_model=LoyaltyTierResponse, status_code=status.HTTP_201_CREATED)
 async def create_loyalty_tier(
     data: LoyaltyTierCreate,
@@ -558,6 +660,11 @@ async def create_loyalty_tier(
     dup = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.name == data.name))).scalar_one_or_none()
     if dup:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tier name already exists")
+    existing = (await db.execute(select(LoyaltyTier))).scalars().all()
+    _validate_loyalty_tier_set(
+        [(t.min_points, t.max_points) for t in existing]
+        + [(data.min_points, data.max_points)]
+    )
     tier = LoyaltyTier(**data.model_dump())
     db.add(tier)
     await db.flush()
@@ -580,6 +687,14 @@ async def update_loyalty_tier(
         dup = (await db.execute(select(LoyaltyTier).where(LoyaltyTier.name == payload["name"]))).scalar_one_or_none()
         if dup:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tier name already exists")
+    new_min = payload.get("min_points", tier.min_points)
+    new_max = payload.get("max_points", tier.max_points)
+    others = (
+        await db.execute(select(LoyaltyTier).where(LoyaltyTier.id != tier_id))
+    ).scalars().all()
+    _validate_loyalty_tier_set(
+        [(t.min_points, t.max_points) for t in others] + [(new_min, new_max)]
+    )
     for field, value in payload.items():
         setattr(tier, field, value)
     await db.flush()

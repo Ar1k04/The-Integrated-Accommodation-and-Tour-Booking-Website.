@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import TourCard from '@/components/tour/TourCard'
 
 const mockTour = {
@@ -16,8 +17,17 @@ const mockTour = {
   images: ['https://placehold.co/400x300'],
 }
 
+// TourCard renders WishlistButton, which calls useQueryClient() — provide one.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+})
+
 function renderWithRouter(ui) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>)
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>
+  )
 }
 
 describe('TourCard', () => {
