@@ -204,12 +204,14 @@ async def list_all_usages(
         voucher_code=voucher_code,
     )
 
-    count_q = select(func.count()).select_from(base.subquery())
+    sub = base.subquery()
+    count_q = select(func.count()).select_from(sub)
     total = (await db.execute(count_q)).scalar() or 0
 
-    sum_q = select(func.coalesce(func.sum(Booking.discount_amount), 0)).select_from(
-        base.subquery()
-    )
+    # Sum the subquery's own discount column. Referencing Booking.discount_amount
+    # here would re-add the bookings table to the FROM clause, cross-joining every
+    # booking against the usage subquery and inflating the total.
+    sum_q = select(func.coalesce(func.sum(sub.c.discount_amount), 0))
     total_discount = float((await db.execute(sum_q)).scalar() or 0)
 
     rows = (
@@ -294,12 +296,13 @@ async def list_voucher_usages(
         voucher_code=None,
     )
 
-    count_q = select(func.count()).select_from(base.subquery())
+    sub = base.subquery()
+    count_q = select(func.count()).select_from(sub)
     total = (await db.execute(count_q)).scalar() or 0
 
-    sum_q = select(func.coalesce(func.sum(Booking.discount_amount), 0)).select_from(
-        base.subquery()
-    )
+    # Sum the subquery's own discount column (see list_all_usages) to avoid the
+    # bookings table being cross-joined and inflating the total.
+    sum_q = select(func.coalesce(func.sum(sub.c.discount_amount), 0))
     total_discount = float((await db.execute(sum_q)).scalar() or 0)
 
     rows = (

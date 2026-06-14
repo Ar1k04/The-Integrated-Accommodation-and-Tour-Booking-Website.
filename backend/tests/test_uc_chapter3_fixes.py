@@ -164,6 +164,73 @@ async def test_delete_used_voucher_returns_409(
     assert res.status_code == 409
 
 
+# ── UC31: voucher usage total is not inflated by a cross join ────────────────
+@pytest.mark.asyncio
+async def test_voucher_usage_total_discount_not_inflated(
+    client: AsyncClient, db_session, admin_user, admin_token
+):
+    """The discount total must sum only matched usage rows, not cross-join the
+    whole bookings table (which would multiply the figure by the booking count)."""
+    from app.core.security import hash_password
+    from app.models.booking import Booking
+    from app.models.user import User
+    from app.models.voucher import Voucher
+    from app.models.voucher_usage import VoucherUsage
+
+    voucher = Voucher(
+        id=uuid.uuid4(),
+        admin_id=admin_user.id,
+        code=f"SUM{uuid.uuid4().hex[:6]}",
+        name="Sum voucher",
+        discount_value=10,
+        valid_from=date.today(),
+        valid_to=date.today() + timedelta(days=10),
+        used_count=2,
+    )
+    db_session.add(voucher)
+    await db_session.flush()
+
+    # Two distinct guests (uq_voucher_user) each redeem it once, $10 off each.
+    for _ in range(2):
+        guest = User(
+            id=uuid.uuid4(),
+            email=f"guest-{uuid.uuid4().hex[:6]}@example.com",
+            hashed_password=hash_password("GuestPassword1!"),
+            full_name="Guest",
+            role="user",
+            is_active=True,
+        )
+        db_session.add(guest)
+        await db_session.flush()
+        booking = Booking(
+            id=uuid.uuid4(),
+            user_id=guest.id,
+            total_price=100,
+            discount_amount=10,
+            status="confirmed",
+        )
+        db_session.add(booking)
+        await db_session.flush()
+        db_session.add(
+            VoucherUsage(
+                id=uuid.uuid4(),
+                voucher_id=voucher.id,
+                user_id=guest.id,
+                booking_id=booking.id,
+            )
+        )
+    await db_session.flush()
+
+    res = await client.get(
+        f"/api/v1/vouchers/{voucher.id}/usages", headers=auth_header(admin_token)
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["meta"]["total"] == 2
+    # Exactly 2 × $10 — not inflated by the number of bookings in the table.
+    assert body["meta"]["total_discount_amount"] == 20.0
+
+
 # ── UC33: admin account guards ───────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_admin_cannot_self_delete(client: AsyncClient, admin_user, admin_token):
@@ -241,6 +308,45 @@ async def test_deactivate_user_with_active_booking_requires_force(
         headers=auth_header(admin_token),
     )
     assert deleted.status_code == 409
+
+
+# ── UC33: deleting a voucher owner would cascade away usage history ──────────
+@pytest.mark.asyncio
+async def test_delete_user_with_vouchers_returns_409(
+    client: AsyncClient, db_session, admin_token
+):
+    from app.core.security import hash_password
+    from app.models.user import User
+    from app.models.voucher import Voucher
+
+    partner = User(
+        id=uuid.uuid4(),
+        email=f"partner-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("PartnerPassword1!"),
+        full_name="Voucher Owner",
+        role="partner",
+        is_active=True,
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    db_session.add(
+        Voucher(
+            id=uuid.uuid4(),
+            admin_id=partner.id,
+            code=f"OWN{uuid.uuid4().hex[:6]}",
+            name="Owned voucher",
+            discount_value=10,
+            valid_from=date.today(),
+            valid_to=date.today() + timedelta(days=10),
+        )
+    )
+    await db_session.flush()
+
+    res = await client.delete(
+        f"/api/v1/admin/users/{partner.id}", headers=auth_header(admin_token)
+    )
+    assert res.status_code == 409
+    assert "voucher" in res.json()["detail"].lower()
 
 
 # ── UC38: loyalty tier threshold validation ──────────────────────────────────

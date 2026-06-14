@@ -1,7 +1,9 @@
 """Tests for the auth flow: register, login, me, token refresh."""
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from app.models.user import User
 from tests.conftest import auth_header
 
 
@@ -32,6 +34,25 @@ async def test_register_duplicate(client: AsyncClient, test_user):
         "full_name": "Dup User",
     })
     assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_public_registration_rejects_admin_role(
+    client: AsyncClient, db_session
+):
+    email = "public-admin@example.com"
+    res = await client.post("/api/v1/auth/register", json={
+        "email": email,
+        "password": "StrongPass1!",
+        "full_name": "Public Admin",
+        "role": "admin",
+    })
+
+    assert res.status_code == 422
+    created = (
+        await db_session.execute(select(User).where(User.email == email))
+    ).scalar_one_or_none()
+    assert created is None
 
 
 @pytest.mark.asyncio

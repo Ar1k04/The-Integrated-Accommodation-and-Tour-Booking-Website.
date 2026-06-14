@@ -114,6 +114,14 @@ export default function FlightCheckoutPage() {
     }
   }, [secondsLeft, navigate])
 
+  // Called unconditionally (before the guard return below) so the hook count
+  // stays stable across renders — Rules of Hooks.
+  const { data: availableVouchers } = useQuery({
+    queryKey: ['available-vouchers'],
+    queryFn: () => vouchersApi.available(),
+    select: (res) => res.data || [],
+  })
+
   if (!selectedFlight?.duffel_offer_id) return null
 
   // ── Pricing ─────────────────────────────────────────────────────────────
@@ -132,12 +140,6 @@ export default function FlightCheckoutPage() {
   const paxCount = selectedFlight.quantity || paxList.length || 1
 
   // ── Voucher / loyalty handlers ──────────────────────────────────────────
-  const { data: availableVouchers } = useQuery({
-    queryKey: ['available-vouchers'],
-    queryFn: () => vouchersApi.available(),
-    select: (res) => res.data || [],
-  })
-
   const handleApplyVoucher = async (codeArg) => {
     const code = (typeof codeArg === 'string' ? codeArg : voucherInput).trim()
     if (!code) return

@@ -19,6 +19,7 @@ from app.models.tour import Tour
 from app.models.tour_schedule import TourSchedule
 from app.models.loyalty_tier import LoyaltyTier
 from app.models.user import User
+from app.models.voucher import Voucher
 from app.schemas.loyalty import LoyaltyTierCreate, LoyaltyTierResponse, LoyaltyTierUpdate
 from app.schemas.user import (
     PartnerStatusUpdate,
@@ -45,6 +46,12 @@ async def _count_user_bookings(
     stmt = select(func.count()).select_from(Booking).where(Booking.user_id == user_id)
     if statuses is not None:
         stmt = stmt.where(Booking.status.in_(statuses))
+    return (await db.execute(stmt)).scalar_one()
+
+
+async def _count_user_vouchers(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """Count vouchers owned (issued) by a user."""
+    stmt = select(func.count()).select_from(Voucher).where(Voucher.admin_id == user_id)
     return (await db.execute(stmt)).scalar_one()
 
 
@@ -325,6 +332,14 @@ async def delete_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="User has bookings; deactivate instead of deleting.",
+        )
+    # Vouchers cascade off their owner (admin_id ON DELETE CASCADE), taking the
+    # voucher usage history with them. A partner/admin who has issued vouchers
+    # must be deactivated, not hard-deleted, so that audit trail is preserved.
+    if await _count_user_vouchers(db, user.id) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User has issued vouchers; deactivate instead of deleting.",
         )
     await db.delete(user)
     await db.flush()

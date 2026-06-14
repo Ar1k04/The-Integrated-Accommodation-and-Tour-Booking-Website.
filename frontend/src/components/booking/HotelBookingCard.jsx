@@ -29,6 +29,24 @@ export default function HotelBookingCard({ booking, fmt, canCancel, onCancel }) 
   const [expanded, setExpanded] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const roomItem = booking.items?.find((i) => i.item_type === 'room')
+
+  // Image: prefer the URL persisted at booking time (DB hotel `images[0]` or
+  // the LiteAPI image we now stash on the booking item). Older bookings made
+  // before that column existed have neither — for those, lazy-fetch the
+  // LiteAPI hotel detail once and cache for 24h via react-query so the same
+  // hotel isn't re-fetched per card render. Derived with optional chaining and
+  // the hook called unconditionally so the early `return null` below never
+  // changes the number of hooks (Rules of Hooks).
+  const persistedImage = roomItem?.hotel?.image_url
+  const liteapiId = roomItem?.hotel?.liteapi_hotel_id || roomItem?.liteapi_hotel_id
+  const { data: fetchedImage } = useQuery({
+    queryKey: ['booking-card-hotel-image', liteapiId],
+    enabled: Boolean(!persistedImage && liteapiId),
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+    queryFn: () => hotelsApi.getLiteapi(liteapiId).then((r) => r.data?.images?.[0] || null),
+  })
+
   if (!roomItem) return null
 
   const handleDownloadPdf = async (e) => {
@@ -51,20 +69,6 @@ export default function HotelBookingCard({ booking, fmt, canCancel, onCancel }) 
     ? nightsBetween(roomItem.check_in, roomItem.check_out)
     : null
 
-  // Image: prefer the URL persisted at booking time (DB hotel `images[0]` or
-  // the LiteAPI image we now stash on the booking item). Older bookings made
-  // before that column existed have neither — for those, lazy-fetch the
-  // LiteAPI hotel detail once and cache for 24h via react-query so the same
-  // hotel isn't re-fetched per card render.
-  const persistedImage = roomItem.hotel?.image_url
-  const liteapiId = roomItem.hotel?.liteapi_hotel_id || roomItem.liteapi_hotel_id
-  const { data: fetchedImage } = useQuery({
-    queryKey: ['booking-card-hotel-image', liteapiId],
-    enabled: Boolean(!persistedImage && liteapiId),
-    staleTime: 24 * 60 * 60 * 1000,
-    retry: false,
-    queryFn: () => hotelsApi.getLiteapi(liteapiId).then((r) => r.data?.images?.[0] || null),
-  })
   const image = persistedImage || fetchedImage
 
   return (

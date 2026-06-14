@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=1024)
     full_name: str = Field(min_length=1, max_length=255)
     phone: str | None = None
-    role: str = Field(default="user", pattern=r"^(user|partner|admin)$")
+    role: Literal["user", "partner"] = "user"
 
 
 class UserUpdate(BaseModel):

@@ -27,6 +27,22 @@ export default function TourBookingCard({ booking, fmt, canCancel, onCancel }) {
   const [expanded, setExpanded] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const tourItem = booking.items?.find((i) => i.item_type === 'tour')
+
+  // Same pattern as HotelBookingCard: persisted URL wins; old Viator bookings
+  // without one trigger a single cached fetch of the product detail so the
+  // card eventually shows the right thumbnail. Derived with optional chaining
+  // and the hook called unconditionally so the early `return null` below never
+  // changes the number of hooks (Rules of Hooks).
+  const persistedImage = tourItem?.tour?.image_url
+  const viatorCode = tourItem?.tour?.viator_product_code || tourItem?.viator_product_code
+  const { data: fetchedImage } = useQuery({
+    queryKey: ['booking-card-tour-image', viatorCode],
+    enabled: Boolean(!persistedImage && viatorCode),
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+    queryFn: () => toursApi.getViator(viatorCode).then((r) => r.data?.images?.[0] || null),
+  })
+
   if (!tourItem) return null
 
   const handleDownloadPdf = async (e) => {
@@ -46,18 +62,6 @@ export default function TourBookingCard({ booking, fmt, canCancel, onCancel }) {
   const href = tourHref(tourItem)
   const tourName = tourItem.tour?.name || tourItem.tour_name || t('bookings.tour')
 
-  // Same pattern as HotelBookingCard: persisted URL wins; old Viator bookings
-  // without one trigger a single cached fetch of the product detail so the
-  // card eventually shows the right thumbnail.
-  const persistedImage = tourItem.tour?.image_url
-  const viatorCode = tourItem.tour?.viator_product_code || tourItem.viator_product_code
-  const { data: fetchedImage } = useQuery({
-    queryKey: ['booking-card-tour-image', viatorCode],
-    enabled: Boolean(!persistedImage && viatorCode),
-    staleTime: 24 * 60 * 60 * 1000,
-    retry: false,
-    queryFn: () => toursApi.getViator(viatorCode).then((r) => r.data?.images?.[0] || null),
-  })
   const image = persistedImage || fetchedImage
 
   return (
