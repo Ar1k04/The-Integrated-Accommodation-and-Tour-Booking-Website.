@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   Download, RefreshCw, X, Ticket, PlaneTakeoff, AlertCircle, ArrowLeft,
-  Edit3, History, ArrowRightLeft,
+  Edit3,
 } from 'lucide-react'
 
 import { bookingsApi } from '@/api/bookingsApi'
@@ -501,36 +501,6 @@ export default function FlightManageBookingPage() {
           )}
         </div>
 
-        {/* Change history */}
-        {Array.isArray(details.change_history) && details.change_history.length > 0 && (
-          <div className="bg-white border rounded-2xl p-6 mb-6">
-            <h3 className="font-heading font-bold text-lg mb-4 flex items-center gap-2">
-              <History className="w-5 h-5" /> {t('flights:manage.changeHistory', 'Change history')}
-            </h3>
-            <ul className="space-y-3">
-              {details.change_history.map((entry, i) => (
-                <li key={i} className="text-sm border-l-2 border-primary/30 pl-3">
-                  <p className="font-medium">
-                    {(entry.slices_added || []).map((s) => `${s.origin}→${s.destination}`).join(', ') || 'Itinerary updated'}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {entry.occurred_at?.slice(0, 16).replace('T', ' ')}
-                    {entry.total_diff != null && (
-                      <span className="ml-2">
-                        {entry.total_diff > 0
-                          ? `· Charged ${fmt(entry.total_diff, entry.currency)}`
-                          : entry.total_diff < 0
-                            ? `· Refunded ${fmt(Math.abs(entry.total_diff), entry.currency)}`
-                            : '· No charge'}
-                      </span>
-                    )}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
         {/* Documents */}
         {documents.length > 0 && (
           <div className="bg-white border rounded-2xl p-6 mb-6">
@@ -561,15 +531,6 @@ export default function FlightManageBookingPage() {
               {syncMutation.isPending
                 ? t('flights:manage.syncing')
                 : t('flights:manage.syncFromAirline')}
-            </button>
-          )}
-          {canCancel && flight.duffel_order_id && (
-            <button
-              onClick={() => navigate(`/flights/bookings/${bookingId}/change`)}
-              className="flex items-center gap-2 border border-accent text-accent font-semibold px-4 py-2.5 rounded-lg hover:bg-accent/5 transition-colors"
-            >
-              <ArrowRightLeft className="w-4 h-4" />
-              {t('flights:manage.changeFlight', 'Change flight')}
             </button>
           )}
           <button

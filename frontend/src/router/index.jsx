@@ -32,7 +32,6 @@ import ManagePartners from '@/pages/admin/ManagePartners'
 import FlightsSearchPage from '@/pages/FlightsSearchPage'
 import FlightOfferDetailPage from '@/pages/FlightOfferDetailPage'
 import FlightManageBookingPage from '@/pages/FlightManageBookingPage'
-import FlightChangeRequestPage from '@/pages/FlightChangeRequestPage'
 import FlightCheckoutPage from '@/pages/FlightCheckoutPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 
@@ -70,10 +69,6 @@ export const router = createBrowserRouter([
       {
         path: '/flights/bookings/:bookingId',
         element: <ProtectedRoute userOnly><FlightManageBookingPage /></ProtectedRoute>,
-      },
-      {
-        path: '/flights/bookings/:bookingId/change',
-        element: <ProtectedRoute userOnly><FlightChangeRequestPage /></ProtectedRoute>,
       },
       { path: '/tours', element: <RedirectIfAdmin><ToursPage /></RedirectIfAdmin> },
       { path: '/deals', element: <RedirectIfAdmin><DealsPage /></RedirectIfAdmin> },
