@@ -1578,26 +1578,45 @@ async def cancel_booking(
             }
         if item.viator_booking_ref:
             viator_result = await viator_service.cancel_booking(item.viator_booking_ref)
+            if viator_result is None or (viator_result.get("status") or "").upper() == "REJECTED":
+                # Transport/auth error (None) or an explicit supplier rejection:
+                # abort instead of silently marking the item cancelled with no
+                # refund. Mirrors the LiteAPI refusal path.
+                raise SupplierCancelError(
+                    "The activity supplier could not cancel this booking. "
+                    "No changes were made."
+                )
             supplier_entry = supplier_entry or {
                 "item_id": item.id,
                 "supplier": "viator",
-                "status": (viator_result or {}).get("status") or "CANCELLED",
-                "refund_amount": (viator_result or {}).get("refund_amount"),
+                "status": viator_result.get("status") or "CANCELLED",
+                "refund_amount": viator_result.get("refund_amount"),
                 "cancellation_fee": None,
-                "currency": (viator_result or {}).get("currency"),
+                "currency": viator_result.get("currency"),
             }
         if item.item_type == BookingItemType.flight.value:
             flight = item.flight_booking
             if flight and flight.duffel_order_id:
                 duffel_result = await duffel_service.cancel_order(flight.duffel_order_id)
+                if duffel_result is None:
+                    # Duffel refused or failed to cancel — e.g. the flight has
+                    # already departed, or a transient supplier error. Do NOT
+                    # mark it cancelled or silently drop the refund: surface it
+                    # like the LiteAPI refusal path so the booking state stays in
+                    # sync and a refundable fare can't be lost to a transient blip.
+                    raise SupplierCancelError(
+                        "The airline could not cancel this flight (it may have "
+                        "already departed, or the carrier is unavailable). "
+                        "No changes were made."
+                    )
                 flight.status = "cancelled"
                 supplier_entry = supplier_entry or {
                     "item_id": item.id,
                     "supplier": "duffel",
-                    "status": (duffel_result or {}).get("status") or "CANCELLED",
-                    "refund_amount": (duffel_result or {}).get("refund_amount"),
+                    "status": duffel_result.get("status") or "CANCELLED",
+                    "refund_amount": duffel_result.get("refund_amount"),
                     "cancellation_fee": None,
-                    "currency": (duffel_result or {}).get("currency"),
+                    "currency": duffel_result.get("currency"),
                 }
         item.status = BookingItemStatus.cancelled.value
         if supplier_entry is None and item.item_type == BookingItemType.room.value and item.room_id:
