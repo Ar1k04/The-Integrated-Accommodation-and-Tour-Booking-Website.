@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { authApi } from '@/api/authApi'
 import { useUiStore } from '@/store/uiStore'
+import { queryClient } from '@/lib/queryClient'
 
 function hydrateUiPrefs(user) {
   if (!user) return
@@ -57,6 +58,9 @@ export const useAuthStore = create((set, get) => ({
       // ignore
     }
     set({ user: null, accessToken: null, isAuthenticated: false })
+    // Drop all cached queries so the next account never sees the previous
+    // user's data (e.g. admin stats leaking into a partner session).
+    queryClient.clear()
   },
 
   refreshToken: async () => {

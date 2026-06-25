@@ -32,7 +32,7 @@ export default function AdminDashboard() {
   const { data: stats, isLoading } = useQuery({
     queryKey: ['admin-stats', period],
     queryFn: () => adminApi.getStats({ period }),
-    select: (res) => res.data,
+    select: (res) => res.data.data,
   })
 
   const statCards = [
@@ -121,7 +121,7 @@ export default function AdminDashboard() {
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie data={bookingsByStatus} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                      outerRadius={90} innerRadius={50} paddingAngle={3} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={90} innerRadius={50} paddingAngle={3} label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
                     >
                       {bookingsByStatus.map((_, i) => (
                         <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
